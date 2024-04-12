@@ -25,19 +25,16 @@ class AudioController:
     def create_pipeline(self):
         bin = Gst.Pipeline.new('audio_pipeline')
 
-        element, device = self.config.audio_input
-        source = Gst.ElementFactory.make(element, 'source')
-        source.set_property('device', device)
+        source = Gst.ElementFactory.make(self.config.GSTREAMER_SOURCE, 'source')
+        self.set_device(source, self.config.audio_input)
 
         convert_input = Gst.ElementFactory.make('audioconvert', 'convert_input')
         pitch_shift = Gst.ElementFactory.make('ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo', 'pitch_shift')
         pitch_shift.set_property('semitones', self.pitch_shift_semitones)
         convert_output = Gst.ElementFactory.make('audioconvert', 'convert_output')
 
-        element, device = self.config.audio_output
-        self.logger.debug("Element: %s, Device: %s", element, device)
-        sink = Gst.ElementFactory.make(element, 'sink')
-        sink.set_property('device', device)
+        sink = Gst.ElementFactory.make(self.config.GSTREAMER_SINK, 'sink')
+        self.set_device(sink, self.config.audio_output)
 
         bin.add(source)
         bin.add(convert_input)
@@ -50,6 +47,16 @@ class AudioController:
         convert_output.link(sink)
 
         return bin
+    
+    def set_device(self, element, device):
+        if device is None:
+            return
+        
+        element_type = type(element).__name__
+        if element_type in ('GstAlsaSrc', 'GstAlsaSink'):
+            element.set_property('device', device)
+        else:
+            raise NotImplementedError('set_device not implemented for %s' % element_type)
     
     def set_pitch_shift(self, semitones):
         if not self.config.enable_audio:
