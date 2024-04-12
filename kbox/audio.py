@@ -9,8 +9,6 @@ gi.require_version('Gst', '1.0')
 
 from gi.repository import Gst, GObject, GLib
 
-Gst.init(None)
-
 class AudioController:
     def __init__(self, config):
         self.config = config
@@ -23,6 +21,10 @@ class AudioController:
         self.pipeline = self.create_pipeline()
     
     def create_pipeline(self):
+        if not Gst.is_initialized():
+            self.logger.debug('Initializing gstreamer...')
+            Gst.init(None)
+
         bin = Gst.Pipeline.new('audio_pipeline')
 
         source = Gst.ElementFactory.make(self.config.GSTREAMER_SOURCE, 'source')
