@@ -11,6 +11,12 @@ class MidiController:
         self.port = mido.open_input(self.find_input(config.midi_input))
         self.server = None
     
+    def register_server(self, server):
+        if self.server is not None:
+            self.logger.warn('Server already registered, ignoring')
+            return
+        self.server = server
+    
     def find_input(self, name):
         all_inputs = mido.get_input_names()
         for port in all_inputs:
