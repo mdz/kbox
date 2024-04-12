@@ -1,0 +1,6 @@
+version: '3'
+services:
+  kbox:
+    build: .
+    devices:
+      - "/dev/snd:/dev/snd"
