@@ -32,7 +32,7 @@ class AudioController:
 
         convert_input = self.make_element('audioconvert', 'convert_input')
 
-        pitch_shift = self.make_element('ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo', 'pitch_shift')
+        pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
         pitch_shift.set_property('semitones', self.pitch_shift_semitones)
 
         convert_output = self.make_element('audioconvert', 'convert_output')
@@ -55,7 +55,7 @@ class AudioController:
     def make_element(self, element_type, name):
         element = Gst.ElementFactory.make(element_type, name)
         if element is None:
-            raise ValueError('Unable to initialize gstreamer element as %s: %s' % (name, self.config.GSTREAMER_SOURCE))
+            raise ValueError('Unable to initialize gstreamer element %s as %s' % (element_type, name))
         return element
     
     def set_device(self, element, device):
