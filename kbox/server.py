@@ -16,8 +16,10 @@ class Server:
         logging.debug('Starting server...')
         audio_thread = threading.Thread(target=self.audio_controller.run)
         audio_thread.start()
-        midi_thread = threading.Thread(target=self.midi_controller.run)
-        midi_thread.start()
-        logging.debug('Server started')
+        if self.config.enable_midi:
+            midi_thread = threading.Thread(target=self.midi_controller.run)
+            midi_thread.daemon = True
+            midi_thread.start()
+        logging.info('Server started')
         audio_thread.join()
-        midi_thread.join()
+        logging.info('Server stopped')

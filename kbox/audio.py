@@ -16,6 +16,10 @@ class AudioController:
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
+        if not self.config.enable_audio:
+            self.logger.warn('Audio disabled')
+            return
+
         self.pipeline = self.create_pipeline()
     
     def create_pipeline(self):
@@ -34,7 +38,6 @@ class AudioController:
         self.logger.debug("Element: %s, Device: %s", element, device)
         sink = Gst.ElementFactory.make(element, 'sink')
         sink.set_property('device', device)
-        #sink = Gst.ElementFactory.make('fakesink', 'sink')
 
         bin.add(source)
         bin.add(convert_input)
@@ -49,15 +52,22 @@ class AudioController:
         return bin
     
     def set_pitch_shift(self, semitones):
+        if not self.config.enable_audio:
+            self.logger.warn('Audio disabled')
+            return
         if semitones == self.pitch_shift_semitones:
             self.logger.debug('Pitch shift already set to %s semitones', semitones)
             return
         
+        self.logger.info('Setting pitch shift to %s semitones', semitones)
         pitch_shift = self.pipeline.get_by_name('pitch_shift')
         pitch_shift.set_property('semitones', semitones)
         self.pitch_shift_semitones = semitones
 
     def run(self):
+        if not self.config.enable_audio:
+            self.logger.debug('Audio disabled')
+            return
         self.logger.debug('Starting gstreamer pipeline...')
         bus = self.pipeline.get_bus()
         ret = self.pipeline.set_state(Gst.State.PLAYING)

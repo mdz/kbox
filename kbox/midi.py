@@ -6,14 +6,26 @@ class MidiController:
     def __init__(self, config):
         self.config = config
         self.logger = logging.getLogger(__name__)
-        self.port = mido.open_input(config.midi_input)
+        if not self.config.enable_midi:
+            return
+        self.port = mido.open_input(self.find_input(config.midi_input))
         self.server = None
     
+    def find_input(self, name):
+        all_inputs = mido.get_input_names()
+        for port in all_inputs:
+            if name in port:
+                self.logger.info('Using MIDI input: %s', port)
+                return port
+        raise ValueError('MIDI input "%s" not found, available inputs: %s' % (name, all_inputs))
+    
     def run(self):
+        if not self.config.enable_midi:
+            self.logger.warn('MIDI disabled')
+            return
         logging.debug('Listening for MIDI messages...')
         while True:
-            for msg in self.port.iter_pending():
-                self.handle_message(msg)
+            self.handle_message(self.port.receive())
     
     def handle_message(self, msg):
         if msg.type == 'note_on':
@@ -30,7 +42,7 @@ class MidiController:
             return
 
         semitones = msg.note - 60
-        self.logger.info('Semitones: %s', semitones)
+        self.logger.debug('Note=%s -> semitones=%s', msg.note, semitones)
 
         if self.server is not None:
             self.server.set_pitch_shift(semitones)
