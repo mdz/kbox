@@ -94,4 +94,4 @@ class AudioController:
 
         # wait until EOS or error
         msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE, Gst.MessageType.ERROR | Gst.MessageType.EOS)
-        #self.pipeline.set_state(Gst.State.NULL)
+        self.pipeline.set_state(Gst.State.NULL)
