@@ -4,4 +4,4 @@ services:
     build: .
     devices:
       - "/dev/snd:/dev/snd"
-    restart: unless_stopped
+    restart: unless-stopped
