@@ -87,12 +87,59 @@ class AudioController:
             self.logger.debug('Audio disabled')
             return
         self.logger.debug('Starting gstreamer pipeline...')
-        bus = self.pipeline.get_bus()
         ret = self.pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             self.logger.error('Failed to start pipeline')
             return
+        elif ret == Gst.StateChangeReturn.ASYNC:
+            # will be handled by message loop
+            pass
+        else:
+            self.logger.warn('Unexpected result from set_state: %s', ret)
 
-        # wait until EOS or error
-        msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE, Gst.MessageType.ERROR | Gst.MessageType.EOS)
-        self.pipeline.set_state(Gst.State.NULL)
+        # wait for messages
+        bus = self.pipeline.get_bus()
+        while True:
+            msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE, Gst.MessageType.ERROR | Gst.MessageType.EOS | Gst.MessageType.STATE_CHANGED)
+
+            self.logger.debug('Received message: %s', msg.type)
+            if msg.type == Gst.MessageType.ERROR:
+                err, debug = msg.parse_error()
+                self.logger.error('GStreamer error: %s: %s', err, debug)
+                break
+            elif msg.type == Gst.MessageType.STATE_CHANGED:
+                change = msg.parse_state_changed()
+                self.logger.debug('State changed: %s -> %s', change.oldstate.value_name, change.newstate.value_name)
+                oldstate = change.oldstate
+                newstate = change.newstate
+                if newstate == Gst.State.PLAYING:
+                    self.logger.info('Pipeline state changed to PLAYING')
+                elif newstate == Gst.State.NULL:
+                    self.logger.debug('Pipeline state changed to NULL')
+                    break
+                elif oldstate == Gst.State.NULL and newstate == Gst.State.READY:
+                    self.logger.debug('Pipeline is READY')
+                elif newstate == Gst.State.READY:
+                    self.logger.info('Pipeline stopped')
+                    break
+                elif newstate == Gst.State.PAUSED:
+                    self.logger.info('Pipeline paused')
+                else:
+                    self.logger.debug('Unhandled state change: %s', newstate)
+            elif msg.type == Gst.MessageType.EOS:
+                self.logger.debug('End of stream')
+                break
+            else:
+                self.logger.error('Unhandled message: %s', msg.type)
+                break
+        self.logger.debug('AudioController.run() exiting')
+    
+    def stop(self):
+        self.logger.debug('Stopping gstreamer pipeline...')
+        result = self.pipeline.set_state(Gst.State.NULL)
+        if result == Gst.StateChangeReturn.SUCCESS:
+            self.logger.debug('Pipeline state changed successfully')
+        elif result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError('Failed to change pipeline state')
+        else:
+            raise RuntimeError('Unexpected result from set_state: %s', result)

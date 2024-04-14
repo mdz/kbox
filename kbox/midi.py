@@ -26,6 +26,11 @@ class MidiController:
         logging.debug('Listening for MIDI messages...')
         while True:
             self.handle_message(self.port.receive())
+        
+    def stop(self):
+        self.logger.debug('Stopping MIDI...')
+        # does nothing yet
+        # runs as daemon thread so will exit when main thread exits
     
     def handle_message(self, msg):
         if msg.type == 'note_on':
