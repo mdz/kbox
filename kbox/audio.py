@@ -10,8 +10,9 @@ gi.require_version('Gst', '1.0')
 from gi.repository import Gst
 
 class AudioController:
-    def __init__(self, config):
+    def __init__(self, config, server):
         self.config = config
+        self.server = server
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
         if not self.config.enable_audio:

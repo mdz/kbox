@@ -3,20 +3,14 @@ import logging
 import mido
 
 class MidiController:
-    def __init__(self, config):
+    def __init__(self, config, audio_controller):
         self.config = config
+        self.audio_controller = audio_controller
         self.logger = logging.getLogger(__name__)
         if not self.config.enable_midi:
             return
         self.port = mido.open_input(self.find_input(config.midi_input))
-        self.server = None
-    
-    def register_server(self, server):
-        if self.server is not None:
-            self.logger.warn('Server already registered, ignoring')
-            return
-        self.server = server
-    
+        
     def find_input(self, name):
         all_inputs = mido.get_input_names()
         for port in all_inputs:
@@ -50,7 +44,4 @@ class MidiController:
         semitones = msg.note - 60
         self.logger.debug('Note=%s -> semitones=%s', msg.note, semitones)
 
-        if self.server is not None:
-            self.server.set_pitch_shift(semitones)
-        else:
-            self.logger.warn('Server not set')
+        self.audio_controller.set_pitch_shift(semitones)

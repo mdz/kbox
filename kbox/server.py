@@ -1,13 +1,15 @@
 import logging
 import threading
 
+from .audio import AudioController
+from .midi import MidiController
+
 class Server:
-    def __init__(self, config, midi_controller, audio_controller):
+    def __init__(self, config):
         self.config = config
-        self.midi_controller = midi_controller
-        self.audio_controller = audio_controller
         self.logger = logging.getLogger(__name__)
-        self.midi_controller.register_server(self)
+        self.audio_controller = AudioController(config, self)
+        self.midi_controller = MidiController(config, self)
     
     def set_pitch_shift(self, semitones):
         self.audio_controller.set_pitch_shift(semitones)
