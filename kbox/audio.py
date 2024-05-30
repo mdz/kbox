@@ -15,10 +15,6 @@ class AudioController:
         self.server = server
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
-        if not self.config.enable_audio:
-            self.logger.warn('Audio disabled')
-            return
-
         self.pipeline = self.create_pipeline()
     
     def create_pipeline(self):
@@ -70,9 +66,6 @@ class AudioController:
             raise NotImplementedError('set_device not implemented for %s' % element_type)
     
     def set_pitch_shift(self, semitones):
-        if not self.config.enable_audio:
-            self.logger.warn('Audio disabled')
-            return
         if semitones == self.pitch_shift_semitones:
             self.logger.debug('Pitch shift already set to %s semitones', semitones)
             return
@@ -83,9 +76,6 @@ class AudioController:
         self.pitch_shift_semitones = semitones
 
     def run(self):
-        if not self.config.enable_audio:
-            self.logger.debug('Audio disabled')
-            return
         self.logger.debug('Starting gstreamer pipeline...')
         ret = self.pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
@@ -97,6 +87,7 @@ class AudioController:
         else:
             self.logger.warn('Unexpected result from set_state: %s', ret)
 
+    
         # wait for messages
         bus = self.pipeline.get_bus()
         while True:
@@ -120,7 +111,7 @@ class AudioController:
                 elif oldstate == Gst.State.NULL and newstate == Gst.State.READY:
                     self.logger.debug('Pipeline is READY')
                 elif newstate == Gst.State.READY:
-                    self.logger.info('Pipeline stopped')
+                    self.logger.debug('Pipeline stopped')
                     break
                 elif newstate == Gst.State.PAUSED:
                     self.logger.info('Pipeline paused')

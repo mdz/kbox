@@ -17,5 +17,4 @@ class Config:
         audio_output = audio_input
 
     midi_input = 'MPK mini 3'
-    enable_audio = True
     enable_midi = True
