@@ -23,7 +23,7 @@ class MidiController:
         if not self.config.enable_midi:
             self.logger.warn('MIDI disabled')
             return
-        logging.debug('Listening for MIDI messages...')
+        self.logger.debug('Listening for MIDI messages...')
         while True:
             self.handle_message(self.port.receive())
         
