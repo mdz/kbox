@@ -1,7 +1,8 @@
 # kbox
 
-kbox is a simple server application to perform real-time, high-quality pitch
-shifting of stereo audio input, intended for use in a karaoke environment.
+kbox is a simple headless server application to perform real-time, high-quality
+pitch shifting of stereo audio input, intended for use in a karaoke
+environment.
 
 It uses:
 
