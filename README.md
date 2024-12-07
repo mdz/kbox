@@ -1,7 +1,9 @@
 # kbox
 
-kbox is a simple server application to perform real-time high-quality pitch
-shifting, intended] for use in a karaoke environment. It uses:
+kbox is a simple server application to perform real-time, high-quality pitch
+shifting of stereo audio input, intended for use in a karaoke environment.
+
+It uses:
 
 - [GStreamer](https://gstreamer.freedesktop.org/)
 - [gst-python](https://gstreamer.freedesktop.org/bindings/python.html)
