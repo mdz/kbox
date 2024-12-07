@@ -16,5 +16,5 @@ class Config:
         audio_input = 'plughw:CARD=CODEC,DEV=0'
         audio_output = audio_input
 
-    midi_input = 'MPK mini 3'
+    midi_input = 'MPK mini Play mk3'
     enable_midi = True
