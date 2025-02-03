@@ -9,7 +9,7 @@ gi.require_version('Gst', '1.0')
 
 from gi.repository import Gst
 
-class AudioController:
+class StreamingController:
     def __init__(self, config, server):
         self.config = config
         self.server = server
@@ -22,32 +22,63 @@ class AudioController:
             self.logger.debug('Initializing gstreamer...')
             Gst.init(None)
 
-        bin = Gst.Pipeline.new('audio_pipeline')
+        pipeline = Gst.Pipeline.new('StreamingController')
 
         source = self.make_element(self.config.GSTREAMER_SOURCE, 'source')
-        self.set_device(source, self.config.audio_input)
+        self.set_device(source, self.config.video_input)
+        pipeline.add(source)
 
-        convert_input = self.make_element('audioconvert', 'convert_input')
+        #video_demux = self.make_element('matroskademux', 'demux')
+        #pipeline.add(video_demux)
+
+        decode = self.make_element('decodebin', 'decode')
+        pipeline.add(decode)
+
+
+        convert_audio_input = self.make_element('audioconvert', 'convert_audio_input')
+        pipeline.add(convert_audio_input)
 
         pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
         pitch_shift.set_property('semitones', self.pitch_shift_semitones)
+        pipeline.add(pitch_shift)
 
-        convert_output = self.make_element('audioconvert', 'convert_output')
+        convert_audio_output = self.make_element('audioconvert', 'convert_audio_output')
+        pipeline.add(convert_audio_output)
 
-        sink = self.make_element(self.config.GSTREAMER_SINK, 'sink')
-        self.set_device(sink, self.config.audio_output)
-    
-        bin.add(source)
-        bin.add(convert_input)
-        source.link(convert_input)
-        bin.add(pitch_shift)
-        convert_input.link(pitch_shift)
-        bin.add(convert_output)
-        pitch_shift.link(convert_output)
-        bin.add(sink)
-        convert_output.link(sink)
+        audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
+        self.set_device(audio_sink, self.config.audio_output)
+        pipeline.add(audio_sink)
 
-        return bin
+        video_sink = self.make_element('fakesink', 'video_sink')
+        pipeline.add(video_sink)
+
+        # decodebin uses dynamic pads, so we need to link them
+        # via this callback
+        def decodebin_pad_added(element, pad):
+            string = pad.query_caps(None).to_string()
+            self.logger.debug('Found stream: %s' % string)
+            if string.startswith('audio/x-raw'):
+                pad.link(convert_audio_input.get_static_pad('sink'))
+            elif string.startswith('video/x-raw'):
+                pad.link(video_sink.get_static_pad('sink'))
+
+        decode.connect("pad-added", decodebin_pad_added)
+
+        source.link(decode)
+        #video_demux.link(audio_decode)
+        #print(video_demux)
+        #video_demux.link_pads('audio_0', audio_decode, None)
+        #video_demux.link_pads('video_0', video_sink, None)
+        #decode.link(convert_audio_input)
+        #convert_audio_input.link(pitch_shift)
+        #pitch_shift.link(convert_audio_output)
+        convert_audio_input.link(convert_audio_output)
+        convert_audio_output.link(audio_sink)
+
+
+        #decode.link(audio_sink)
+
+        return pipeline
     
     def make_element(self, element_type, name):
         element = Gst.ElementFactory.make(element_type, name)
@@ -62,6 +93,10 @@ class AudioController:
         element_type = type(element).__name__
         if element_type in ('GstAlsaSrc', 'GstAlsaSink'):
             element.set_property('device', device)
+        elif element_type == 'GstURIDecodeBin':
+            element.set_property('uri', device)
+        elif element_type == 'GstFileSrc':
+            element.set_property('location', device)
         else:
             raise NotImplementedError('set_device not implemented for %s' % element_type)
     
