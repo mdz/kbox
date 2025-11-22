@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>kbox - Karaoke Queue</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 10px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 2em;
+        }
+        
+        .search-section {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #444;
+            border-radius: 5px;
+            background: #1a1a1a;
+            color: #fff;
+            font-size: 16px;
+        }
+        
+        button {
+            padding: 12px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        
+        button.danger {
+            background: #f44336;
+        }
+        
+        button.secondary {
+            background: #2196F3;
+        }
+        
+        .search-results {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .result-item {
+            background: #1a1a1a;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            cursor: pointer;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .result-item:hover {
+            background: #2a2a2a;
+        }
+        
+        .result-item img {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 5px;
+        }
+        
+        .result-info {
+            flex: 1;
+        }
+        
+        .result-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .result-channel {
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        
+        .queue-section {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .queue-item {
+            background: #1a1a1a;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .queue-item-info {
+            flex: 1;
+        }
+        
+        .queue-item-user {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 5px;
+        }
+        
+        .queue-item-title {
+            color: #aaa;
+            font-size: 0.9em;
+        }
+        
+        .queue-item-status {
+            font-size: 0.8em;
+            margin-top: 5px;
+        }
+        
+        .status-pending { color: #ffa500; }
+        .status-downloading { color: #2196F3; }
+        .status-ready { color: #4CAF50; }
+        .status-error { color: #f44336; }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .operator-section {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .operator-section.hidden {
+            display: none;
+        }
+        
+        .pin-input {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .add-song-form {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 15px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+        }
+        
+        .form-group input {
+            width: 100%;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 kbox</h1>
+        
+        <!-- Operator Authentication -->
+        <div class="operator-section" id="operatorAuth">
+            <h2>Operator Controls</h2>
+            <p>Enter PIN to enable operator controls:</p>
+            <div class="pin-input">
+                <input type="password" id="pinInput" placeholder="PIN" maxlength="10">
+                <button onclick="authenticateOperator()">Authenticate</button>
+            </div>
+        </div>
+        
+        <!-- Operator Controls (hidden by default) -->
+        <div class="operator-section hidden" id="operatorControls">
+            <h2>Playback Controls</h2>
+            <div class="controls">
+                <button onclick="play()">▶ Play</button>
+                <button onclick="pause()">⏸ Pause</button>
+                <button onclick="skip()">⏭ Skip</button>
+                <button onclick="logoutOperator()" class="danger">Logout</button>
+            </div>
+        </div>
+        
+        <!-- Search Section -->
+        <div class="search-section">
+            <h2>Search Songs</h2>
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search for a song..." onkeypress="if(event.key==='Enter') search()">
+                <button onclick="search()">Search</button>
+            </div>
+            <div class="search-results" id="searchResults"></div>
+        </div>
+        
+        <!-- Add Song Form (hidden by default) -->
+        <div class="add-song-form hidden" id="addSongForm">
+            <h3>Add to Queue</h3>
+            <div class="form-group">
+                <label>Your Name:</label>
+                <input type="text" id="userName" placeholder="Enter your name">
+            </div>
+            <div class="form-group">
+                <label>Pitch Adjustment (semitones):</label>
+                <input type="number" id="pitchSemitones" value="0" min="-12" max="12">
+            </div>
+            <div class="controls">
+                <button onclick="addToQueue()">Add to Queue</button>
+                <button onclick="cancelAddSong()" class="secondary">Cancel</button>
+            </div>
+        </div>
+        
+        <!-- Queue Section -->
+        <div class="queue-section">
+            <h2>Queue</h2>
+            <div id="queueList"></div>
+        </div>
+    </div>
+    
+    <script>
+        let selectedVideo = null;
+        let operatorAuthenticated = false;
+        
+        async function search() {
+            const query = document.getElementById('searchInput').value;
+            if (!query) return;
+            
+            const resultsDiv = document.getElementById('searchResults');
+            resultsDiv.innerHTML = '<p>Searching...</p>';
+            
+            try {
+                const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(query)}&max_results=10`);
+                const data = await response.json();
+                
+                if (data.results.length === 0) {
+                    resultsDiv.innerHTML = '<p>No results found</p>';
+                    return;
+                }
+                
+                resultsDiv.innerHTML = data.results.map(video => `
+                    <div class="result-item" onclick="selectVideo(${JSON.stringify(video).replace(/"/g, '&quot;')})">
+                        <img src="${video.thumbnail}" alt="${video.title}">
+                        <div class="result-info">
+                            <div class="result-title">${video.title}</div>
+                            <div class="result-channel">${video.channel}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                resultsDiv.innerHTML = '<p>Error searching</p>';
+                console.error(error);
+            }
+        }
+        
+        function selectVideo(video) {
+            selectedVideo = video;
+            document.getElementById('addSongForm').classList.remove('hidden');
+            document.getElementById('userName').focus();
+        }
+        
+        function cancelAddSong() {
+            selectedVideo = null;
+            document.getElementById('addSongForm').classList.add('hidden');
+        }
+        
+        async function addToQueue() {
+            if (!selectedVideo) return;
+            
+            const userName = document.getElementById('userName').value;
+            if (!userName) {
+                alert('Please enter your name');
+                return;
+            }
+            
+            const pitchSemitones = parseInt(document.getElementById('pitchSemitones').value) || 0;
+            
+            try {
+                const response = await fetch('/api/queue', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_name: userName,
+                        youtube_video_id: selectedVideo.id,
+                        title: selectedVideo.title,
+                        duration_seconds: selectedVideo.duration_seconds,
+                        thumbnail_url: selectedVideo.thumbnail,
+                        pitch_semitones: pitchSemitones
+                    })
+                });
+                
+                if (response.ok) {
+                    cancelAddSong();
+                    document.getElementById('searchInput').value = '';
+                    document.getElementById('searchResults').innerHTML = '';
+                    loadQueue();
+                } else {
+                    alert('Error adding song to queue');
+                }
+            } catch (error) {
+                alert('Error adding song to queue');
+                console.error(error);
+            }
+        }
+        
+        async function loadQueue() {
+            try {
+                const response = await fetch('/api/queue');
+                const data = await response.json();
+                
+                const queueList = document.getElementById('queueList');
+                if (data.queue.length === 0) {
+                    queueList.innerHTML = '<p>Queue is empty</p>';
+                    return;
+                }
+                
+                queueList.innerHTML = data.queue.map((item, index) => `
+                    <div class="queue-item">
+                        <div class="queue-item-info">
+                            <div class="queue-item-user">${item.user_name}</div>
+                            <div class="queue-item-title">${item.title}</div>
+                            <div class="queue-item-status status-${item.download_status}">
+                                ${item.download_status}
+                            </div>
+                        </div>
+                        <div class="queue-item-position">#${item.position}</div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading queue:', error);
+            }
+        }
+        
+        async function authenticateOperator() {
+            const pin = document.getElementById('pinInput').value;
+            if (!pin) return;
+            
+            try {
+                const response = await fetch('/api/auth/operator', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pin: pin})
+                });
+                
+                if (response.ok) {
+                    operatorAuthenticated = true;
+                    document.getElementById('operatorAuth').classList.add('hidden');
+                    document.getElementById('operatorControls').classList.remove('hidden');
+                    document.getElementById('pinInput').value = '';
+                } else {
+                    alert('Invalid PIN');
+                }
+            } catch (error) {
+                alert('Error authenticating');
+                console.error(error);
+            }
+        }
+        
+        async function logoutOperator() {
+            try {
+                await fetch('/api/auth/logout', {method: 'POST'});
+                operatorAuthenticated = false;
+                document.getElementById('operatorAuth').classList.remove('hidden');
+                document.getElementById('operatorControls').classList.add('hidden');
+            } catch (error) {
+                console.error(error);
+            }
+        }
+        
+        async function play() {
+            await fetch('/api/playback/play', {method: 'POST'});
+        }
+        
+        async function pause() {
+            await fetch('/api/playback/pause', {method: 'POST'});
+        }
+        
+        async function skip() {
+            await fetch('/api/playback/skip', {method: 'POST'});
+            loadQueue();
+        }
+        
+        // Load queue on page load
+        loadQueue();
+        setInterval(loadQueue, 5000); // Refresh every 5 seconds
+    </script>
+</body>
+</html>
+
