@@ -86,6 +86,9 @@ class PlaybackController:
         self._download_monitor_thread = threading.Thread(target=monitor, daemon=True)
         self._download_monitor_thread.start()
         self.logger.debug('Download monitor started')
+        
+        # Set EOS callback
+        self.streaming_controller.set_eos_callback(self.on_song_end)
     
     def _on_download_status(self, item_id: int, status: str, path: Optional[str], error: Optional[str]):
         """Callback for download status updates."""
@@ -126,7 +129,7 @@ class PlaybackController:
             if self.state == PlaybackState.PAUSED:
                 # Resume current song
                 self.logger.info('Resuming playback')
-                # TODO: Resume streaming controller
+                self.streaming_controller.resume()
                 self.state = PlaybackState.PLAYING
                 return True
             
@@ -157,8 +160,7 @@ class PlaybackController:
             self.streaming_controller.set_pitch_shift(pitch)
             
             # Load file into streaming controller
-            # TODO: Implement load_file in StreamingController
-            # self.streaming_controller.load_file(download_path)
+            self.streaming_controller.load_file(download_path)
             
             # Mark as current song
             self.current_song = next_song
@@ -189,7 +191,7 @@ class PlaybackController:
                 return False
             
             self.logger.info('Pausing playback')
-            # TODO: Pause streaming controller
+            self.streaming_controller.pause()
             self.state = PlaybackState.PAUSED
             return True
     
@@ -204,7 +206,8 @@ class PlaybackController:
             self.logger.info('Skipping current song')
             
             # Stop current playback
-            # TODO: Stop streaming controller
+            if self.current_song:
+                self.streaming_controller.stop()
             
             # Load next song
             self.current_song = None

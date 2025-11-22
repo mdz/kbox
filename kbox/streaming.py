@@ -15,9 +15,13 @@ class StreamingController:
         self.server = server
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
-        self.pipeline = self.create_pipeline()
+        self.pipeline = None
+        self.mode = 'passthrough'  # 'passthrough' or 'youtube'
+        self.current_file = None
+        self.eos_callback = None  # Callback for end-of-stream
+        self._create_pipeline()  # Create passthrough pipeline by default
     
-    def create_pipeline(self):
+    def _create_pipeline(self):
         if not Gst.is_initialized():
             self.logger.debug('Initializing gstreamer...')
             Gst.init(None)
@@ -154,18 +158,130 @@ class StreamingController:
                     self.logger.debug('Unhandled state change: %s', newstate)
             elif msg.type == Gst.MessageType.EOS:
                 self.logger.debug('End of stream')
+                if self.eos_callback:
+                    self.eos_callback()
                 break
             else:
                 self.logger.error('Unhandled message: %s', msg.type)
                 break
         self.logger.debug('AudioController.run() exiting')
     
+    def load_file(self, filepath: str):
+        """
+        Load a video file for YouTube playback mode.
+        
+        Args:
+            filepath: Path to video file
+        """
+        self.logger.info('Loading file: %s', filepath)
+        
+        # Stop current pipeline if running
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+        
+        self.current_file = filepath
+        self.mode = 'youtube'
+        self._create_youtube_pipeline(filepath)
+        
+        # Start playback
+        ret = self.pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            self.logger.error('Failed to start YouTube playback')
+            raise RuntimeError('Failed to start playback')
+    
+    def _create_youtube_pipeline(self, filepath: str):
+        """Create pipeline for YouTube file playback."""
+        if not Gst.is_initialized():
+            Gst.init(None)
+        
+        pipeline = Gst.Pipeline.new('YouTubePlayback')
+        
+        # File source
+        filesrc = self.make_element('filesrc', 'filesrc')
+        filesrc.set_property('location', filepath)
+        pipeline.add(filesrc)
+        
+        # Decodebin for audio/video
+        decodebin = self.make_element('decodebin', 'decodebin')
+        pipeline.add(decodebin)
+        
+        # Audio pipeline
+        audioconvert_input = self.make_element('audioconvert', 'audioconvert_input')
+        pipeline.add(audioconvert_input)
+        
+        pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
+        pitch_shift.set_property('semitones', self.pitch_shift_semitones)
+        pipeline.add(pitch_shift)
+        
+        audioconvert_output = self.make_element('audioconvert', 'audioconvert_output')
+        pipeline.add(audioconvert_output)
+        
+        audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
+        self.set_device(audio_sink, self.config.audio_output)
+        pipeline.add(audio_sink)
+        
+        # Video pipeline
+        videoconvert = self.make_element('videoconvert', 'videoconvert')
+        pipeline.add(videoconvert)
+        
+        videoscale = self.make_element('videoscale', 'videoscale')
+        pipeline.add(videoscale)
+        
+        # Video sink - use kmssink on Linux, fakesink on macOS
+        if sys.platform == 'linux':
+            video_sink = self.make_element('kmssink', 'video_sink')
+        else:
+            video_sink = self.make_element('fakesink', 'video_sink')
+        pipeline.add(video_sink)
+        
+        # Link static parts
+        audioconvert_input.link(pitch_shift)
+        pitch_shift.link(audioconvert_output)
+        audioconvert_output.link(audio_sink)
+        
+        videoconvert.link(videoscale)
+        videoscale.link(video_sink)
+        
+        # Handle dynamic pads from decodebin
+        def on_pad_added(element, pad):
+            caps = pad.query_caps(None)
+            caps_string = caps.to_string()
+            self.logger.debug('Decodebin pad added: %s', caps_string)
+            
+            if caps_string.startswith('audio/'):
+                pad.link(audioconvert_input.get_static_pad('sink'))
+            elif caps_string.startswith('video/'):
+                pad.link(videoconvert.get_static_pad('sink'))
+        
+        decodebin.connect('pad-added', on_pad_added)
+        
+        filesrc.link(decodebin)
+        
+        self.pipeline = pipeline
+    
+    def pause(self):
+        """Pause playback."""
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.PAUSED)
+            self.logger.info('Playback paused')
+    
+    def resume(self):
+        """Resume playback."""
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.PLAYING)
+            self.logger.info('Playback resumed')
+    
+    def set_eos_callback(self, callback):
+        """Set callback for end-of-stream events."""
+        self.eos_callback = callback
+    
     def stop(self):
         self.logger.debug('Stopping gstreamer pipeline...')
-        result = self.pipeline.set_state(Gst.State.NULL)
-        if result == Gst.StateChangeReturn.SUCCESS:
-            self.logger.debug('Pipeline state changed successfully')
-        elif result == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError('Failed to change pipeline state')
-        else:
-            raise RuntimeError('Unexpected result from set_state: %s', result)
+        if self.pipeline:
+            result = self.pipeline.set_state(Gst.State.NULL)
+            if result == Gst.StateChangeReturn.SUCCESS:
+                self.logger.debug('Pipeline state changed successfully')
+            elif result == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError('Failed to change pipeline state')
+            else:
+                raise RuntimeError('Unexpected result from set_state: %s', result)
