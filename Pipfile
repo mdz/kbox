@@ -1,0 +1,18 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+mido = {extras = ["ports-rtmidi"] }
+pytest = "*"
+fastapi = "*"
+uvicorn = {extras = ["standard"]}
+google-api-python-client = "*"
+yt-dlp = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.9"
+# python_full_version = "3.12.2"
