@@ -8,6 +8,7 @@ mido = {extras = ["ports-rtmidi"] }
 pytest = "*"
 fastapi = "*"
 uvicorn = {extras = ["standard"]}
+jinja2 = "*"
 google-api-python-client = "*"
 yt-dlp = "*"
 
