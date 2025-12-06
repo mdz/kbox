@@ -78,6 +78,7 @@ class StreamingController:
         self._ensure_gst_initialized()
         
         self.logger.info('Creating pipeline...')
+        Gst = _get_gst()
         pipeline = Gst.Pipeline.new('StreamingController')
 
         self.logger.info('Creating source element: %s', self.config.GSTREAMER_SOURCE)
@@ -258,6 +259,7 @@ class StreamingController:
             self._create_youtube_pipeline(filepath)
             
             # Start playback
+            Gst = _get_gst()
             ret = self.pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
                 self.logger.error('Failed to start YouTube playback')
@@ -276,6 +278,7 @@ class StreamingController:
             return self._create_simple_macos_pipeline(filepath)
         
         self.logger.info('Creating YouTube playback pipeline for: %s', filepath)
+        Gst = _get_gst()
         pipeline = Gst.Pipeline.new('YouTubePlayback')
         
         # File source
@@ -362,6 +365,7 @@ class StreamingController:
         self.logger.info('Using simplified pipeline for macOS')
         
         # Use playbin which is more stable and handles everything internally
+        Gst = _get_gst()
         pipeline = Gst.Pipeline.new('YouTubePlayback')
         
         # Use playbin3 or playbin - simpler and more stable
