@@ -9,6 +9,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "jinja2",
+    "itsdangerous",
     "google-api-python-client",
     "yt-dlp",
 ]
