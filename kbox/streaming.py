@@ -317,6 +317,60 @@ class StreamingController:
         
         self.pipeline = pipeline
     
+    def _create_simple_macos_pipeline(self, filepath: str):
+        """Create a simple, crash-resistant pipeline for macOS."""
+        self.logger.info('Using simplified pipeline for macOS')
+        
+        # Use playbin which is more stable and handles everything internally
+        pipeline = Gst.Pipeline.new('YouTubePlayback')
+        
+        # Use playbin3 or playbin - simpler and more stable
+        try:
+            playbin = self.make_element('playbin', 'playbin')
+        except:
+            # Fallback to playbin3 if playbin doesn't work
+            try:
+                playbin = self.make_element('playbin3', 'playbin')
+            except:
+                self.logger.error('Neither playbin nor playbin3 available')
+                raise RuntimeError('No suitable playback element available')
+        
+        playbin.set_property('uri', f'file://{filepath}')
+        
+        # Set audio sink
+        audio_sink = self.make_element('autoaudiosink', 'audio_sink')
+        playbin.set_property('audio-sink', audio_sink)
+        
+        # Use fakesink for video (we don't need video output in dev)
+        video_sink = self.make_element('fakesink', 'video_sink')
+        playbin.set_property('video-sink', video_sink)
+        
+        # Note: playbin doesn't support pitch shifting directly
+        # For macOS dev, we'll skip pitch shifting to get playback working
+        self.logger.warning('Pitch shifting disabled on macOS (using playbin for stability)')
+        
+        pipeline.add(playbin)
+        self.pipeline = pipeline
+        
+        # Set up EOS callback
+        bus = pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect('message::eos', self._on_eos)
+        bus.connect('message::error', self._on_error)
+        
+        return pipeline
+    
+    def _on_eos(self, bus, message):
+        """Handle end-of-stream message."""
+        self.logger.info('End of stream reached')
+        if self.eos_callback:
+            self.eos_callback()
+    
+    def _on_error(self, bus, message):
+        """Handle error message."""
+        err, debug = message.parse_error()
+        self.logger.error('GStreamer error: %s: %s', err, debug)
+    
     def pause(self):
         """Pause playback."""
         if self.pipeline:
