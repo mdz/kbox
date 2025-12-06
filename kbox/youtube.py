@@ -120,9 +120,17 @@ class YouTubeClient:
         if not duration_str:
             return None
         
+        # Must start with PT
+        if not duration_str.startswith('PT'):
+            return None
+        
         try:
             # Remove PT prefix
-            duration_str = duration_str.replace('PT', '')
+            duration_str = duration_str[2:]  # Remove 'PT'
+            
+            # If empty after removing PT, invalid
+            if not duration_str:
+                return None
             
             hours = 0
             minutes = 0
@@ -130,22 +138,31 @@ class YouTubeClient:
             
             # Parse hours
             if 'H' in duration_str:
-                parts = duration_str.split('H')
+                parts = duration_str.split('H', 1)
                 hours = int(parts[0])
-                duration_str = parts[1]
+                duration_str = parts[1] if len(parts) > 1 else ''
             
             # Parse minutes
             if 'M' in duration_str:
-                parts = duration_str.split('M')
+                parts = duration_str.split('M', 1)
                 minutes = int(parts[0])
-                duration_str = parts[1]
+                duration_str = parts[1] if len(parts) > 1 else ''
             
             # Parse seconds
             if 'S' in duration_str:
-                seconds = int(duration_str.replace('S', ''))
+                # Extract everything before 'S' as seconds
+                parts = duration_str.split('S', 1)
+                if parts[0]:  # Only parse if there's actually a number
+                    seconds = int(parts[0])
+                duration_str = parts[1] if len(parts) > 1 else ''
+            
+            # Check if there's any remaining unparsed text (should be empty now)
+            if duration_str.strip():
+                # Invalid format - has text that wasn't parsed
+                return None
             
             return hours * 3600 + minutes * 60 + seconds
-        except Exception as e:
+        except (ValueError, AttributeError, IndexError) as e:
             self.logger.warning('Failed to parse duration %s: %s', duration_str, e)
             return None
     

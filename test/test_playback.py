@@ -45,14 +45,20 @@ def mock_config_manager():
 def playback_controller(mock_queue_manager, mock_youtube_client, 
                        mock_streaming_controller, mock_config_manager):
     """Create a PlaybackController instance."""
+    # Mock get_queue to return empty list to avoid thread issues
+    mock_queue_manager.get_queue.return_value = []
+    
     controller = PlaybackController(
         mock_queue_manager,
         mock_youtube_client,
         mock_streaming_controller,
         mock_config_manager
     )
-    # Stop the download monitor thread
+    # Stop the download monitor thread immediately
     controller._monitoring = False
+    # Wait a moment for thread to stop
+    import time
+    time.sleep(0.1)
     return controller
 
 
@@ -247,6 +253,9 @@ def test_download_status_callback(playback_controller, mock_queue_manager):
     """Test download status callback."""
     item_id = 1
     download_path = '/path/to/video.mp4'
+    
+    # Mock get_next_song to return None (not the next song)
+    mock_queue_manager.get_next_song.return_value = None
     
     # Simulate download completion
     playback_controller._on_download_status(item_id, 'ready', download_path, None)
