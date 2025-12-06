@@ -19,15 +19,35 @@ class StreamingController:
         self.mode = 'passthrough'  # 'passthrough' or 'youtube'
         self.current_file = None
         self.eos_callback = None  # Callback for end-of-stream
-        self._create_pipeline()  # Create passthrough pipeline by default
+        # Initialize GStreamer but defer pipeline creation until needed
+        # On macOS, GStreamer init can hang/crash, so we'll initialize lazily
+        self._gst_initialized = False
+        self.logger.info('StreamingController initialized (GStreamer will be initialized on demand)')
+    
+    def _ensure_gst_initialized(self):
+        """Initialize GStreamer if not already done."""
+        if self._gst_initialized:
+            return
+        
+        if not Gst.is_initialized():
+            self.logger.info('Initializing GStreamer...')
+            try:
+                import sys
+                argv = ['kbox', '--gst-disable-segtrap', '--gst-disable-registry-fork']
+                Gst.init(argv)
+                self.logger.info('GStreamer initialized successfully')
+            except Exception as e:
+                self.logger.error('Failed to initialize GStreamer: %s', e, exc_info=True)
+                raise
+        self._gst_initialized = True
     
     def _create_pipeline(self):
-        if not Gst.is_initialized():
-            self.logger.debug('Initializing gstreamer...')
-            Gst.init(None)
-
+        self._ensure_gst_initialized()
+        
+        self.logger.info('Creating pipeline...')
         pipeline = Gst.Pipeline.new('StreamingController')
 
+        self.logger.info('Creating source element: %s', self.config.GSTREAMER_SOURCE)
         source = self.make_element(self.config.GSTREAMER_SOURCE, 'source')
         self.set_device(source, self.config.video_input)
         pipeline.add(source)
@@ -115,7 +135,17 @@ class StreamingController:
         self.pitch_shift_semitones = semitones
 
     def run(self):
-        self.logger.debug('Starting gstreamer pipeline...')
+        """Run the streaming controller (start pipeline if not already started)."""
+        try:
+            if self.pipeline is None:
+                self.logger.info('Creating pipeline for first time...')
+                self._create_pipeline()
+            
+            self.logger.debug('Starting gstreamer pipeline...')
+        except Exception as e:
+            self.logger.error('Failed to create/start pipeline: %s', e, exc_info=True)
+            self.logger.warning('Streaming controller will not function, but server will continue')
+            return
         ret = self.pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             self.logger.error('Failed to start pipeline')
@@ -175,24 +205,31 @@ class StreamingController:
         """
         self.logger.info('Loading file: %s', filepath)
         
-        # Stop current pipeline if running
-        if self.pipeline:
-            self.pipeline.set_state(Gst.State.NULL)
-        
-        self.current_file = filepath
-        self.mode = 'youtube'
-        self._create_youtube_pipeline(filepath)
-        
-        # Start playback
-        ret = self.pipeline.set_state(Gst.State.PLAYING)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            self.logger.error('Failed to start YouTube playback')
-            raise RuntimeError('Failed to start playback')
+        try:
+            # Stop current pipeline if running
+            if self.pipeline:
+                try:
+                    self.pipeline.set_state(Gst.State.NULL)
+                except Exception as e:
+                    self.logger.warning('Error stopping previous pipeline: %s', e)
+            
+            self.current_file = filepath
+            self.mode = 'youtube'
+            self._create_youtube_pipeline(filepath)
+            
+            # Start playback
+            ret = self.pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                self.logger.error('Failed to start YouTube playback')
+                raise RuntimeError('Failed to start playback')
+        except Exception as e:
+            self.logger.error('Error loading file %s: %s', filepath, e, exc_info=True)
+            # Don't crash - just log the error
+            raise
     
     def _create_youtube_pipeline(self, filepath: str):
         """Create pipeline for YouTube file playback."""
-        if not Gst.is_initialized():
-            Gst.init(None)
+        self._ensure_gst_initialized()
         
         pipeline = Gst.Pipeline.new('YouTubePlayback')
         

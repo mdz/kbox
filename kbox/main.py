@@ -70,13 +70,20 @@ class KboxServer:
             self.config_manager
         )
         
-        # MIDI controller
-        midi_input_name = self.config_manager.get('midi_input_name')
+        # MIDI controller (only if enabled and device is configured)
+        midi_input_name = self.config_manager.get('midi_input_name') or self.config.midi_input
         if self.config.enable_midi and midi_input_name:
-            self.config.midi_input = midi_input_name
-            self.midi_controller = MidiController(self.config, self)
+            try:
+                self.config.midi_input = midi_input_name
+                self.midi_controller = MidiController(self.config, self)
+                logger.info('MIDI controller initialized with device: %s', midi_input_name)
+            except (ValueError, Exception) as e:
+                logger.warning('Failed to initialize MIDI controller: %s. Continuing without MIDI.', e)
+                self.midi_controller = None
         else:
             self.midi_controller = None
+            logger.info('MIDI controller disabled (enable_midi=%s, device=%s)', 
+                       self.config.enable_midi, midi_input_name)
         
         # Web server
         self.web_app = create_app(
@@ -107,11 +114,14 @@ class KboxServer:
         logger.info('Starting kbox server...')
         
         # Start streaming controller in background thread
-        streaming_thread = threading.Thread(
-            target=self.streaming_controller.run,
-            daemon=True
-        )
-        streaming_thread.start()
+        # Note: On macOS, GStreamer may crash - defer until actually needed
+        # For now, don't start it automatically to avoid crashes during web server startup
+        logger.info('Streaming controller ready (will start when needed)')
+        # streaming_thread = threading.Thread(
+        #     target=safe_streaming_run,
+        #     daemon=True
+        # )
+        # streaming_thread.start()
         
         # Start MIDI controller if enabled
         if self.midi_controller:

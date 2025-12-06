@@ -275,6 +275,17 @@ class YouTubeClient:
                     'outtmpl': output_template,
                     'quiet': False,
                     'no_warnings': False,
+                    # Better compatibility with YouTube
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android', 'web'],  # Try android first, fallback to web
+                        }
+                    },
+                    # Retry on errors
+                    'retries': 3,
+                    'fragment_retries': 3,
+                    # Use cookies if available (for YouTube Premium)
+                    'cookiefile': None,  # Can be set via config later
                 }
                 
                 url = f"https://www.youtube.com/watch?v={video_id}"
@@ -293,9 +304,18 @@ class YouTubeClient:
                     raise FileNotFoundError('Downloaded file not found')
                     
             except Exception as e:
-                self.logger.error('Error downloading video %s: %s', video_id, e, exc_info=True)
+                error_msg = str(e)
+                # Provide more helpful error messages
+                if '403' in error_msg or 'Forbidden' in error_msg:
+                    error_msg = 'YouTube blocked the download (403 Forbidden). This may be due to age restrictions, region blocking, or YouTube policy changes. Try updating yt-dlp: pip install --upgrade yt-dlp'
+                elif 'Private video' in error_msg:
+                    error_msg = 'Video is private or unavailable'
+                elif 'Video unavailable' in error_msg:
+                    error_msg = 'Video is unavailable or has been removed'
+                
+                self.logger.error('Error downloading video %s: %s', video_id, error_msg, exc_info=True)
                 if status_callback:
-                    status_callback('error', None, str(e))
+                    status_callback('error', None, error_msg)
         
         # Start download in background
         thread = threading.Thread(target=download_thread, daemon=True)

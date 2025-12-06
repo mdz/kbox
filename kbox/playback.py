@@ -164,10 +164,21 @@ class PlaybackController:
             
             # Set pitch for this song
             pitch = next_song.get('pitch_semitones', 0)
-            self.streaming_controller.set_pitch_shift(pitch)
+            try:
+                self.streaming_controller.set_pitch_shift(pitch)
+            except Exception as e:
+                self.logger.warning('Could not set pitch shift (GStreamer may not be available): %s', e)
             
             # Load file into streaming controller
-            self.streaming_controller.load_file(download_path)
+            try:
+                self.streaming_controller.load_file(download_path)
+            except Exception as e:
+                self.logger.error('Failed to load file into streaming controller: %s', e)
+                self.logger.warning('This may be due to GStreamer issues on macOS. Playback will not work, but queue management is still functional.')
+                # Mark as error but don't crash
+                self.state = PlaybackState.ERROR
+                self._handle_error(next_song['id'], f'Playback failed: {str(e)}')
+                return False
             
             # Mark as current song
             self.current_song = next_song
