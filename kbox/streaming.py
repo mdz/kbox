@@ -33,12 +33,29 @@ class StreamingController:
             self.logger.info('Initializing GStreamer...')
             try:
                 import sys
-                argv = ['kbox', '--gst-disable-segtrap', '--gst-disable-registry-fork']
+                # Use minimal initialization flags to reduce crash risk
+                argv = [
+                    'kbox',
+                    '--gst-disable-segtrap',
+                    '--gst-disable-registry-fork',
+                    '--gst-disable-registry-update',
+                ]
+                # On macOS, try to initialize with even more conservative settings
+                if sys.platform == 'darwin':
+                    # Set environment variables to reduce plugin scanning
+                    import os
+                    os.environ.setdefault('GST_PLUGIN_SCANNER', '')
+                    os.environ.setdefault('GST_REGISTRY_FORK', 'no')
+                
                 Gst.init(argv)
                 self.logger.info('GStreamer initialized successfully')
             except Exception as e:
                 self.logger.error('Failed to initialize GStreamer: %s', e, exc_info=True)
-                raise
+                # On macOS, if init fails, we might still be able to use playbin
+                if sys.platform == 'darwin':
+                    self.logger.warning('GStreamer init had issues, but continuing anyway')
+                else:
+                    raise
         self._gst_initialized = True
     
     def _create_pipeline(self):
