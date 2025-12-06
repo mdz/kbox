@@ -209,9 +209,13 @@ class PlaybackController:
                 return False
             
             self.logger.info('Pausing playback')
-            self.streaming_controller.pause()
-            self.state = PlaybackState.PAUSED
-            return True
+            try:
+                self.streaming_controller.pause()
+                self.state = PlaybackState.PAUSED
+                return True
+            except Exception as e:
+                self.logger.error('Error pausing playback: %s', e, exc_info=True)
+                return False
     
     def skip(self) -> bool:
         """
