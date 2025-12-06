@@ -236,6 +236,11 @@ class StreamingController:
         """Create pipeline for YouTube file playback."""
         self._ensure_gst_initialized()
         
+        # On macOS, use a simpler pipeline to avoid crashes
+        if sys.platform == 'darwin':
+            return self._create_simple_macos_pipeline(filepath)
+        
+        self.logger.info('Creating YouTube playback pipeline for: %s', filepath)
         pipeline = Gst.Pipeline.new('YouTubePlayback')
         
         # File source
