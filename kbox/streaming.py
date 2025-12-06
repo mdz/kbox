@@ -1,13 +1,27 @@
 import logging
 import sys
 
-import gi
+# Defer GStreamer imports until actually needed to avoid crashes on import
+# On macOS, importing GStreamer can cause segfaults due to library conflicts
+_Gst = None
 
-gi.require_version('GLib', '2.0')
-gi.require_version('GObject', '2.0')
-gi.require_version('Gst', '1.0')
-
-from gi.repository import Gst
+def _get_gst():
+    """Lazily import GStreamer to avoid crashes on startup."""
+    global _Gst
+    if _Gst is not None:
+        return _Gst
+    
+    try:
+        import gi
+        gi.require_version('GLib', '2.0')
+        gi.require_version('GObject', '2.0')
+        gi.require_version('Gst', '1.0')
+        from gi.repository import Gst as _Gst_module
+        _Gst = _Gst_module
+        return _Gst
+    except Exception as e:
+        logging.getLogger(__name__).error('Failed to import GStreamer: %s', e)
+        raise
 
 class StreamingController:
     def __init__(self, config, server):
@@ -26,6 +40,8 @@ class StreamingController:
     
     def _ensure_gst_initialized(self):
         """Initialize GStreamer if not already done."""
+        Gst = _get_gst()  # Import on first use
+        
         if self._gst_initialized:
             return
         
@@ -122,6 +138,7 @@ class StreamingController:
         return pipeline
     
     def make_element(self, element_type, name):
+        Gst = _get_gst()
         element = Gst.ElementFactory.make(element_type, name)
         if element is None:
             # Try to find alternative elements
