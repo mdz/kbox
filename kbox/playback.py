@@ -138,12 +138,19 @@ class PlaybackController:
     
     def _load_and_play_next(self) -> bool:
         """Load next ready song and start playback."""
-        next_song = self.queue_manager.get_next_song()
+        # Get all ready songs
+        queue = self.queue_manager.get_queue()
+        ready_songs = [item for item in queue 
+                      if item['download_status'] == QueueManager.STATUS_READY 
+                      and not item.get('played_at')]  # Not yet played
         
-        if not next_song:
+        if not ready_songs:
             self.logger.info('No ready songs in queue')
             self.state = PlaybackState.IDLE
             return False
+        
+        # Get the first unplayed ready song
+        next_song = ready_songs[0]
         
         # Check if file exists
         download_path = next_song.get('download_path')

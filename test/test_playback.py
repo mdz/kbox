@@ -86,9 +86,12 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager,
         'title': 'Test Song',
         'user_name': 'Alice',
         'download_path': '/path/to/video.mp4',
-        'pitch_semitones': 2
+        'pitch_semitones': 2,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None
     }
-    mock_queue_manager.get_next_song.return_value = mock_song
+    # Mock get_queue to return the song
+    mock_queue_manager.get_queue.return_value = [mock_song]
     
     result = playback_controller.play()
     
@@ -157,9 +160,12 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
         'title': 'Next Song',
         'user_name': 'Bob',
         'download_path': '/path/to/next.mp4',
-        'pitch_semitones': 0
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None
     }
-    mock_queue_manager.get_next_song.return_value = mock_next_song
+    # Mock get_queue to return the next song
+    mock_queue_manager.get_queue.return_value = [mock_next_song]
     
     result = playback_controller.skip()
     
@@ -212,9 +218,12 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
         'title': 'Song 2',
         'user_name': 'Bob',
         'download_path': '/path/to/next.mp4',
-        'pitch_semitones': 0
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None
     }
-    mock_queue_manager.get_next_song.return_value = mock_next_song
+    # Mock get_queue to return the next song
+    mock_queue_manager.get_queue.return_value = [mock_next_song]
     
     playback_controller.on_song_end()
     
