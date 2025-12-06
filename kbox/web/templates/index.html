@@ -261,6 +261,29 @@
         let isOperator = false;
         let currentQueue = [];
         
+        // Auto-refresh queue to show current song
+        setInterval(loadQueue, 2000); // Refresh every 2 seconds
+        
+        // Jump to a specific song
+        async function jumpToSong(itemId) {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/playback/jump/${itemId}`, {method: 'POST'});
+                if (response.ok) {
+                    loadQueue(); // Refresh queue to show new current song
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error jumping to song');
+            }
+        }
+        
         // Check operator status on load
         async function checkOperator() {
             try {
@@ -272,6 +295,9 @@
                 console.error('Error checking operator status:', e);
             }
         }
+        
+        // Load queue on page load
+        loadQueue();
         
         // Authenticate as operator
         async function authenticate() {
