@@ -251,15 +251,28 @@ class StreamingController:
         audioconvert_input = self.make_element('audioconvert', 'audioconvert_input')
         pipeline.add(audioconvert_input)
         
-        pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
-        pitch_shift.set_property('semitones', self.pitch_shift_semitones)
-        pipeline.add(pitch_shift)
+        # Try to add pitch shift, but make it optional
+        use_pitch_shift = False
+        pitch_shift = None
+        try:
+            pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
+            if pitch_shift and hasattr(pitch_shift, 'set_property'):
+                pitch_shift.set_property('semitones', self.pitch_shift_semitones)
+                pipeline.add(pitch_shift)
+                use_pitch_shift = True
+                self.logger.info('Pitch shift enabled')
+            else:
+                self.logger.warning('Pitch shift element created but not usable')
+        except Exception as e:
+            self.logger.warning('Could not create pitch shift element: %s. Continuing without pitch shift.', e)
         
         audioconvert_output = self.make_element('audioconvert', 'audioconvert_output')
         pipeline.add(audioconvert_output)
         
+        # Audio sink - use autoaudiosink which auto-detects
         audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
-        self.set_device(audio_sink, self.config.audio_output)
+        if self.config.audio_output:
+            self.set_device(audio_sink, self.config.audio_output)
         pipeline.add(audio_sink)
         
         # Video pipeline
@@ -277,7 +290,7 @@ class StreamingController:
         pipeline.add(video_sink)
         
         # Link static parts - handle optional pitch shift
-        if use_pitch_shift:
+        if use_pitch_shift and pitch_shift:
             audioconvert_input.link(pitch_shift)
             pitch_shift.link(audioconvert_output)
         else:
