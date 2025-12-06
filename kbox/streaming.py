@@ -419,17 +419,37 @@ class StreamingController:
     
     def pause(self):
         """Pause playback."""
-        if self.pipeline:
+        if not self.pipeline:
+            self.logger.warning('Cannot pause: no pipeline')
+            raise RuntimeError('No active pipeline to pause')
+        
+        try:
             Gst = _get_gst()
-            self.pipeline.set_state(Gst.State.PAUSED)
+            ret = self.pipeline.set_state(Gst.State.PAUSED)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                self.logger.error('Failed to pause pipeline')
+                raise RuntimeError('Failed to pause playback')
             self.logger.info('Playback paused')
+        except Exception as e:
+            self.logger.error('Error pausing playback: %s', e, exc_info=True)
+            raise
     
     def resume(self):
         """Resume playback."""
-        if self.pipeline:
+        if not self.pipeline:
+            self.logger.warning('Cannot resume: no pipeline')
+            raise RuntimeError('No active pipeline to resume')
+        
+        try:
             Gst = _get_gst()
-            self.pipeline.set_state(Gst.State.PLAYING)
+            ret = self.pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                self.logger.error('Failed to resume pipeline')
+                raise RuntimeError('Failed to resume playback')
             self.logger.info('Playback resumed')
+        except Exception as e:
+            self.logger.error('Error resuming playback: %s', e, exc_info=True)
+            raise
     
     def set_eos_callback(self, callback):
         """Set callback for end-of-stream events."""
