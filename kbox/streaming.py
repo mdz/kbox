@@ -185,6 +185,7 @@ class StreamingController:
             self.logger.error('Failed to create/start pipeline: %s', e, exc_info=True)
             self.logger.warning('Streaming controller will not function, but server will continue')
             return
+        Gst = _get_gst()
         ret = self.pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             self.logger.error('Failed to start pipeline')
