@@ -3,7 +3,8 @@ import sys
 class Config:
     if sys.platform == 'darwin':
         GSTREAMER_SOURCE = 'osxaudiosrc'
-        GSTREAMER_SINK = 'osxaudiosink'
+        # Use autoaudiosink which will auto-detect the best audio sink
+        GSTREAMER_SINK = 'autoaudiosink'
         RUBBERBAND_PLUGIN = 'ladspa-ladspa-rubberband-dylib-rubberband-r3-pitchshifter-stereo'
 
         audio_input = None

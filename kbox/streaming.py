@@ -107,7 +107,12 @@ class StreamingController:
     def make_element(self, element_type, name):
         element = Gst.ElementFactory.make(element_type, name)
         if element is None:
-            raise ValueError('Unable to initialize gstreamer element %s as %s' % (element_type, name))
+            # Try to find alternative elements
+            if element_type == self.config.RUBBERBAND_PLUGIN:
+                self.logger.warning('Rubberband plugin not found, pitch shifting will be disabled')
+                # Return a passthrough element instead
+                return self.make_element('identity', name)
+            raise ValueError('Unable to initialize gstreamer element %s as %s. Available plugins may be missing.' % (element_type, name))
         return element
     
     def set_device(self, element, device):
@@ -271,9 +276,12 @@ class StreamingController:
             video_sink = self.make_element('fakesink', 'video_sink')
         pipeline.add(video_sink)
         
-        # Link static parts
-        audioconvert_input.link(pitch_shift)
-        pitch_shift.link(audioconvert_output)
+        # Link static parts - handle optional pitch shift
+        if use_pitch_shift:
+            audioconvert_input.link(pitch_shift)
+            pitch_shift.link(audioconvert_output)
+        else:
+            audioconvert_input.link(audioconvert_output)
         audioconvert_output.link(audio_sink)
         
         videoconvert.link(videoscale)
