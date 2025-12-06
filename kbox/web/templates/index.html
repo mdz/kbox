@@ -122,6 +122,25 @@
             margin: 5px 0;
             background: #333;
             border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .queue-item:hover {
+            border-color: #4a9eff;
+            background: #3a3a3a;
+        }
+        
+        .queue-item.playing {
+            background: #2a4a6a;
+            border-color: #4a9eff;
+            box-shadow: 0 0 10px rgba(74, 158, 255, 0.3);
+        }
+        
+        .queue-item.playing .queue-item-user {
+            color: #6bb6ff;
+            font-weight: 600;
         }
         
         .queue-item-info {
@@ -349,9 +368,15 @@
         // Load queue
         async function loadQueue() {
             try {
-                const response = await fetch('/api/queue');
-                const data = await response.json();
-                currentQueue = data.queue;
+                // Get queue and current playback status
+                const [queueResponse, statusResponse] = await Promise.all([
+                    fetch('/api/queue'),
+                    fetch('/api/playback/status')
+                ]);
+                
+                const queueData = await queueResponse.json();
+                const statusData = await statusResponse.json();
+                currentQueue = queueData.queue;
                 
                 const queueDiv = document.getElementById('queue-list');
                 if (currentQueue.length === 0) {
@@ -359,10 +384,14 @@
                     return;
                 }
                 
+                // Get current song ID
+                const currentSongId = statusData.current_song ? statusData.current_song.id : null;
+                
                 queueDiv.innerHTML = '';
                 currentQueue.forEach(item => {
                     const div = document.createElement('div');
-                    div.className = 'queue-item';
+                    const isPlaying = item.id === currentSongId;
+                    div.className = `queue-item ${isPlaying ? 'playing' : ''}`;
                     const statusClass = `status-${item.download_status}`;
                     div.innerHTML = `
                         <div class="queue-item-info">
@@ -371,10 +400,36 @@
                         </div>
                         <span class="queue-item-status ${statusClass}">${item.download_status}</span>
                     `;
+                    
+                    // Make clickable if operator and song is ready
+                    if (isOperator && item.download_status === 'ready') {
+                        div.onclick = () => jumpToSong(item.id);
+                    }
+                    
                     queueDiv.appendChild(div);
                 });
             } catch (e) {
                 console.error('Error loading queue:', e);
+            }
+        }
+        
+        // Jump to a specific song
+        async function jumpToSong(itemId) {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/playback/jump/${itemId}`, {method: 'POST'});
+                if (response.ok) {
+                    loadQueue(); // Refresh queue to show new current song
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error jumping to song');
             }
         }
         

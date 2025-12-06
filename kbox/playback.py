@@ -129,9 +129,13 @@ class PlaybackController:
             if self.state == PlaybackState.PAUSED:
                 # Resume current song
                 self.logger.info('Resuming playback')
-                self.streaming_controller.resume()
-                self.state = PlaybackState.PLAYING
-                return True
+                try:
+                    self.streaming_controller.resume()
+                    self.state = PlaybackState.PLAYING
+                    return True
+                except Exception as e:
+                    self.logger.error('Error resuming playback: %s', e, exc_info=True)
+                    return False
             
             # Start new song
             return self._load_and_play_next()
@@ -234,6 +238,76 @@ class PlaybackController:
             # Load next song
             self.current_song = None
             return self._load_and_play_next()
+    
+    def jump_to_song(self, item_id: int) -> bool:
+        """
+        Jump to a specific song in the queue.
+        
+        Args:
+            item_id: ID of the queue item to jump to
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        with self.lock:
+            self.logger.info('Jumping to song ID: %s', item_id)
+            
+            # Get the song from queue
+            song = self.queue_manager.get_item(item_id)
+            if not song:
+                self.logger.warning('Song %s not found in queue', item_id)
+                return False
+            
+            # Check if song is ready
+            if song['download_status'] != QueueManager.STATUS_READY:
+                self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
+                return False
+            
+            # Stop current playback
+            if self.current_song:
+                self.streaming_controller.stop()
+            
+            # Mark all songs before this one as played (so they don't play again)
+            queue = self.queue_manager.get_queue()
+            for item in queue:
+                if item['id'] < item_id and not item.get('played_at'):
+                    self.queue_manager.mark_played(item['id'])
+            
+            # Load and play the target song
+            self.current_song = None
+            download_path = song.get('download_path')
+            if not download_path:
+                self.logger.warning('No download path for song %s', item_id)
+                return False
+            
+            try:
+                self.logger.info('Loading song: %s by %s', song['title'], song['user_name'])
+                
+                # Set pitch for this song
+                pitch = song.get('pitch_semitones', 0)
+                try:
+                    self.streaming_controller.set_pitch_shift(pitch)
+                except Exception as e:
+                    self.logger.warning('Could not set pitch shift: %s', e)
+                
+                # Load file into streaming controller
+                self.streaming_controller.load_file(download_path)
+                
+                # Mark as current song
+                self.current_song = song
+                self.state = PlaybackState.PLAYING
+                
+                # Mark as played in queue
+                self.queue_manager.mark_played(song['id'])
+                
+                self.logger.info('Jumped to song: %s', song['title'])
+                return True
+                
+            except Exception as e:
+                self.logger.error('Error jumping to song: %s', e, exc_info=True)
+                self.state = PlaybackState.ERROR
+                self._handle_error(item_id, str(e))
+                return False
     
     def previous(self) -> bool:
         """
