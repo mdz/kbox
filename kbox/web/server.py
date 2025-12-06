@@ -238,6 +238,21 @@ def create_app(
         else:
             raise HTTPException(status_code=400, detail="Failed to skip")
     
+    @app.post("/api/playback/jump/{item_id}")
+    async def jump_to_song(
+        item_id: int,
+        playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator)
+    ):
+        """Jump to a specific song in the queue (operator only)."""
+        if not is_operator:
+            raise HTTPException(status_code=403, detail="Operator authentication required")
+        
+        if playback.jump_to_song(item_id):
+            return {"status": "jumped", "item_id": item_id}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to jump to song")
+    
     @app.post("/api/playback/pitch")
     async def set_pitch(
         request_data: PitchRequest,
