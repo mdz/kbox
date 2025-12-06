@@ -40,18 +40,21 @@ class ConfigManager:
     def _initialize_defaults(self):
         """Initialize default values in database if they don't exist."""
         conn = self.database.get_connection()
-        cursor = conn.cursor()
-        
-        for key, value in self.DEFAULTS.items():
-            cursor.execute('SELECT key FROM config WHERE key = ?', (key,))
-            if not cursor.fetchone():
-                cursor.execute('''
-                    INSERT INTO config (key, value) 
-                    VALUES (?, ?)
-                ''', (key, str(value) if value is not None else ''))
-        
-        conn.commit()
-        self.logger.debug('Configuration defaults initialized')
+        try:
+            cursor = conn.cursor()
+            
+            for key, value in self.DEFAULTS.items():
+                cursor.execute('SELECT key FROM config WHERE key = ?', (key,))
+                if not cursor.fetchone():
+                    cursor.execute('''
+                        INSERT INTO config (key, value) 
+                        VALUES (?, ?)
+                    ''', (key, str(value) if value is not None else ''))
+            
+            conn.commit()
+            self.logger.debug('Configuration defaults initialized')
+        finally:
+            conn.close()
     
     def get(self, key: str, default: Any = None) -> Optional[str]:
         """
@@ -68,14 +71,17 @@ class ConfigManager:
             default = self.DEFAULTS.get(key)
         
         conn = self.database.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT value FROM config WHERE key = ?', (key,))
-        result = cursor.fetchone()
-        
-        if result:
-            return result['value'] if result['value'] else default
-        return default
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT value FROM config WHERE key = ?', (key,))
+            result = cursor.fetchone()
+            
+            if result:
+                return result['value'] if result['value'] else default
+            return default
+        finally:
+            conn.close()
     
     def get_int(self, key: str, default: Optional[int] = None) -> Optional[int]:
         """Get configuration value as integer."""
@@ -118,19 +124,22 @@ class ConfigManager:
             True if successful
         """
         conn = self.database.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO config (key, value, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = CURRENT_TIMESTAMP
-        ''', (key, str(value)))
-        
-        conn.commit()
-        self.logger.debug('Set config %s = %s', key, value)
-        return True
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO config (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (key, str(value)))
+            
+            conn.commit()
+            self.logger.debug('Set config %s = %s', key, value)
+            return True
+        finally:
+            conn.close()
     
     def get_all(self) -> dict:
         """
@@ -140,15 +149,18 @@ class ConfigManager:
             Dictionary of all configuration key-value pairs
         """
         conn = self.database.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT key, value FROM config')
-        config = {}
-        for row in cursor.fetchall():
-            config[row['key']] = row['value']
-        
-        # Merge with defaults to ensure all keys are present
-        result = self.DEFAULTS.copy()
-        result.update(config)
-        return result
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('SELECT key, value FROM config')
+            config = {}
+            for row in cursor.fetchall():
+                config[row['key']] = row['value']
+            
+            # Merge with defaults to ensure all keys are present
+            result = self.DEFAULTS.copy()
+            result.update(config)
+            return result
+        finally:
+            conn.close()
 

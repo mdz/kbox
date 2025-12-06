@@ -30,19 +30,15 @@ class Database:
             db_path = str(kbox_dir / 'kbox.db')
         
         self.db_path = db_path
-        self.conn = None
-        self._initialize()
-    
-    def _initialize(self):
-        """Initialize database connection and create schema if needed."""
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row  # Enable column access by name
-        self._create_schema()
+        self._ensure_schema()
         self.logger.info('Database initialized at %s', self.db_path)
     
-    def _create_schema(self):
-        """Create database schema if it doesn't exist."""
-        cursor = self.conn.cursor()
+    def _ensure_schema(self):
+        """Ensure database schema exists (thread-safe)."""
+        # Create a temporary connection just to create schema
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
         
         # Queue items table
         cursor.execute('''
@@ -83,18 +79,26 @@ class Database:
             ON queue_items(download_status)
         ''')
         
-        self.conn.commit()
+        conn.commit()
+        conn.close()
         self.logger.debug('Database schema created/verified')
     
+    
     def get_connection(self):
-        """Get database connection."""
-        return self.conn
+        """
+        Get a new database connection (thread-safe).
+        
+        Each thread should get its own connection. Caller is responsible
+        for closing the connection when done.
+        """
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
     
     def close(self):
-        """Close database connection."""
-        if self.conn:
-            self.conn.close()
-            self.logger.debug('Database connection closed')
+        """Close database connection (no-op since we use per-thread connections)."""
+        # No-op since we create connections per-thread now
+        pass
     
     def __enter__(self):
         """Context manager entry."""
