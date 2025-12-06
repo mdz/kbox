@@ -200,6 +200,7 @@ class StreamingController:
     
         # wait for messages
         bus = self.pipeline.get_bus()
+        Gst = _get_gst()  # Get Gst for message types
         while True:
             msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE, Gst.MessageType.ERROR | Gst.MessageType.EOS | Gst.MessageType.STATE_CHANGED)
 
@@ -250,6 +251,7 @@ class StreamingController:
             # Stop current pipeline if running
             if self.pipeline:
                 try:
+                    Gst = _get_gst()
                     self.pipeline.set_state(Gst.State.NULL)
                 except Exception as e:
                     self.logger.warning('Error stopping previous pipeline: %s', e)
@@ -418,12 +420,14 @@ class StreamingController:
     def pause(self):
         """Pause playback."""
         if self.pipeline:
+            Gst = _get_gst()
             self.pipeline.set_state(Gst.State.PAUSED)
             self.logger.info('Playback paused')
     
     def resume(self):
         """Resume playback."""
         if self.pipeline:
+            Gst = _get_gst()
             self.pipeline.set_state(Gst.State.PLAYING)
             self.logger.info('Playback resumed')
     
@@ -434,6 +438,7 @@ class StreamingController:
     def stop(self):
         self.logger.debug('Stopping gstreamer pipeline...')
         if self.pipeline:
+            Gst = _get_gst()
             result = self.pipeline.set_state(Gst.State.NULL)
             if result == Gst.StateChangeReturn.SUCCESS:
                 self.logger.debug('Pipeline state changed successfully')
