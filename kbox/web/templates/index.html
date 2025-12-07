@@ -24,6 +24,32 @@
             text-align: center;
             margin: 20px 0;
             color: #fff;
+            position: relative;
+        }
+        
+        .help-button {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .help-button:hover {
+            background: #5aaeff;
+            transform: scale(1.05);
         }
         
         .section {
@@ -48,6 +74,11 @@
             background: #333;
             color: #e0e0e0;
             font-size: 16px;
+        }
+        
+        #search-input {
+            padding: 24px;
+            font-size: 18px;
         }
         
         button {
@@ -246,6 +277,7 @@
     </style>
 </head>
 <body>
+    <button class="help-button" onclick="showHelp()" title="Help">?</button>
     <h1>🎤 kbox</h1>
     
     <!-- User Name Prompt Modal -->
@@ -276,6 +308,32 @@
         </div>
     </div>
     
+    <!-- Help Modal -->
+    <div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
+        <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
+            <h2>How to Use kbox</h2>
+            <div style="color: #e0e0e0; line-height: 1.6;">
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Adding Songs</h3>
+                <ol style="margin-left: 20px; margin-bottom: 20px;">
+                    <li style="margin-bottom: 8px;">Enter a song name in the search box and tap "Search"</li>
+                    <li style="margin-bottom: 8px;">Tap on a search result to open the confirmation dialog</li>
+                    <li style="margin-bottom: 8px;">Optionally adjust the pitch (semitones) if needed</li>
+                    <li style="margin-bottom: 8px;">Tap "Add to Queue" to add the song</li>
+                </ol>
+                
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Queue</h3>
+                <p style="margin-bottom: 20px;">Your songs will appear in the queue. The currently playing song is highlighted in blue. Songs are played in the order they were added.</p>
+                
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Pitch Adjustment</h3>
+                <p style="margin-bottom: 20px;">You can adjust the pitch when adding a song, or operators can adjust it during playback. Range: -12 to +12 semitones (one octave down/up).</p>
+                
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Operator Controls</h3>
+                <p style="margin-bottom: 20px;">Operators can control playback (play, pause, skip) and adjust pitch during playback. Tap "Open Playback Controls" to access these features.</p>
+            </div>
+            <button onclick="hideHelp()" style="margin-top: 20px;">Close</button>
+        </div>
+    </div>
+    
     <!-- Operator Authentication -->
     <div class="section" id="auth-section">
         <h2>Operator Controls</h2>
@@ -286,7 +344,6 @@
     
     <!-- Search Section -->
     <div class="section">
-        <h2>Search Songs</h2>
         <input type="text" id="search-input" placeholder="Search for a song..." />
         <button onclick="search()">Search</button>
         <div id="search-results" class="search-results"></div>
@@ -634,6 +691,20 @@
             } catch (e) {
                 alert('Error adding song to queue');
             }
+        }
+        
+        // Show help modal
+        function showHelp() {
+            const modal = document.getElementById('help-modal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+        }
+        
+        // Hide help modal
+        function hideHelp() {
+            const modal = document.getElementById('help-modal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
         }
         
         // Load queue
