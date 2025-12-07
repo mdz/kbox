@@ -274,6 +274,57 @@
         .modal input {
             margin-bottom: 15px;
         }
+        
+        .pitch-control {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .pitch-display {
+            flex: 1;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #4a9eff;
+            min-width: 60px;
+            padding: 10px;
+        }
+        
+        .pitch-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 8px;
+            font-size: 24px;
+            font-weight: bold;
+            border: 2px solid #4a9eff;
+            background: #333;
+            color: #4a9eff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        .pitch-button:active {
+            background: #4a9eff;
+            color: #fff;
+        }
+        
+        .pitch-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pitch-label {
+            display: block;
+            margin-bottom: 8px;
+            color: #aaa;
+            font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
@@ -298,8 +349,16 @@
                 <!-- Content will be populated by JavaScript -->
             </div>
             <div style="margin-bottom: 15px;">
-                <label for="add-song-pitch-input" style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Pitch Adjustment (semitones):</label>
-                <input type="number" id="add-song-pitch-input" value="0" min="-12" max="12" style="width: 100%;" />
+                <label class="pitch-label">Pitch Adjustment (semitones):</label>
+                <div class="pitch-control">
+                    <button class="pitch-button" onclick="adjustPitch('add-song', -1)">−</button>
+                    <div class="pitch-display" id="add-song-pitch-display">
+                        <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
+                        <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
+                    </div>
+                    <button class="pitch-button" onclick="adjustPitch('add-song', 1)">+</button>
+                </div>
+                <input type="hidden" id="add-song-pitch-input" value="0" />
             </div>
             <div style="display: flex; gap: 10px;">
                 <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
@@ -316,8 +375,16 @@
                 <!-- Content will be populated by JavaScript -->
             </div>
             <div style="margin-bottom: 15px;">
-                <label for="edit-queue-item-pitch-input" style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Pitch Adjustment (semitones):</label>
-                <input type="number" id="edit-queue-item-pitch-input" value="0" min="-12" max="12" style="width: 100%;" />
+                <label class="pitch-label">Pitch Adjustment (semitones):</label>
+                <div class="pitch-control">
+                    <button class="pitch-button" onclick="adjustPitch('edit-queue-item', -1)" id="edit-queue-item-pitch-minus">−</button>
+                    <div class="pitch-display" id="edit-queue-item-pitch-display">
+                        <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
+                        <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
+                    </div>
+                    <button class="pitch-button" onclick="adjustPitch('edit-queue-item', 1)" id="edit-queue-item-pitch-plus">+</button>
+                </div>
+                <input type="hidden" id="edit-queue-item-pitch-input" value="0" />
             </div>
             <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
                 <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
@@ -390,9 +457,17 @@
             <button onclick="playback('previous')">⏮ Previous</button>
         </div>
         <div>
-            <label>Pitch Adjustment (semitones):</label>
-            <input type="number" id="pitch-input" value="0" min="-12" max="12" />
-            <button onclick="setPitch()">Set Pitch</button>
+            <label class="pitch-label">Pitch Adjustment (semitones):</label>
+            <div class="pitch-control">
+                <button class="pitch-button" onclick="adjustPitch('operator', -1)">−</button>
+                <div class="pitch-display" id="operator-pitch-display">
+                    <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
+                    <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
+                </div>
+                <button class="pitch-button" onclick="adjustPitch('operator', 1)">+</button>
+            </div>
+            <input type="hidden" id="pitch-input" value="0" />
+            <button onclick="setPitch()" style="width: 100%; margin-top: 10px;">Set Pitch</button>
         </div>
         <button class="danger" onclick="clearQueue()">Clear Queue</button>
     </div>
@@ -408,6 +483,76 @@
         let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
         let userName = null;
+        
+        // Convert semitones to musical interval name
+        function getIntervalName(semitones) {
+            const intervals = {
+                0: 'Perfect Unison',
+                1: 'Minor Second',
+                2: 'Major Second',
+                3: 'Minor Third',
+                4: 'Major Third',
+                5: 'Perfect Fourth',
+                6: 'Tritone',
+                7: 'Perfect Fifth',
+                8: 'Minor Sixth',
+                9: 'Major Sixth',
+                10: 'Minor Seventh',
+                11: 'Major Seventh',
+                12: 'Perfect Octave'
+            };
+            
+            const absSemitones = Math.abs(semitones);
+            const interval = intervals[absSemitones] || `${absSemitones} semitones`;
+            
+            if (semitones === 0) {
+                return interval;
+            } else if (semitones < 0) {
+                return `${interval} down`;
+            } else {
+                return `${interval} up`;
+            }
+        }
+        
+        // Update pitch display with number and interval name
+        function updatePitchDisplay(displayId, value) {
+            const display = document.getElementById(displayId);
+            if (!display) return;
+            
+            const intervalName = getIntervalName(value);
+            display.innerHTML = `<div style="font-size: 24px; font-weight: bold; color: #4a9eff;">${value}</div><div style="font-size: 12px; color: #aaa; margin-top: 2px;">${intervalName}</div>`;
+        }
+        
+        // Adjust pitch value with +/- buttons
+        function adjustPitch(context, delta) {
+            const inputId = context === 'add-song' ? 'add-song-pitch-input' : 
+                           context === 'edit-queue-item' ? 'edit-queue-item-pitch-input' : 
+                           'pitch-input';
+            const displayId = context === 'add-song' ? 'add-song-pitch-display' : 
+                             context === 'edit-queue-item' ? 'edit-queue-item-pitch-display' : 
+                             'operator-pitch-display';
+            
+            const input = document.getElementById(inputId);
+            
+            if (!input) return;
+            
+            let currentValue = parseInt(input.value) || 0;
+            let newValue = currentValue + delta;
+            
+            // Clamp to -12 to +12 range
+            newValue = Math.max(-12, Math.min(12, newValue));
+            
+            input.value = newValue;
+            updatePitchDisplay(displayId, newValue);
+            
+            // Update button states
+            if (context === 'edit-queue-item') {
+                const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
+                const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
+                if (minusBtn) minusBtn.disabled = (newValue <= -12);
+                if (plusBtn) plusBtn.disabled = (newValue >= 12);
+            }
+        }
         
         // Initialize user name
         {% if test_mode %}
@@ -544,10 +689,22 @@
                 </div>
             `;
             
-            // Set pitch input and enable/disable based on permissions
+            // Set pitch input and display based on permissions
             const pitchInput = document.getElementById('edit-queue-item-pitch-input');
-            pitchInput.value = item.pitch_semitones || 0;
-            pitchInput.disabled = !canEdit;
+            const pitchDisplayId = 'edit-queue-item-pitch-display';
+            const pitchValue = item.pitch_semitones || 0;
+            pitchInput.value = pitchValue;
+            updatePitchDisplay(pitchDisplayId, pitchValue);
+            
+            // Enable/disable pitch buttons based on permissions
+            const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
+            const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
+            if (minusBtn) {
+                minusBtn.disabled = !canEdit || (pitchValue <= -12);
+            }
+            if (plusBtn) {
+                plusBtn.disabled = !canEdit || (pitchValue >= 12);
+            }
             
             // Show/hide save button based on permissions
             const saveButton = document.querySelector('#edit-queue-item-modal button[onclick="saveQueueItemPitch()"]');
@@ -797,16 +954,10 @@
                 </div>
             `;
             
-            // Reset pitch input
+            // Reset pitch input and display
             const pitchInput = document.getElementById('add-song-pitch-input');
             pitchInput.value = '0';
-            
-            // Handle Enter key in pitch input
-            pitchInput.onkeypress = function(e) {
-                if (e.key === 'Enter') {
-                    confirmAddToQueue();
-                }
-            };
+            updatePitchDisplay('add-song-pitch-display', 0);
             
             // Show modal
             const modal = document.getElementById('add-song-modal');
