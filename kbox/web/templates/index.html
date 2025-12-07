@@ -234,14 +234,6 @@
         <div id="search-results" class="search-results"></div>
     </div>
     
-    <!-- Video Player Section -->
-    <div class="section" id="video-section" style="display: none;">
-        <h2>Now Playing</h2>
-        <video id="video-player" controls autoplay style="width: 100%; max-width: 800px; background: #000;">
-            Your browser does not support the video tag.
-        </video>
-    </div>
-    
     <!-- Queue Section -->
     <div class="section">
         <h2>Queue</h2>
@@ -439,30 +431,6 @@
                 const statusData = await statusResponse.json();
                 currentQueue = queueData.queue;
                 
-                // Update video player if song is playing
-                const videoSection = document.getElementById('video-section');
-                const videoPlayer = document.getElementById('video-player');
-                
-                if (statusData.current_song && statusData.state === 'playing') {
-                    const videoId = statusData.current_song.youtube_video_id;
-                    const videoUrl = `/api/video/${videoId}`;
-                    
-                    // Get current src (might be full URL)
-                    const currentSrc = videoPlayer.src || '';
-                    const currentVideoId = currentSrc.split('/').pop() || '';
-                    
-                    // Always show and update video player when playing
-                    videoPlayer.src = videoUrl;
-                    videoSection.style.display = 'block';
-                    console.log('Video player updated:', videoUrl, 'State:', statusData.state);
-                } else {
-                    videoSection.style.display = 'none';
-                    if (videoPlayer) {
-                        videoPlayer.pause();
-                        videoPlayer.src = '';
-                    }
-                }
-                
                 const queueDiv = document.getElementById('queue-list');
                 if (currentQueue.length === 0) {
                     queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
@@ -495,26 +463,6 @@
                 });
             } catch (e) {
                 console.error('Error loading queue:', e);
-            }
-        }
-        
-        // Jump to a specific song
-        async function jumpToSong(itemId) {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/api/playback/jump/${itemId}`, {method: 'POST'});
-                if (response.ok) {
-                    loadQueue(); // Refresh queue to show new current song
-                } else {
-                    const error = await response.json();
-                    alert('Error: ' + error.detail);
-                }
-            } catch (e) {
-                alert('Error jumping to song');
             }
         }
         

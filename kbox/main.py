@@ -8,6 +8,7 @@ import logging
 import signal
 import sys
 import threading
+import ctypes
 import uvicorn
 from pathlib import Path
 
@@ -100,9 +101,15 @@ class KboxServer:
             test_mode=self.test_mode
         )
         
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Setup signal handlers (only if we're in the main thread)
+        # On macOS with gst_macos_main, signal handlers are set up differently
+        try:
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+        except ValueError:
+            # Signal handlers can only be set in main thread
+            # On macOS with gst_macos_main, we'll handle this differently
+            logger.debug('Could not set signal handlers (may be in non-main thread)')
         
         logger.info('kbox server initialized')
     
@@ -124,11 +131,6 @@ class KboxServer:
         # Note: On macOS, GStreamer may crash - defer until actually needed
         # For now, don't start it automatically to avoid crashes during web server startup
         logger.info('Streaming controller ready (will start when needed)')
-        # streaming_thread = threading.Thread(
-        #     target=safe_streaming_run,
-        #     daemon=True
-        # )
-        # streaming_thread.start()
         
         # Start MIDI controller if enabled
         if self.midi_controller:
@@ -153,13 +155,36 @@ class KboxServer:
         logger.info('API: http://%s:8000/api', local_ip)
         logger.info('=' * 60)
         
-        # Start web server (blocking)
-        uvicorn.run(
-            self.web_app,
-            host='0.0.0.0',
-            port=8000,
-            log_level='info'
-        )
+        # On macOS, run uvicorn in a thread so main thread can run NSRunLoop
+        # On other platforms, run uvicorn normally (blocking)
+        if sys.platform == 'darwin':
+            # Run uvicorn in a background thread
+            def run_server():
+                uvicorn.run(
+                    self.web_app,
+                    host='0.0.0.0',
+                    port=8000,
+                    log_level='info'
+                )
+            
+            server_thread = threading.Thread(target=run_server, daemon=False)
+            server_thread.start()
+            
+            # On macOS, we need to run NSRunLoop on main thread
+            # This will be handled by gst_macos_main() wrapper
+            # For now, just wait for the server thread
+            try:
+                server_thread.join()
+            except KeyboardInterrupt:
+                logger.info('Interrupted by user')
+        else:
+            # Start web server (blocking)
+            uvicorn.run(
+                self.web_app,
+                host='0.0.0.0',
+                port=8000,
+                log_level='info'
+            )
     
     def stop(self):
         """Stop all components."""
@@ -179,8 +204,8 @@ class KboxServer:
         
         logger.info('kbox server stopped')
 
-def main():
-    """Main entry point."""
+def actual_main():
+    """Actual main function that runs the server."""
     import argparse
     parser = argparse.ArgumentParser(description='kbox - Self-contained karaoke system')
     parser.add_argument('--test-mode', '-t', action='store_true',
@@ -197,6 +222,60 @@ def main():
         logger.error('Fatal error: %s', e, exc_info=True)
         server.stop()
         sys.exit(1)
+    return 0
+
+def main():
+    """Main entry point. Uses gst_macos_main() on macOS for proper video support."""
+    if sys.platform == 'darwin':
+        try:
+            # Load GStreamer library
+            import os
+            gst_lib_path = os.path.join(os.path.expanduser('~/.homebrew'), 'lib/libgstreamer-1.0.dylib')
+            if not os.path.exists(gst_lib_path):
+                # Try Homebrew default location
+                gst_lib_path = '/opt/homebrew/lib/libgstreamer-1.0.dylib'
+            if not os.path.exists(gst_lib_path):
+                # Fallback to system library path
+                import subprocess
+                result = subprocess.run(['brew', '--prefix', 'gstreamer'], 
+                                      capture_output=True, text=True)
+                if result.returncode == 0:
+                    gst_prefix = result.stdout.strip()
+                    gst_lib_path = f'{gst_prefix}/lib/libgstreamer-1.0.dylib'
+            
+            if os.path.exists(gst_lib_path):
+                # Load GStreamer library
+                gst_lib = ctypes.CDLL(gst_lib_path)
+                
+                # Define GstMainFunc type
+                GstMainFunc = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p))
+                
+                # Get gst_macos_main function
+                gst_macos_main = gst_lib.gst_macos_main
+                gst_macos_main.argtypes = [GstMainFunc, ctypes.c_int, ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p]
+                gst_macos_main.restype = ctypes.c_int
+                
+                # Convert argv to ctypes format
+                argc = len(sys.argv)
+                argv = (ctypes.c_char_p * (argc + 1))()
+                for i, arg in enumerate(sys.argv):
+                    argv[i] = arg.encode('utf-8')
+                argv[argc] = None
+                
+                # Create wrapper function
+                def wrapper(argc, argv):
+                    return actual_main()
+                
+                # Call gst_macos_main
+                return gst_macos_main(GstMainFunc(wrapper), argc, argv, None)
+            else:
+                logger.warning('Could not find libgstreamer-1.0.dylib, falling back to regular main')
+                return actual_main()
+        except Exception as e:
+            logger.warning('Could not use gst_macos_main: %s, falling back to regular main', e)
+            return actual_main()
+    else:
+        return actual_main()
 
 if __name__ == '__main__':
     main()

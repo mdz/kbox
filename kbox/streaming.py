@@ -371,28 +371,12 @@ class StreamingController:
         self.pipeline = pipeline
     
     def _create_simple_macos_pipeline(self, filepath: str):
-        """Create a simple, crash-resistant pipeline for macOS."""
-        self.logger.info('Using simplified pipeline for macOS')
+        """Create a simple pipeline for macOS.
         
-        # Initialize NSApplication for video sinks (required on macOS)
-        # This must be done before creating video sinks
-        # Only initialize once (use a class variable to track)
-        if not hasattr(self.__class__, '_nsapp_initialized'):
-            try:
-                from AppKit import NSApplication
-                app = NSApplication.sharedApplication()
-                if app is None:
-                    app = NSApplication.alloc().init()
-                # Activate the app to ensure it's running
-                app.activateIgnoringOtherApps_(True)
-                self.logger.info('NSApplication initialized for video support')
-                self.__class__._nsapp_initialized = True
-            except ImportError:
-                self.logger.warning('AppKit not available - install pyobjc for video support: pip install pyobjc')
-                self.__class__._nsapp_initialized = False
-            except Exception as e:
-                self.logger.warning('Could not initialize NSApplication: %s (video may not work)', e)
-                self.__class__._nsapp_initialized = False
+        The video sink (osxvideosink/glimagesink) handles NSApplication/NSRunLoop internally.
+        We just need to ensure GLib main loop is running (done separately).
+        """
+        self.logger.info('Creating macOS pipeline')
         
         # Use playbin which is more stable and handles everything internally
         Gst = _get_gst()
@@ -415,36 +399,11 @@ class StreamingController:
         audio_sink = self.make_element('autoaudiosink', 'audio_sink')
         playbin.set_property('audio-sink', audio_sink)
         
-        # Try glimagesink first (OpenGL-based, doesn't require NSRunLoop)
-        # Falls back to osxvideosink, then autovideosink, then fakesink
-        video_sink = None
-        try:
-            video_sink = self.make_element('glimagesink', 'video_sink')
-            self.logger.info('Using glimagesink for video output (OpenGL-based, no NSRunLoop needed)')
-        except Exception as e:
-            self.logger.debug('glimagesink failed: %s', e)
-            try:
-                video_sink = self.make_element('osxvideosink', 'video_sink')
-                self.logger.info('Using osxvideosink for video output (requires NSRunLoop)')
-            except Exception as e2:
-                self.logger.debug('osxvideosink failed: %s', e2)
-                try:
-                    video_sink = self.make_element('autovideosink', 'video_sink')
-                    self.logger.info('Using autovideosink for video output (fallback)')
-                except Exception as e3:
-                    self.logger.warning('autovideosink failed: %s', e3)
-                    self.logger.warning('No video sink available, using fakesink (no video will be displayed)')
-                    video_sink = self.make_element('fakesink', 'video_sink')
-        
-        if video_sink:
-            playbin.set_property('video-sink', video_sink)
-            # For osxvideosink, try to ensure window is visible
-            try:
-                if hasattr(video_sink, 'set_property'):
-                    # Don't sync video to audio clock (can cause issues)
-                    video_sink.set_property('sync', False)
-            except:
-                pass
+        # Use autovideosink - it will auto-select the best sink (osxvideosink/glimagesink)
+        # The sink handles NSApplication/NSRunLoop internally
+        video_sink = self.make_element('autovideosink', 'video_sink')
+        playbin.set_property('video-sink', video_sink)
+        self.logger.info('Video sink configured: autovideosink (will auto-select best sink for macOS)')
         
         # Note: playbin doesn't support pitch shifting directly
         # For macOS dev, we'll skip pitch shifting to get playback working
@@ -453,11 +412,33 @@ class StreamingController:
         pipeline.add(playbin)
         self.pipeline = pipeline
         
-        # Set up EOS callback
+        # Set up EOS callback with signal watch (requires GLib main loop)
         bus = pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect('message::eos', self._on_eos)
         bus.connect('message::error', self._on_error)
+        
+        # Start GLib main loop for signal callbacks (if not already running)
+        if not hasattr(self.__class__, '_glib_loop_thread') or not self.__class__._glib_loop_thread.is_alive():
+            import threading
+            try:
+                from gi.repository import GLib
+                
+                def run_glib_loop():
+                    """Run GLib main loop for GStreamer signal callbacks."""
+                    try:
+                        self.logger.info('Starting GLib main loop for GStreamer events')
+                        loop = GLib.MainLoop()
+                        loop.run()
+                    except Exception as e:
+                        self.logger.error('Error in GLib main loop: %s', e, exc_info=True)
+                
+                glib_thread = threading.Thread(target=run_glib_loop, daemon=True, name='GLibMainLoop')
+                glib_thread.start()
+                self.__class__._glib_loop_thread = glib_thread
+                self.logger.info('GLib main loop started for GStreamer signal callbacks')
+            except ImportError:
+                self.logger.warning('GLib not available for main loop - signal callbacks may not work')
         
         return pipeline
     
