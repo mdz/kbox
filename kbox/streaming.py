@@ -378,12 +378,29 @@ class StreamingController:
         # This must be done before creating video sinks
         try:
             from AppKit import NSApplication
-            app = NSApplication.sharedApplication()
-            if app is None:
-                app = NSApplication.alloc().init()
-            # Activate the app to ensure it's running
-            app.activateIgnoringOtherApps_(True)
-            self.logger.info('NSApplication initialized for video support')
+            import threading
+            
+            def init_nsapp():
+                app = NSApplication.sharedApplication()
+                if app is None:
+                    app = NSApplication.alloc().init()
+                # Activate the app to ensure it's running
+                app.activateIgnoringOtherApps_(True)
+                # Start the run loop in a separate thread
+                # This is needed for video windows to appear
+                def run_loop():
+                    from Foundation import NSRunLoop, NSDefaultRunLoopMode
+                    run_loop = NSRunLoop.currentRunLoop()
+                    while True:
+                        run_loop.runMode_beforeDate_(NSDefaultRunLoopMode, 
+                                                     run_loop.limitDateForMode_(NSDefaultRunLoopMode))
+                
+                run_thread = threading.Thread(target=run_loop, daemon=True)
+                run_thread.start()
+                self.logger.info('NSApplication initialized with run loop for video support')
+            
+            # Initialize on main thread if possible, otherwise current thread
+            init_nsapp()
         except ImportError:
             self.logger.warning('AppKit not available - install pyobjc for video support: pip install pyobjc')
         except Exception as e:
