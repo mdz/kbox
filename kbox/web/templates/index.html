@@ -439,6 +439,26 @@
                 const statusData = await statusResponse.json();
                 currentQueue = queueData.queue;
                 
+                // Update video player if song is playing
+                const videoSection = document.getElementById('video-section');
+                const videoPlayer = document.getElementById('video-player');
+                
+                if (statusData.current_song && statusData.state === 'playing') {
+                    const videoId = statusData.current_song.youtube_video_id;
+                    const videoUrl = `/api/video/${videoId}`;
+                    
+                    // Only update if video source changed
+                    if (videoPlayer.src !== videoUrl) {
+                        videoPlayer.src = videoUrl;
+                        videoSection.style.display = 'block';
+                    }
+                } else {
+                    videoSection.style.display = 'none';
+                    if (videoPlayer) {
+                        videoPlayer.pause();
+                    }
+                }
+                
                 const queueDiv = document.getElementById('queue-list');
                 if (currentQueue.length === 0) {
                     queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
