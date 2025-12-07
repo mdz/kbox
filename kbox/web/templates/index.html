@@ -258,6 +258,24 @@
         </div>
     </div>
     
+    <!-- Add Song Confirmation Modal -->
+    <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
+        <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
+            <h2>Add to Queue</h2>
+            <div id="add-song-modal-content" style="margin-bottom: 20px;">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="add-song-pitch-input" style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Pitch Adjustment (semitones):</label>
+                <input type="number" id="add-song-pitch-input" value="0" min="-12" max="12" style="width: 100%;" />
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
+                <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Operator Authentication -->
     <div class="section" id="auth-section">
         <h2>Operator Controls</h2>
@@ -513,7 +531,7 @@
                             <div class="search-result-channel">${video.channel}</div>
                         </div>
                     `;
-                    div.onclick = () => addToQueue(video);
+                    div.onclick = () => showAddSongModal(video);
                     resultsDiv.appendChild(div);
                 });
             } catch (e) {
@@ -521,13 +539,72 @@
             }
         }
         
-        // Add song to queue
-        async function addToQueue(video) {
+        // Store current video being added
+        let currentVideoToAdd = null;
+        
+        // Show add song confirmation modal
+        function showAddSongModal(video) {
             if (!userName) {
                 alert('Please enter your name first');
                 document.getElementById('name-modal').classList.remove('hidden');
                 return;
             }
+            
+            currentVideoToAdd = video;
+            
+            // Format duration
+            const duration = video.duration_seconds || 0;
+            const minutes = Math.floor(duration / 60);
+            const seconds = duration % 60;
+            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
+            
+            // Populate modal content
+            const contentDiv = document.getElementById('add-song-modal-content');
+            contentDiv.innerHTML = `
+                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                    <img src="${video.thumbnail}" alt="${video.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />
+                    <div style="flex: 1;">
+                        <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${video.title}</div>
+                        <div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${video.channel}</div>
+                        <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
+                    </div>
+                </div>
+            `;
+            
+            // Reset pitch input
+            const pitchInput = document.getElementById('add-song-pitch-input');
+            pitchInput.value = '0';
+            
+            // Handle Enter key in pitch input
+            pitchInput.onkeypress = function(e) {
+                if (e.key === 'Enter') {
+                    confirmAddToQueue();
+                }
+            };
+            
+            // Show modal
+            const modal = document.getElementById('add-song-modal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+            
+            // Focus pitch input (optional, but helpful)
+            setTimeout(() => pitchInput.focus(), 100);
+        }
+        
+        // Cancel adding song
+        function cancelAddToQueue() {
+            const modal = document.getElementById('add-song-modal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+            currentVideoToAdd = null;
+        }
+        
+        // Confirm and add song to queue
+        async function confirmAddToQueue() {
+            if (!currentVideoToAdd) return;
+            
+            const pitchInput = document.getElementById('add-song-pitch-input');
+            const pitchSemitones = parseInt(pitchInput.value) || 0;
             
             try {
                 const response = await fetch('/api/queue', {
@@ -535,18 +612,22 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         user_name: userName,
-                        youtube_video_id: video.id,
-                        title: video.title,
-                        duration_seconds: video.duration_seconds,
-                        thumbnail_url: video.thumbnail,
-                        pitch_semitones: 0
+                        youtube_video_id: currentVideoToAdd.id,
+                        title: currentVideoToAdd.title,
+                        duration_seconds: currentVideoToAdd.duration_seconds,
+                        thumbnail_url: currentVideoToAdd.thumbnail,
+                        pitch_semitones: pitchSemitones
                     })
                 });
                 
                 if (response.ok) {
+                    const modal = document.getElementById('add-song-modal');
+                    modal.classList.add('hidden');
+                    modal.style.display = 'none';
                     document.getElementById('search-input').value = '';
                     document.getElementById('search-results').innerHTML = '';
                     loadQueue();
+                    currentVideoToAdd = null;
                 } else {
                     alert('Error adding song to queue');
                 }
