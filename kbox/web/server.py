@@ -92,11 +92,13 @@ def create_app(
     # Add session middleware for operator authentication
     app.add_middleware(SessionMiddleware, secret_key="kbox-secret-key-change-in-production")
     
-    # Store components in app state
+    # Store components and test mode in app state
     app.state.queue_manager = queue_manager
     app.state.youtube_client = youtube_client
     app.state.playback_controller = playback_controller
     app.state.config_manager = config_manager
+    app.state.test_mode = test_mode
+    logger.info('Test mode enabled: %s', test_mode)
     
     # Templates
     templates = Jinja2Templates(directory="kbox/web/templates")
@@ -320,6 +322,7 @@ def create_app(
     async def index(request: Request):
         """Serve web UI."""
         test_mode = getattr(request.app.state, 'test_mode', False)
+        logger.debug('Rendering index page with test_mode=%s', test_mode)
         return templates.TemplateResponse("index.html", {
             "request": request,
             "test_mode": test_mode

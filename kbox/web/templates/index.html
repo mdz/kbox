@@ -263,10 +263,29 @@
         
         // Auto-enable operator mode in test mode
         {% if test_mode %}
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('operator-panel').classList.remove('hidden');
-            document.getElementById('auth-section').style.display = 'none';
-        });
+        (function() {
+            function enableOperatorMode() {
+                const operatorPanel = document.getElementById('operator-panel');
+                const authSection = document.getElementById('auth-section');
+                if (operatorPanel) {
+                    operatorPanel.classList.remove('hidden');
+                    console.log('Operator panel enabled');
+                } else {
+                    console.error('operator-panel element not found');
+                }
+                if (authSection) {
+                    authSection.style.display = 'none';
+                    console.log('Auth section hidden');
+                } else {
+                    console.error('auth-section element not found');
+                }
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', enableOperatorMode);
+            } else {
+                enableOperatorMode();
+            }
+        })();
         {% endif %}
         
         // Auto-refresh queue to show current song
