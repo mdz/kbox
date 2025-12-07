@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Self-contained open-source karaoke system"
 requires-python = ">=3.9"
 dependencies = [
-    "mido[ports-rtmidi]",
     "pytest",
     "fastapi",
     "uvicorn[standard]",

@@ -16,7 +16,6 @@ class ConfigManager:
         'audio_input_device': None,  # Platform-specific
         'audio_output_device': None,  # Platform-specific
         'video_input_device': None,  # Platform-specific
-        'midi_input_name': 'MPK mini Play mk3',
         'youtube_api_key': None,
         'cache_directory': None,  # Will default to ~/.kbox/cache
         'operator_pin': '1234',
