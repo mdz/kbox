@@ -244,8 +244,7 @@
     <div class="section operator-panel hidden" id="operator-panel">
         <h2>Playback Controls</h2>
         <div class="controls">
-            <button onclick="playback('play')">▶ Play</button>
-            <button onclick="playback('pause')">⏸ Pause</button>
+            <button id="play-pause-toggle" onclick="togglePlayPause()">▶ Play</button>
             <button onclick="playback('skip')">⏭ Skip</button>
             <button onclick="playback('previous')">⏮ Previous</button>
         </div>
@@ -431,14 +430,23 @@
                 const statusData = await statusResponse.json();
                 currentQueue = queueData.queue;
                 
+                // Update play/pause toggle button
+                updatePlayPauseButton(statusData.state);
+                
                 const queueDiv = document.getElementById('queue-list');
+                
+                // Get current song ID
+                const currentSongId = statusData.current_song ? statusData.current_song.id : null;
+                
+                // If queue is empty but there's a current song, add it to the display
+                if (currentQueue.length === 0 && statusData.current_song) {
+                    currentQueue = [statusData.current_song];
+                }
+                
                 if (currentQueue.length === 0) {
                     queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
                     return;
                 }
-                
-                // Get current song ID
-                const currentSongId = statusData.current_song ? statusData.current_song.id : null;
                 
                 queueDiv.innerHTML = '';
                 currentQueue.forEach(item => {
@@ -466,7 +474,46 @@
             }
         }
         
-        // Playback controls
+        // Update play/pause toggle button based on state
+        function updatePlayPauseButton(state) {
+            const button = document.getElementById('play-pause-toggle');
+            if (!button) return;
+            
+            if (state === 'playing') {
+                button.textContent = '⏸ Pause';
+            } else {
+                button.textContent = '▶ Play';
+            }
+        }
+        
+        // Toggle play/pause
+        async function togglePlayPause() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                // Get current state
+                const statusResponse = await fetch('/api/playback/status');
+                const statusData = await statusResponse.json();
+                const currentState = statusData.state;
+                
+                // Toggle based on current state
+                const action = (currentState === 'playing') ? 'pause' : 'play';
+                const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                } else {
+                    // Update button immediately for better UX
+                    updatePlayPauseButton(action === 'play' ? 'playing' : 'paused');
+                }
+            } catch (e) {
+                alert('Error controlling playback');
+            }
+        }
+        
+        // Playback controls (for skip, previous, etc.)
         async function playback(action) {
             if (!isOperator) {
                 alert('Operator authentication required');

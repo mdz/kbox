@@ -106,9 +106,27 @@ def create_app(
     
     # Queue endpoints
     @app.get("/api/queue")
-    async def get_queue(queue_mgr: QueueManager = Depends(get_queue_manager)):
-        """Get current queue."""
-        return {"queue": queue_mgr.get_queue()}
+    async def get_queue(
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+        playback: PlaybackController = Depends(get_playback_controller)
+    ):
+        """Get current queue, including currently playing song if any."""
+        queue = queue_mgr.get_queue()
+        
+        # Include currently playing song even if it's been marked as played
+        status = playback.get_status()
+        if status.get('current_song'):
+            current_song_id = status['current_song']['id']
+            # Check if current song is already in the queue
+            if not any(item['id'] == current_song_id for item in queue):
+                # Get the current song from database and add it to queue
+                current_song = queue_mgr.get_item(current_song_id)
+                if current_song:
+                    queue.append(current_song)
+                    # Sort by position to maintain order
+                    queue.sort(key=lambda x: x.get('position', 0))
+        
+        return {"queue": queue}
     
     @app.post("/api/queue")
     async def add_song(
