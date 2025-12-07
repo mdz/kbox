@@ -383,19 +383,23 @@
         // Toggle playback controls visibility
         function togglePlaybackControls() {
             const panel = document.getElementById('operator-panel');
-            const toggleBtn = document.getElementById('toggle-controls-btn');
+            const toggleSection = document.getElementById('toggle-controls-section');
             const toggleText = document.getElementById('toggle-controls-text');
             
-            if (!panel || !toggleBtn || !toggleText) return;
+            if (!panel || !toggleSection || !toggleText) return;
             
             if (panel.classList.contains('hidden')) {
-                // Open controls
+                // Open controls - move toggle button above controls
                 panel.classList.remove('hidden');
                 toggleText.textContent = 'Close Playback Controls';
+                // Move toggle section to be right before the controls panel
+                panel.parentNode.insertBefore(toggleSection, panel);
             } else {
-                // Close controls
+                // Close controls - move toggle button back to bottom
                 panel.classList.add('hidden');
                 toggleText.textContent = 'Open Playback Controls';
+                // Move toggle section to be after the controls panel (at bottom)
+                panel.parentNode.insertBefore(toggleSection, panel.nextSibling);
             }
         }
         
