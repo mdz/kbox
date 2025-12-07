@@ -1,3 +1,9 @@
+<!--
+    This is a Jinja2 template file. The JavaScript linter will show false positives
+    because it doesn't understand server-side template syntax ({{ }} and {% %}).
+    These errors can be safely ignored - the template is processed server-side before
+    being sent to the browser.
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -362,8 +368,8 @@
 <body>
     <button class="controls-toggle-button" id="controls-toggle-button" onclick="togglePlaybackControls()" title="Enable Playback Controls" style="display: none;">⚙</button>
     <button class="help-button" onclick="showHelp()" title="Help">?</button>
-    <h1>🎤 kbox</h1>
-    
+        <h1>🎤 kbox</h1>
+        
     <!-- User Name Prompt Modal -->
     <div class="modal-overlay hidden" id="name-modal" {% if test_mode %}style="display: none;"{% endif %}>
         <div class="modal">
@@ -371,9 +377,9 @@
             <p style="margin-bottom: 15px; color: #aaa;">Please enter your name to get started:</p>
             <input type="text" id="name-modal-input" placeholder="Your name" autofocus />
             <button onclick="saveUserName()">Continue</button>
+            </div>
         </div>
-    </div>
-    
+        
     <!-- Add Song Confirmation Modal -->
     <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
         <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
@@ -397,9 +403,9 @@
                 <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
                 <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
             </div>
+            </div>
         </div>
-    </div>
-    
+        
     <!-- Edit Queue Item Modal -->
     <div class="modal-overlay hidden" id="edit-queue-item-modal" style="display: none;" onclick="if(event.target === this) cancelEditQueueItem();">
         <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
@@ -433,8 +439,8 @@
                 <button onclick="cancelEditQueueItem()" style="flex: 1; background: #444;">Cancel</button>
             </div>
         </div>
-    </div>
-    
+        </div>
+        
     <!-- Help Modal -->
     <div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
         <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
@@ -458,8 +464,8 @@
                 <p style="margin-bottom: 20px;">Operators can control playback (play, pause, skip) and adjust pitch during playback. Tap "Open Playback Controls" to access these features.</p>
             </div>
             <button onclick="hideHelp()" style="margin-top: 20px;">Close</button>
-        </div>
-    </div>
+            </div>
+            </div>
     
     <!-- Operator Authentication -->
     <div class="section" id="auth-section">
@@ -474,13 +480,13 @@
         <input type="text" id="search-input" placeholder="Search for a song..." />
         <button onclick="search()">Search</button>
         <div id="search-results" class="search-results"></div>
-    </div>
-    
-    <!-- Queue Section -->
+        </div>
+        
+        <!-- Queue Section -->
     <div class="section">
-        <h2>Queue</h2>
+            <h2>Queue</h2>
         <div id="queue-list"></div>
-    </div>
+        </div>
     
     <!-- Playback Controls (Operator Only) -->
     <div class="section operator-panel hidden" id="operator-panel">
@@ -507,6 +513,7 @@
     </div>
     
     <script>
+        // @ts-ignore - Jinja2 template syntax
         let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
         let userName = null;
@@ -584,6 +591,7 @@
         }
         
         // Initialize user name
+        // @ts-ignore - Jinja2 template syntax
         {% if test_mode %}
         // In test mode, use a fixed name and skip the prompt
         userName = 'Test User';
@@ -595,6 +603,7 @@
                 modal.classList.add('hidden');
             }
         })();
+        // @ts-ignore - Jinja2 template syntax
         {% else %}
         // Check if user name is stored
         userName = localStorage.getItem('kbox_user_name');
@@ -617,6 +626,7 @@
                 }
             }
         }
+        // @ts-ignore - Jinja2 template syntax
         {% endif %}
         
         // Save user name from modal
@@ -627,8 +637,8 @@
             const name = nameInput.value.trim();
             if (!name) {
                 alert('Please enter your name');
-                return;
-            }
+                    return;
+                }
             userName = name;
             localStorage.setItem('kbox_user_name', userName);
             
@@ -641,6 +651,7 @@
         }
         
         // Auto-enable operator mode in test mode (but don't show controls by default)
+        // @ts-ignore - Jinja2 template syntax
         {% if test_mode %}
         (function() {
             function enableOperatorMode() {
@@ -664,6 +675,7 @@
                 enableOperatorMode();
             }
         })();
+        // @ts-ignore - Jinja2 template syntax
         {% endif %}
         
         // Toggle playback controls visibility
@@ -724,8 +736,8 @@
                         <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
                         <div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${item.download_status}</div>
                         ${!canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : ''}
+                        </div>
                     </div>
-                </div>
             `;
             
             // Set pitch input and display based on permissions
@@ -1143,7 +1155,7 @@
                         <div class="queue-item-info">
                             <div class="queue-item-user">${item.user_name}</div>
                             <div class="queue-item-title">${item.title}</div>
-                        </div>
+                            </div>
                         <span class="queue-item-status ${statusClass}">${item.download_status}</span>
                     `;
                     
@@ -1247,7 +1259,7 @@
             try {
                 const response = await fetch('/api/queue/clear', {method: 'POST'});
                 if (response.ok) {
-                    loadQueue();
+        loadQueue();
                 } else {
                     alert('Error clearing queue');
                 }
@@ -1255,13 +1267,6 @@
                 alert('Error clearing queue');
             }
         }
-        
-        // Auto-refresh queue every 2 seconds
-        setInterval(loadQueue, 2000);
-        
-        // Initial load
-        loadQueue();
-        checkOperator();
     </script>
 </body>
 </html>
