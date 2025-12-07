@@ -308,6 +308,32 @@
         </div>
     </div>
     
+    <!-- Edit Queue Item Modal -->
+    <div class="modal-overlay hidden" id="edit-queue-item-modal" style="display: none;" onclick="if(event.target === this) cancelEditQueueItem();">
+        <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
+            <h2>Edit Song</h2>
+            <div id="edit-queue-item-content" style="margin-bottom: 20px;">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="edit-queue-item-pitch-input" style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.9em;">Pitch Adjustment (semitones):</label>
+                <input type="number" id="edit-queue-item-pitch-input" value="0" min="-12" max="12" style="width: 100%;" />
+            </div>
+            <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
+                <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <button onclick="playNextQueueItem()" style="width: 100%;">Play Next</button>
+                    <button onclick="moveToEndQueueItem()" style="width: 100%;">Move to End</button>
+                    <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button onclick="saveQueueItemPitch()" style="flex: 1;">Save Pitch</button>
+                <button onclick="cancelEditQueueItem()" style="flex: 1; background: #444;">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Help Modal -->
     <div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
         <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
@@ -481,23 +507,166 @@
         // Auto-refresh queue to show current song
         setInterval(loadQueue, 2000); // Refresh every 2 seconds
         
-        // Jump to a specific song
-        async function jumpToSong(itemId) {
-            if (!isOperator) {
-                alert('Operator authentication required');
+        // Store current queue item being edited
+        let currentQueueItemToEdit = null;
+        
+        // Check if playback controls are open
+        function arePlaybackControlsOpen() {
+            const panel = document.getElementById('operator-panel');
+            return panel && !panel.classList.contains('hidden');
+        }
+        
+        // Show edit queue item modal
+        function showEditQueueItemModal(item) {
+            currentQueueItemToEdit = item;
+            
+            // Check if user can edit this song
+            const canEdit = isOperator || (userName && item.user_name === userName);
+            
+            // Format duration
+            const duration = item.duration_seconds || 0;
+            const minutes = Math.floor(duration / 60);
+            const seconds = duration % 60;
+            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
+            
+            // Populate modal content
+            const contentDiv = document.getElementById('edit-queue-item-content');
+            contentDiv.innerHTML = `
+                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                    ${item.thumbnail_url ? `<img src="${item.thumbnail_url}" alt="${item.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />` : ''}
+                    <div style="flex: 1;">
+                        <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${item.title}</div>
+                        <div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">Requested by: ${item.user_name}</div>
+                        <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
+                        <div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${item.download_status}</div>
+                        ${!canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : ''}
+                    </div>
+                </div>
+            `;
+            
+            // Set pitch input and enable/disable based on permissions
+            const pitchInput = document.getElementById('edit-queue-item-pitch-input');
+            pitchInput.value = item.pitch_semitones || 0;
+            pitchInput.disabled = !canEdit;
+            
+            // Show/hide save button based on permissions
+            const saveButton = document.querySelector('#edit-queue-item-modal button[onclick="saveQueueItemPitch()"]');
+            if (saveButton) {
+                saveButton.disabled = !canEdit;
+                saveButton.style.opacity = canEdit ? '1' : '0.5';
+            }
+            
+            // Show/hide operator options based on operator status and controls visibility
+            const operatorOptions = document.getElementById('edit-queue-item-operator-options');
+            if (isOperator && arePlaybackControlsOpen()) {
+                operatorOptions.style.display = 'block';
+            } else {
+                operatorOptions.style.display = 'none';
+            }
+            
+            // Show modal
+            const modal = document.getElementById('edit-queue-item-modal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+        }
+        
+        // Cancel editing queue item
+        function cancelEditQueueItem() {
+            const modal = document.getElementById('edit-queue-item-modal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+            currentQueueItemToEdit = null;
+        }
+        
+        // Save queue item pitch
+        async function saveQueueItemPitch() {
+            if (!currentQueueItemToEdit) return;
+            
+            // Check permissions
+            const canEdit = isOperator || (userName && currentQueueItemToEdit.user_name === userName);
+            if (!canEdit) {
+                alert('You can only edit songs you added');
                 return;
             }
             
+            const pitchInput = document.getElementById('edit-queue-item-pitch-input');
+            const pitchSemitones = parseInt(pitchInput.value) || 0;
+            
             try {
-                const response = await fetch(`/api/playback/jump/${itemId}`, {method: 'POST'});
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        pitch_semitones: pitchSemitones,
+                        user_name: userName
+                    })
+                });
+                
                 if (response.ok) {
-                    loadQueue(); // Refresh queue to show new current song
+                    cancelEditQueueItem();
+                    loadQueue();
                 } else {
                     const error = await response.json();
                     alert('Error: ' + error.detail);
                 }
             } catch (e) {
-                alert('Error jumping to song');
+                alert('Error updating pitch');
+            }
+        }
+        
+        // Play next (operator only)
+        async function playNextQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/play-next`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error moving song to play next');
+            }
+        }
+        
+        // Move to end (operator only)
+        async function moveToEndQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/move-to-end`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error moving song to end');
+            }
+        }
+        
+        // Remove from queue (operator only)
+        async function removeQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            if (!confirm(`Remove "${currentQueueItemToEdit.title}" from queue?`)) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {method: 'DELETE'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error removing song');
             }
         }
         
@@ -752,10 +921,8 @@
                         <span class="queue-item-status ${statusClass}">${item.download_status}</span>
                     `;
                     
-                    // Make clickable if operator and song is ready
-                    if (isOperator && item.download_status === 'ready') {
-                        div.onclick = () => jumpToSong(item.id);
-                    }
+                    // Make all queue items clickable to edit
+                    div.onclick = () => showEditQueueItemModal(item);
                     
                     queueDiv.appendChild(div);
                 });

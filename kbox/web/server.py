@@ -35,6 +35,11 @@ class ReorderRequest(BaseModel):
 class PitchRequest(BaseModel):
     semitones: int
 
+class UpdateQueueItemRequest(BaseModel):
+    """Request model for updating queue item properties."""
+    pitch_semitones: Optional[int] = None
+    user_name: Optional[str] = None  # For permission checking
+
 class OperatorAuthRequest(BaseModel):
     pin: str
 
@@ -181,6 +186,72 @@ def create_app(
         if not queue_mgr.reorder_song(item_id, request_data.new_position):
             raise HTTPException(status_code=404, detail="Queue item not found or invalid position")
         return {"status": "reordered"}
+    
+    @app.patch("/api/queue/{item_id}")
+    async def update_queue_item(
+        item_id: int,
+        request_data: UpdateQueueItemRequest,
+        request: Request,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+        is_operator: bool = Depends(check_operator)
+    ):
+        """
+        Update properties of a queue item.
+        Operators can update any song, users can only update their own.
+        
+        Currently supported fields:
+        - pitch_semitones: Pitch adjustment in semitones
+        """
+        # Get the queue item to check ownership
+        item = queue_mgr.get_item(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+        
+        # Check permissions: operator can edit any, users can only edit their own
+        if not is_operator:
+            if not request_data.user_name or request_data.user_name != item['user_name']:
+                raise HTTPException(status_code=403, detail="You can only edit songs you added")
+        
+        # Update pitch if provided
+        if request_data.pitch_semitones is not None:
+            if not queue_mgr.update_pitch(item_id, request_data.pitch_semitones):
+                raise HTTPException(status_code=404, detail="Queue item not found")
+        
+        # Return updated item
+        updated_item = queue_mgr.get_item(item_id)
+        return {"status": "updated", "item": updated_item}
+    
+    @app.post("/api/queue/{item_id}/play-next")
+    async def play_next(
+        item_id: int,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+        is_operator: bool = Depends(check_operator)
+    ):
+        """Move song to position 1 (play next) (operator only)."""
+        if not is_operator:
+            raise HTTPException(status_code=403, detail="Operator authentication required")
+        
+        if not queue_mgr.reorder_song(item_id, 1):
+            raise HTTPException(status_code=404, detail="Queue item not found")
+        return {"status": "moved_to_next"}
+    
+    @app.post("/api/queue/{item_id}/move-to-end")
+    async def move_to_end(
+        item_id: int,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+        is_operator: bool = Depends(check_operator)
+    ):
+        """Move song to end of queue (operator only)."""
+        if not is_operator:
+            raise HTTPException(status_code=403, detail="Operator authentication required")
+        
+        # Get max position
+        queue = queue_mgr.get_queue()
+        max_position = max((item.get('position', 0) for item in queue), default=0)
+        
+        if not queue_mgr.reorder_song(item_id, max_position):
+            raise HTTPException(status_code=404, detail="Queue item not found")
+        return {"status": "moved_to_end"}
     
     @app.post("/api/queue/clear")
     async def clear_queue(

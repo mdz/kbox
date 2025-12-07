@@ -8,6 +8,7 @@ import logging
 import threading
 from enum import Enum
 from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
 from .queue import QueueManager
 from .youtube import YouTubeClient
 
@@ -47,6 +48,9 @@ class PlaybackController:
         self.current_song: Optional[Dict[str, Any]] = None
         self.lock = threading.Lock()
         
+        # Download timeout (10 minutes) - reset stuck downloads after this time
+        self._download_timeout = timedelta(minutes=10)
+        
         # Start download monitor thread
         self._download_monitor_thread = None
         self._monitoring = True
@@ -84,6 +88,47 @@ class PlaybackController:
                                 item['id'],
                                 QueueManager.STATUS_DOWNLOADING
                             )
+                        elif item['download_status'] == QueueManager.STATUS_DOWNLOADING:
+                            # Check if download is stuck
+                            # First, check if file exists (download completed but callback failed)
+                            download_path = self.youtube_client.get_download_path(item['youtube_video_id'])
+                            if download_path and download_path.exists():
+                                self.logger.info('Found completed download for %s (ID: %s), updating status', 
+                                               item['title'], item['id'])
+                                self.queue_manager.update_download_status(
+                                    item['id'],
+                                    QueueManager.STATUS_READY,
+                                    download_path=str(download_path)
+                                )
+                                # Trigger auto-play if idle
+                                if self.state == PlaybackState.IDLE:
+                                    next_song = self.queue_manager.get_next_song()
+                                    if next_song and next_song['id'] == item['id']:
+                                        self.logger.info('Next song ready, auto-starting playback')
+                                        self.play()
+                            else:
+                                # Check if download has been stuck for too long
+                                # Parse created_at timestamp
+                                try:
+                                    created_at_str = item.get('created_at')
+                                    if created_at_str:
+                                        if isinstance(created_at_str, str):
+                                            created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                                        else:
+                                            created_at = created_at_str
+                                        
+                                        # Check if it's been more than timeout since creation
+                                        # (assuming download started shortly after creation)
+                                        if datetime.now(created_at.tzinfo) - created_at > self._download_timeout:
+                                            self.logger.warning('Download stuck for %s (ID: %s) for more than %s, resetting to pending', 
+                                                              item['title'], item['id'], self._download_timeout)
+                                            self.queue_manager.update_download_status(
+                                                item['id'],
+                                                QueueManager.STATUS_PENDING
+                                            )
+                                except (ValueError, TypeError) as e:
+                                    # If we can't parse the timestamp, just log and continue
+                                    self.logger.debug('Could not parse created_at for item %s: %s', item['id'], e)
                     
                     # Sleep before next check
                     threading.Event().wait(2.0)  # Check every 2 seconds
