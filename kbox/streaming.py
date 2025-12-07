@@ -557,13 +557,35 @@ class StreamingController:
             return False
     
     def stop(self):
-        self.logger.debug('Stopping gstreamer pipeline...')
+        """Stop the streaming controller and cleanup resources."""
+        self.logger.info('Stopping streaming controller...')
+        
+        # Stop pipeline
         if self.pipeline:
-            Gst = _get_gst()
-            result = self.pipeline.set_state(Gst.State.NULL)
-            if result == Gst.StateChangeReturn.SUCCESS:
-                self.logger.debug('Pipeline state changed successfully')
-            elif result == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError('Failed to change pipeline state')
-            else:
-                raise RuntimeError('Unexpected result from set_state: %s', result)
+            try:
+                Gst = _get_gst()
+                result = self.pipeline.set_state(Gst.State.NULL)
+                if result == Gst.StateChangeReturn.SUCCESS:
+                    self.logger.debug('Pipeline state changed successfully')
+                elif result == Gst.StateChangeReturn.FAILURE:
+                    self.logger.warning('Failed to change pipeline state to NULL')
+                else:
+                    self.logger.debug('Pipeline state change returned: %s', result)
+                self.pipeline = None
+            except Exception as e:
+                self.logger.error('Error stopping pipeline: %s', e, exc_info=True)
+        
+        # Try to stop GLib main loop if it exists
+        if hasattr(self.__class__, '_glib_loop_thread'):
+            glib_thread = self.__class__._glib_loop_thread
+            if glib_thread and glib_thread.is_alive():
+                try:
+                    from gi.repository import GLib
+                    # Get the main loop and quit it
+                    # Note: This is tricky since the loop is in another thread
+                    # The daemon thread will exit when main thread exits
+                    self.logger.debug('GLib main loop thread is daemon, will exit with main thread')
+                except ImportError:
+                    pass
+        
+        self.logger.info('Streaming controller stopped')

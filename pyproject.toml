@@ -14,7 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = []
+dev = [
+    "ruff>=0.1.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -28,6 +30,11 @@ testpaths = ["test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.8",
+]
 
 
 

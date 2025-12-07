@@ -548,6 +548,23 @@ class PlaybackController:
         """Stop playback and cleanup."""
         self.logger.info('Stopping playback controller')
         self._monitoring = False
-        if self._download_monitor_thread:
+        self._tracking_position = False
+        
+        # Stop download monitor thread
+        if self._download_monitor_thread and self._download_monitor_thread.is_alive():
             self._download_monitor_thread.join(timeout=2.0)
+            if self._download_monitor_thread.is_alive():
+                self.logger.warning('Download monitor thread did not stop within timeout')
+        
+        # Stop position tracking thread
+        if self._position_tracking_thread and self._position_tracking_thread.is_alive():
+            self._position_tracking_thread.join(timeout=2.0)
+            if self._position_tracking_thread.is_alive():
+                self.logger.warning('Position tracking thread did not stop within timeout')
+        
+        # Stop streaming
+        if self.streaming_controller:
+            self.streaming_controller.stop()
+        
+        self.logger.info('Playback controller stopped')
 
