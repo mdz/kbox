@@ -451,12 +451,10 @@
                     const currentSrc = videoPlayer.src || '';
                     const currentVideoId = currentSrc.split('/').pop() || '';
                     
-                    // Only update if video source changed
-                    if (currentVideoId !== videoId) {
-                        videoPlayer.src = videoUrl;
-                        videoSection.style.display = 'block';
-                        console.log('Video player updated:', videoUrl);
-                    }
+                    // Always show and update video player when playing
+                    videoPlayer.src = videoUrl;
+                    videoSection.style.display = 'block';
+                    console.log('Video player updated:', videoUrl, 'State:', statusData.state);
                 } else {
                     videoSection.style.display = 'none';
                     if (videoPlayer) {
