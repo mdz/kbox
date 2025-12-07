@@ -58,15 +58,24 @@ def get_config_manager(request: Request) -> ConfigManager:
     """Get ConfigManager from app state."""
     return request.app.state.config_manager
 
-def check_operator(request: Request) -> bool:
-    """Check if user is authenticated as operator."""
+def check_operator(request: Request, test_mode: bool = False) -> bool:
+    """
+    Check if user is authenticated as operator.
+    
+    Args:
+        request: FastAPI request
+        test_mode: If True, always return True (operator enabled by default)
+    """
+    if test_mode:
+        return True
     return request.session.get('operator', False)
 
 def create_app(
     queue_manager: QueueManager,
     youtube_client: YouTubeClient,
     playback_controller: PlaybackController,
-    config_manager: ConfigManager
+    config_manager: ConfigManager,
+    test_mode: bool = False
 ) -> FastAPI:
     """
     Create and configure FastAPI application.
@@ -312,6 +321,10 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         """Serve web UI."""
-        return templates.TemplateResponse("index.html", {"request": request})
+        test_mode = getattr(request.app.state, 'test_mode', False)
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "test_mode": test_mode
+        })
     
     return app

@@ -258,8 +258,16 @@
     </div>
     
     <script>
-        let isOperator = false;
+        let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
+        
+        // Auto-enable operator mode in test mode
+        {% if test_mode %}
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('operator-panel').classList.remove('hidden');
+            document.getElementById('auth-section').style.display = 'none';
+        });
+        {% endif %}
         
         // Auto-refresh queue to show current song
         setInterval(loadQueue, 2000); // Refresh every 2 seconds

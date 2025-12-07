@@ -31,9 +31,15 @@ logger = logging.getLogger(__name__)
 class KboxServer:
     """Main server class that orchestrates all components."""
     
-    def __init__(self):
-        """Initialize all components."""
-        logger.info('Initializing kbox server...')
+    def __init__(self, test_mode: bool = False):
+        """
+        Initialize all components.
+        
+        Args:
+            test_mode: If True, enable test mode (operator controls enabled by default)
+        """
+        self.test_mode = test_mode
+        logger.info('Initializing kbox server...' + (' (TEST MODE)' if test_mode else ''))
         
         # Initialize database
         self.database = Database()
@@ -90,7 +96,8 @@ class KboxServer:
             self.queue_manager,
             self.youtube_client,
             self.playback_controller,
-            self.config_manager
+            self.config_manager,
+            test_mode=self.test_mode
         )
         
         # Setup signal handlers
@@ -174,7 +181,13 @@ class KboxServer:
 
 def main():
     """Main entry point."""
-    server = KboxServer()
+    import argparse
+    parser = argparse.ArgumentParser(description='kbox - Self-contained karaoke system')
+    parser.add_argument('--test-mode', '-t', action='store_true',
+                        help='Enable test mode (operator controls enabled by default)')
+    args = parser.parse_args()
+    
+    server = KboxServer(test_mode=args.test_mode)
     try:
         server.run()
     except KeyboardInterrupt:
