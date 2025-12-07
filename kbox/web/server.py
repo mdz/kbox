@@ -7,9 +7,10 @@ Provides REST API and web UI for queue management and playback control.
 import logging
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+import os
 from pydantic import BaseModel
 
 from ..queue import QueueManager
