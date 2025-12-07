@@ -603,6 +603,7 @@
             const modal = document.getElementById('name-modal');
             if (modal) {
                 modal.classList.remove('hidden');
+                modal.style.display = 'flex';
                 // Handle Enter key in name input
                 const nameInput = document.getElementById('name-modal-input');
                 if (nameInput) {
@@ -611,6 +612,8 @@
                             saveUserName();
                         }
                     });
+                    // Focus the input
+                    setTimeout(() => nameInput.focus(), 100);
                 }
             }
         }
@@ -619,6 +622,8 @@
         // Save user name from modal
         function saveUserName() {
             const nameInput = document.getElementById('name-modal-input');
+            if (!nameInput) return;
+            
             const name = nameInput.value.trim();
             if (!name) {
                 alert('Please enter your name');
@@ -626,7 +631,13 @@
             }
             userName = name;
             localStorage.setItem('kbox_user_name', userName);
-            document.getElementById('name-modal').classList.add('hidden');
+            
+            // Hide modal
+            const modal = document.getElementById('name-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
         }
         
         // Auto-enable operator mode in test mode (but don't show controls by default)

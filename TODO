@@ -5,4 +5,9 @@ supervisor
 -- ready for the party --
 
 fix ^C behavior
-macos?
+
+theme
+"suggest a song" button using AI - using songs from queue
+show if someone else already has the same song in the queue
+extract artist/title from metadata in a structured way
+thumbs up/down on tracks
