@@ -212,10 +212,51 @@
             margin: 5px 0;
             font-size: 0.9em;
         }
+        
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 400px;
+            width: 90%;
+            border: 2px solid #4a9eff;
+        }
+        
+        .modal h2 {
+            margin-bottom: 15px;
+            color: #fff;
+        }
+        
+        .modal input {
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
     <h1>🎤 kbox</h1>
+    
+    <!-- User Name Prompt Modal -->
+    <div class="modal-overlay hidden" id="name-modal" {% if test_mode %}style="display: none;"{% endif %}>
+        <div class="modal">
+            <h2>Welcome to kbox!</h2>
+            <p style="margin-bottom: 15px; color: #aaa;">Please enter your name to get started:</p>
+            <input type="text" id="name-modal-input" placeholder="Your name" autofocus />
+            <button onclick="saveUserName()">Continue</button>
+        </div>
+    </div>
     
     <!-- Operator Authentication -->
     <div class="section" id="auth-section">
@@ -229,7 +270,6 @@
     <div class="section">
         <h2>Search Songs</h2>
         <input type="text" id="search-input" placeholder="Search for a song..." />
-        <input type="text" id="user-name-input" placeholder="Your name" />
         <button onclick="search()">Search</button>
         <div id="search-results" class="search-results"></div>
     </div>
@@ -259,6 +299,53 @@
     <script>
         let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
+        let userName = null;
+        
+        // Initialize user name
+        {% if test_mode %}
+        // In test mode, use a fixed name and skip the prompt
+        userName = 'Test User';
+        localStorage.setItem('kbox_user_name', userName);
+        // Ensure modal is hidden in test mode (run immediately)
+        (function() {
+            const modal = document.getElementById('name-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        })();
+        {% else %}
+        // Check if user name is stored
+        userName = localStorage.getItem('kbox_user_name');
+        if (!userName) {
+            // Show name prompt modal
+            const modal = document.getElementById('name-modal');
+            if (modal) {
+                modal.classList.remove('hidden');
+                // Handle Enter key in name input
+                const nameInput = document.getElementById('name-modal-input');
+                if (nameInput) {
+                    nameInput.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter') {
+                            saveUserName();
+                        }
+                    });
+                }
+            }
+        }
+        {% endif %}
+        
+        // Save user name from modal
+        function saveUserName() {
+            const nameInput = document.getElementById('name-modal-input');
+            const name = nameInput.value.trim();
+            if (!name) {
+                alert('Please enter your name');
+                return;
+            }
+            userName = name;
+            localStorage.setItem('kbox_user_name', userName);
+            document.getElementById('name-modal').classList.add('hidden');
+        }
         
         // Auto-enable operator mode in test mode
         {% if test_mode %}
@@ -356,10 +443,15 @@
         // Search YouTube
         async function search() {
             const query = document.getElementById('search-input').value;
-            const userName = document.getElementById('user-name-input').value;
             
-            if (!query || !userName) {
-                alert('Please enter a search query and your name');
+            if (!query) {
+                alert('Please enter a search query');
+                return;
+            }
+            
+            if (!userName) {
+                alert('Please enter your name first');
+                document.getElementById('name-modal').classList.remove('hidden');
                 return;
             }
             
@@ -381,7 +473,7 @@
                             <div class="search-result-channel">${video.channel}</div>
                         </div>
                     `;
-                    div.onclick = () => addToQueue(video, userName);
+                    div.onclick = () => addToQueue(video);
                     resultsDiv.appendChild(div);
                 });
             } catch (e) {
@@ -390,7 +482,13 @@
         }
         
         // Add song to queue
-        async function addToQueue(video, userName) {
+        async function addToQueue(video) {
+            if (!userName) {
+                alert('Please enter your name first');
+                document.getElementById('name-modal').classList.remove('hidden');
+                return;
+            }
+            
             try {
                 const response = await fetch('/api/queue', {
                     method: 'POST',
