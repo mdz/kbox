@@ -397,15 +397,29 @@ class StreamingController:
         
         # Use autovideosink for macOS (auto-detects best video sink)
         # Falls back to osxvideosink if autovideosink not available
+        video_sink = None
         try:
             video_sink = self.make_element('autovideosink', 'video_sink')
-        except:
+            self.logger.info('Using autovideosink for video output')
+        except Exception as e:
+            self.logger.debug('autovideosink failed: %s', e)
             try:
                 video_sink = self.make_element('osxvideosink', 'video_sink')
-            except:
-                self.logger.warning('No video sink available, using fakesink')
+                self.logger.info('Using osxvideosink for video output')
+            except Exception as e2:
+                self.logger.warning('osxvideosink failed: %s', e2)
+                self.logger.warning('No video sink available, using fakesink (no video will be displayed)')
                 video_sink = self.make_element('fakesink', 'video_sink')
-        playbin.set_property('video-sink', video_sink)
+        
+        if video_sink:
+            playbin.set_property('video-sink', video_sink)
+            # For osxvideosink, we might need to set some properties
+            try:
+                if hasattr(video_sink, 'set_property'):
+                    # Try to enable video window embedding if supported
+                    video_sink.set_property('sync', False)  # Don't sync video to audio clock
+            except:
+                pass
         
         # Note: playbin doesn't support pitch shifting directly
         # For macOS dev, we'll skip pitch shifting to get playback working
