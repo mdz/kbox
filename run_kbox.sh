@@ -28,5 +28,12 @@ export GST_REGISTRY_FORK="no"
 export GST_DEBUG_NO_COLOR=1
 
 # Run kbox with GStreamer debug flags
-exec uv run python -m kbox.main "$@"
+# Enable test mode by default (operator controls enabled)
+# Use --no-test-mode to disable
+if [[ "$*" == *"--no-test-mode"* ]]; then
+    exec uv run python -m kbox.main "$@"
+else
+    # Default: run in test mode for development convenience
+    exec uv run python -m kbox.main --test-mode "$@"
+fi
 
