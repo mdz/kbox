@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "**/templates/*.html": "jinja-html"
+  },
+  "[jinja-html]": {
+    "javascript.validate.enable": true,
+    "typescript.validate.enable": true
+  }
+}
+
