@@ -447,15 +447,21 @@
                     const videoId = statusData.current_song.youtube_video_id;
                     const videoUrl = `/api/video/${videoId}`;
                     
+                    // Get current src (might be full URL)
+                    const currentSrc = videoPlayer.src || '';
+                    const currentVideoId = currentSrc.split('/').pop() || '';
+                    
                     // Only update if video source changed
-                    if (videoPlayer.src !== videoUrl) {
+                    if (currentVideoId !== videoId) {
                         videoPlayer.src = videoUrl;
                         videoSection.style.display = 'block';
+                        console.log('Video player updated:', videoUrl);
                     }
                 } else {
                     videoSection.style.display = 'none';
                     if (videoPlayer) {
                         videoPlayer.pause();
+                        videoPlayer.src = '';
                     }
                 }
                 
