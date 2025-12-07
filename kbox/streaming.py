@@ -327,11 +327,19 @@ class StreamingController:
         videoscale = self.make_element('videoscale', 'videoscale')
         pipeline.add(videoscale)
         
-        # Video sink - use kmssink on Linux, fakesink on macOS
+        # Video sink - use kmssink on Linux, autovideosink/osxvideosink on macOS
         if sys.platform == 'linux':
             video_sink = self.make_element('kmssink', 'video_sink')
         else:
-            video_sink = self.make_element('fakesink', 'video_sink')
+            # Try autovideosink first (auto-detects), fallback to osxvideosink
+            try:
+                video_sink = self.make_element('autovideosink', 'video_sink')
+            except:
+                try:
+                    video_sink = self.make_element('osxvideosink', 'video_sink')
+                except:
+                    self.logger.warning('No video sink available, using fakesink')
+                    video_sink = self.make_element('fakesink', 'video_sink')
         pipeline.add(video_sink)
         
         # Link static parts - handle optional pitch shift
@@ -387,8 +395,16 @@ class StreamingController:
         audio_sink = self.make_element('autoaudiosink', 'audio_sink')
         playbin.set_property('audio-sink', audio_sink)
         
-        # Use fakesink for video (we don't need video output in dev)
-        video_sink = self.make_element('fakesink', 'video_sink')
+        # Use autovideosink for macOS (auto-detects best video sink)
+        # Falls back to osxvideosink if autovideosink not available
+        try:
+            video_sink = self.make_element('autovideosink', 'video_sink')
+        except:
+            try:
+                video_sink = self.make_element('osxvideosink', 'video_sink')
+            except:
+                self.logger.warning('No video sink available, using fakesink')
+                video_sink = self.make_element('fakesink', 'video_sink')
         playbin.set_property('video-sink', video_sink)
         
         # Note: playbin doesn't support pitch shifting directly
