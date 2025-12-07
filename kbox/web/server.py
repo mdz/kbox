@@ -318,6 +318,28 @@ def create_app(
         config.set(request_data.key, request_data.value)
         return {"status": "updated", "key": request_data.key, "value": request_data.value}
     
+    # Video streaming endpoint
+    @app.get("/api/video/{video_id}")
+    async def stream_video(video_id: str, youtube_client: YouTubeClient = Depends(get_youtube_client)):
+        """Stream video file for playback in browser."""
+        download_path = youtube_client.get_download_path(video_id)
+        
+        if not download_path or not download_path.exists():
+            raise HTTPException(status_code=404, detail="Video not found")
+        
+        # Determine content type
+        content_type = "video/mp4" if download_path.suffix == ".mp4" else "video/webm"
+        
+        # Use FileResponse for efficient streaming
+        return FileResponse(
+            str(download_path),
+            media_type=content_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f'inline; filename="{download_path.name}"'
+            }
+        )
+    
     # Web UI
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
