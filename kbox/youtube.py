@@ -36,6 +36,9 @@ class YouTubeClient:
         self.cache_directory = Path(cache_directory)
         self.cache_directory.mkdir(parents=True, exist_ok=True)
         
+        # Semaphore to limit concurrent downloads to 1 (avoid abusing YouTube)
+        self._download_semaphore = threading.Semaphore(1)
+        
         self.logger.info('YouTubeClient initialized, cache: %s', self.cache_directory)
     
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
@@ -264,6 +267,8 @@ class YouTubeClient:
         
         # Download in background thread
         def download_thread():
+            # Acquire semaphore to limit concurrent downloads to 1
+            self._download_semaphore.acquire()
             try:
                 if status_callback:
                     status_callback('downloading', None, None)
@@ -316,6 +321,9 @@ class YouTubeClient:
                 self.logger.error('Error downloading video %s: %s', video_id, error_msg, exc_info=True)
                 if status_callback:
                     status_callback('error', None, error_msg)
+            finally:
+                # Always release semaphore when download completes or fails
+                self._download_semaphore.release()
         
         # Start download in background
         thread = threading.Thread(target=download_thread, daemon=True)
