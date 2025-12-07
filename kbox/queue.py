@@ -203,7 +203,8 @@ class QueueManager:
             cursor.execute('''
                 SELECT id, position, user_name, youtube_video_id, title, 
                        duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at, error_message
+                       download_status, download_path, created_at, played_at,
+                       playback_position_seconds, error_message
                 FROM queue_items
                 WHERE played_at IS NULL
                 ORDER BY position
@@ -231,7 +232,8 @@ class QueueManager:
             cursor.execute('''
                 SELECT id, position, user_name, youtube_video_id, title,
                        duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at, error_message
+                       download_status, download_path, created_at, played_at,
+                       playback_position_seconds, error_message
                 FROM queue_items
                 WHERE download_status = ? AND played_at IS NULL
                 ORDER BY position
@@ -322,6 +324,39 @@ class QueueManager:
         finally:
             conn.close()
     
+    def update_playback_position(self, item_id: int, position_seconds: int) -> bool:
+        """
+        Update playback position for a queue item.
+        
+        Args:
+            item_id: ID of the queue item
+            position_seconds: Current playback position in seconds
+            
+        Returns:
+            True if updated, False if item not found
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE queue_items 
+                SET playback_position_seconds = ?
+                WHERE id = ?
+            ''', (position_seconds, item_id))
+            
+            updated = cursor.rowcount > 0
+            conn.commit()
+            
+            if updated:
+                self.logger.debug('Updated playback position for item %s: %s seconds', item_id, position_seconds)
+            else:
+                self.logger.warning('Queue item %s not found for position update', item_id)
+            
+            return updated
+        finally:
+            conn.close()
+    
     def mark_played(self, item_id: int) -> bool:
         """
         Mark a queue item as played.
@@ -354,6 +389,67 @@ class QueueManager:
         finally:
             conn.close()
     
+    def record_playback_history(
+        self,
+        queue_item_id: int,
+        user_name: str,
+        youtube_video_id: str,
+        title: str,
+        duration_seconds: Optional[int] = None,
+        pitch_semitones: int = 0,
+        playback_position_start: int = 0,
+        playback_position_end: Optional[int] = None
+    ) -> int:
+        """
+        Record a song in playback history.
+        
+        Args:
+            queue_item_id: ID of the queue item
+            user_name: Name of the user who requested the song
+            youtube_video_id: YouTube video ID
+            title: Song title
+            duration_seconds: Duration in seconds (optional)
+            pitch_semitones: Pitch adjustment used
+            playback_position_start: Position where playback started (for resume)
+            playback_position_end: Position where playback ended (None if completed)
+        
+        Returns:
+            ID of the created history record
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO playback_history 
+                (queue_item_id, user_name, youtube_video_id, title, duration_seconds,
+                 pitch_semitones, playback_position_start, playback_position_end)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                queue_item_id,
+                user_name,
+                youtube_video_id,
+                title,
+                duration_seconds,
+                pitch_semitones,
+                playback_position_start,
+                playback_position_end
+            ))
+            
+            history_id = cursor.lastrowid
+            conn.commit()
+            
+            # Calculate duration for logging
+            playback_duration = None
+            if playback_position_end is not None:
+                playback_duration = max(0, playback_position_end - playback_position_start)
+            
+            self.logger.debug('Recorded playback history for item %s (history ID: %s, played: %s seconds)', 
+                            queue_item_id, history_id, playback_duration)
+            return history_id
+        finally:
+            conn.close()
+    
     def get_item(self, item_id: int) -> Optional[Dict[str, Any]]:
         """
         Get a specific queue item by ID.
@@ -371,7 +467,8 @@ class QueueManager:
             cursor.execute('''
                 SELECT id, position, user_name, youtube_video_id, title,
                        duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at, error_message
+                       download_status, download_path, created_at, played_at,
+                       playback_position_seconds, error_message
                 FROM queue_items
                 WHERE id = ?
             ''', (item_id,))

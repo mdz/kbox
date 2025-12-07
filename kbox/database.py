@@ -55,6 +55,7 @@ class Database:
                 download_path TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 played_at TIMESTAMP,
+                playback_position_seconds INTEGER DEFAULT 0,
                 error_message TEXT
             )
         ''')
@@ -66,6 +67,29 @@ class Database:
                 value TEXT NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        ''')
+        
+        # Playback history table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS playback_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_item_id INTEGER NOT NULL,
+                user_name TEXT NOT NULL,
+                youtube_video_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                duration_seconds INTEGER,
+                pitch_semitones INTEGER DEFAULT 0,
+                played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                playback_position_start INTEGER DEFAULT 0,
+                playback_position_end INTEGER,
+                FOREIGN KEY (queue_item_id) REFERENCES queue_items(id)
+            )
+        ''')
+        
+        # Create index on played_at for efficient queries
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_playback_history_played_at 
+            ON playback_history(played_at)
         ''')
         
         # Create indexes

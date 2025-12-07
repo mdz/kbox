@@ -32,6 +32,8 @@ def mock_streaming_controller():
     controller.resume = Mock()
     controller.stop = Mock()
     controller.set_eos_callback = Mock()
+    controller.get_position = Mock(return_value=0)
+    controller.seek = Mock(return_value=True)
     return controller
 
 
@@ -47,6 +49,8 @@ def playback_controller(mock_queue_manager, mock_youtube_client,
     """Create a PlaybackController instance."""
     # Mock get_queue to return empty list to avoid thread issues
     mock_queue_manager.get_queue.return_value = []
+    mock_queue_manager.database = Mock()
+    mock_queue_manager.database.get_connection.return_value.cursor.return_value.fetchone.return_value = None
     
     controller = PlaybackController(
         mock_queue_manager,
@@ -56,7 +60,9 @@ def playback_controller(mock_queue_manager, mock_youtube_client,
     )
     # Stop the download monitor thread immediately
     controller._monitoring = False
-    # Wait a moment for thread to stop
+    # Stop position tracking thread
+    controller._tracking_position = False
+    # Wait a moment for threads to stop
     import time
     time.sleep(0.1)
     return controller
@@ -88,7 +94,8 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager,
         'download_path': '/path/to/video.mp4',
         'pitch_semitones': 2,
         'download_status': QueueManager.STATUS_READY,
-        'played_at': None
+        'played_at': None,
+        'playback_position_seconds': 0
     }
     # Mock get_queue to return the song
     mock_queue_manager.get_queue.return_value = [mock_song]
@@ -100,7 +107,8 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager,
     assert playback_controller.current_song == mock_song
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4')
-    mock_queue_manager.mark_played.assert_called_once_with(1)
+    # Song should NOT be marked as played when it starts - only when it finishes
+    mock_queue_manager.mark_played.assert_not_called()
 
 
 def test_play_no_download_path(playback_controller, mock_queue_manager):
@@ -162,7 +170,8 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
         'download_path': '/path/to/next.mp4',
         'pitch_semitones': 0,
         'download_status': QueueManager.STATUS_READY,
-        'played_at': None
+        'played_at': None,
+        'playback_position_seconds': 0
     }
     # Mock get_queue to return the next song
     mock_queue_manager.get_queue.return_value = [mock_next_song]
@@ -172,6 +181,8 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     assert result is True
     mock_streaming_controller.stop.assert_called_once()
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/next.mp4')
+    # Skip should NOT clear playback position - it's preserved for potential resume
+    mock_queue_manager.update_playback_position.assert_not_called()
 
 
 def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streaming_controller):
@@ -220,13 +231,18 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
         'download_path': '/path/to/next.mp4',
         'pitch_semitones': 0,
         'download_status': QueueManager.STATUS_READY,
-        'played_at': None
+        'played_at': None,
+        'playback_position_seconds': 0
     }
     # Mock get_queue to return the next song
     mock_queue_manager.get_queue.return_value = [mock_next_song]
     
     playback_controller.on_song_end()
     
+    # Should mark current song as played
+    mock_queue_manager.mark_played.assert_called_once_with(1)
+    # Should clear playback position
+    mock_queue_manager.update_playback_position.assert_called_once_with(1, 0)
     # Should reset pitch
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
     # Should load next song
@@ -238,10 +254,14 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
     """Test end of song when no next song."""
     playback_controller.current_song = {'id': 1, 'title': 'Song 1'}
     playback_controller.state = PlaybackState.PLAYING
-    mock_queue_manager.get_next_song.return_value = None
+    mock_queue_manager.get_queue.return_value = []
     
     playback_controller.on_song_end()
     
+    # Should mark current song as played
+    mock_queue_manager.mark_played.assert_called_once_with(1)
+    # Should clear playback position
+    mock_queue_manager.update_playback_position.assert_called_once_with(1, 0)
     assert playback_controller.current_song is None
     assert playback_controller.state == PlaybackState.IDLE
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(0)
@@ -288,5 +308,53 @@ def test_download_status_error(playback_controller, mock_queue_manager):
         QueueManager.STATUS_ERROR,
         error_message=error_message
     )
+
+
+def test_play_with_resume_position(playback_controller, mock_queue_manager, 
+                                 mock_streaming_controller):
+    """Test playing a song with saved playback position (resume)."""
+    mock_song = {
+        'id': 1,
+        'title': 'Test Song',
+        'user_name': 'Alice',
+        'download_path': '/path/to/video.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 45  # Resume from 45 seconds
+    }
+    mock_queue_manager.get_queue.return_value = [mock_song]
+    
+    result = playback_controller.play()
+    
+    assert result is True
+    assert playback_controller.state == PlaybackState.PLAYING
+    # Should seek to saved position
+    mock_streaming_controller.seek.assert_called_once_with(45)
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4')
+
+
+def test_jump_to_song_with_resume(playback_controller, mock_queue_manager,
+                                  mock_streaming_controller):
+    """Test jumping to a song with resume position."""
+    mock_song = {
+        'id': 1,
+        'title': 'Test Song',
+        'user_name': 'Alice',
+        'download_path': '/path/to/video.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 30
+    }
+    mock_queue_manager.get_item.return_value = mock_song
+    
+    result = playback_controller.jump_to_song(1, resume_position=30)
+    
+    assert result is True
+    assert playback_controller.state == PlaybackState.PLAYING
+    # Should seek to resume position
+    mock_streaming_controller.seek.assert_called_once_with(30)
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4')
 
 

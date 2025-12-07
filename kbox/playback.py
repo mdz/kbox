@@ -51,6 +51,14 @@ class PlaybackController:
         self._download_monitor_thread = None
         self._monitoring = True
         self._start_download_monitor()
+        
+        # Start position tracking thread
+        self._position_tracking_thread = None
+        self._tracking_position = False
+        self._start_position_tracking()
+        
+        # Check for songs to resume on startup
+        self._resume_interrupted_playback()
     
     def _start_download_monitor(self):
         """Start background thread to monitor queue and trigger downloads."""
@@ -89,6 +97,65 @@ class PlaybackController:
         
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
+    
+    def _start_position_tracking(self):
+        """Start background thread to track playback position."""
+        if self._position_tracking_thread and self._position_tracking_thread.is_alive():
+            return
+        
+        def track_position():
+            """Periodically update playback position in database."""
+            import time
+            while self._tracking_position:
+                try:
+                    if self.state == PlaybackState.PLAYING and self.current_song:
+                        position = self.streaming_controller.get_position()
+                        if position is not None:
+                            self.queue_manager.update_playback_position(
+                                self.current_song['id'],
+                                position
+                            )
+                    time.sleep(2)  # Update every 2 seconds
+                except Exception as e:
+                    self.logger.error('Error tracking position: %s', e, exc_info=True)
+                    time.sleep(5)  # Wait longer on error
+        
+        self._tracking_position = True
+        self._position_tracking_thread = threading.Thread(target=track_position, daemon=True, name='PositionTracker')
+        self._position_tracking_thread.start()
+        self.logger.info('Position tracking started')
+    
+    def _resume_interrupted_playback(self):
+        """Check for songs with playback position and resume if needed."""
+        try:
+            conn = self.queue_manager.database.get_connection()
+            cursor = conn.cursor()
+            
+            # Find songs with playback position but not marked as played
+            cursor.execute('''
+                SELECT id, position, user_name, youtube_video_id, title,
+                       duration_seconds, thumbnail_url, pitch_semitones,
+                       download_status, download_path, created_at, played_at,
+                       playback_position_seconds, error_message
+                FROM queue_items
+                WHERE playback_position_seconds > 0 
+                  AND played_at IS NULL
+                  AND download_status = 'ready'
+                ORDER BY position
+                LIMIT 1
+            ''')
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                song = dict(result)
+                self.logger.info('Found interrupted playback: %s at position %s seconds', 
+                               song['title'], song['playback_position_seconds'])
+                # Resume playback
+                self.jump_to_song(song['id'], resume_position=song['playback_position_seconds'])
+        except Exception as e:
+            self.logger.error('Error resuming interrupted playback: %s', e, exc_info=True)
     
     def _on_download_status(self, item_id: int, status: str, path: Optional[str], error: Optional[str]):
         """Callback for download status updates."""
@@ -176,6 +243,13 @@ class PlaybackController:
             # Load file into streaming controller
             try:
                 self.streaming_controller.load_file(download_path)
+                
+                # Check if there's a saved playback position to resume from
+                saved_position = next_song.get('playback_position_seconds', 0)
+                if saved_position and saved_position > 0:
+                    self.logger.info('Resuming playback at position: %s seconds', saved_position)
+                    if not self.streaming_controller.seek(saved_position):
+                        self.logger.warning('Failed to seek to saved position')
             except Exception as e:
                 self.logger.error('Failed to load file into streaming controller: %s', e)
                 self.logger.warning('This may be due to GStreamer issues on macOS. Playback will not work, but queue management is still functional.')
@@ -188,8 +262,8 @@ class PlaybackController:
             self.current_song = next_song
             self.state = PlaybackState.PLAYING
             
-            # Mark as played in queue
-            self.queue_manager.mark_played(next_song['id'])
+            # Don't mark as played yet - wait until song finishes
+            # This way interrupted songs remain in the queue
             
             self.logger.info('Playback started: %s', next_song['title'])
             return True
@@ -231,15 +305,17 @@ class PlaybackController:
         with self.lock:
             self.logger.info('Skipping current song')
             
-            # Stop current playback
+            # Stop current playback (but keep position saved in case user wants to resume)
             if self.current_song:
                 self.streaming_controller.stop()
+                # Don't clear playback position - user might want to resume later
+                # Position will only be cleared when song completes (EOS) or is explicitly reset
             
             # Load next song
             self.current_song = None
             return self._load_and_play_next()
     
-    def jump_to_song(self, item_id: int) -> bool:
+    def jump_to_song(self, item_id: int, resume_position: Optional[int] = None) -> bool:
         """
         Jump to a specific song in the queue.
         
@@ -344,7 +420,34 @@ class PlaybackController:
     def on_song_end(self):
         """Called when current song ends (EOS)."""
         with self.lock:
-            self.logger.info('Song ended: %s', self.current_song['title'] if self.current_song else 'unknown')
+            if self.current_song:
+                self.logger.info('Song ended: %s', self.current_song['title'])
+                
+                # Get final playback position
+                final_position = self.streaming_controller.get_position()
+                if final_position is None:
+                    final_position = self.current_song.get('playback_position_seconds', 0)
+                
+                # Get start position (for resume cases)
+                start_position = self.current_song.get('playback_position_seconds', 0)
+                
+                # Record in playback history
+                self.queue_manager.record_playback_history(
+                    queue_item_id=self.current_song['id'],
+                    user_name=self.current_song['user_name'],
+                    youtube_video_id=self.current_song['youtube_video_id'],
+                    title=self.current_song['title'],
+                    duration_seconds=self.current_song.get('duration_seconds'),
+                    pitch_semitones=self.current_song.get('pitch_semitones', 0),
+                    playback_position_start=start_position,
+                    playback_position_end=final_position
+                )
+                
+                # Mark as played and clear playback position
+                self.queue_manager.mark_played(self.current_song['id'])
+                self.queue_manager.update_playback_position(self.current_song['id'], 0)
+            else:
+                self.logger.info('Song ended: unknown')
             
             # Reset pitch
             self.streaming_controller.set_pitch_shift(0)

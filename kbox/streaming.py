@@ -1,5 +1,6 @@
 import logging
 import sys
+from typing import Optional
 
 # Defer GStreamer imports until actually needed to avoid crashes on import
 # On macOS, importing GStreamer can cause segfaults due to library conflicts
@@ -170,9 +171,19 @@ class StreamingController:
             return
         
         self.logger.info('Setting pitch shift to %s semitones', semitones)
-        pitch_shift = self.pipeline.get_by_name('pitch_shift')
-        pitch_shift.set_property('semitones', semitones)
         self.pitch_shift_semitones = semitones
+        
+        # Try to get pitch shift element from pipeline
+        if self.pipeline:
+            try:
+                pitch_shift = self.pipeline.get_by_name('pitch_shift')
+                if pitch_shift:
+                    pitch_shift.set_property('semitones', semitones)
+                    self.logger.info('Pitch shift updated in pipeline')
+                else:
+                    self.logger.warning('Pitch shift element not found in pipeline - may not be supported')
+            except Exception as e:
+                self.logger.warning('Could not update pitch shift: %s', e)
 
     def run(self):
         """Run the streaming controller (start pipeline if not already started)."""
@@ -275,9 +286,10 @@ class StreamingController:
         """Create pipeline for YouTube file playback."""
         self._ensure_gst_initialized()
         
-        # On macOS, use a simpler pipeline to avoid crashes
-        if sys.platform == 'darwin':
-            return self._create_simple_macos_pipeline(filepath)
+        # On macOS, we can now use the full pipeline with pitch shifting support
+        # The gst_macos_main() integration makes this stable
+        # if sys.platform == 'darwin':
+        #     return self._create_simple_macos_pipeline(filepath)
         
         self.logger.info('Creating YouTube playback pipeline for: %s', filepath)
         Gst = _get_gst()
@@ -490,6 +502,59 @@ class StreamingController:
     def set_eos_callback(self, callback):
         """Set callback for end-of-stream events."""
         self.eos_callback = callback
+    
+    def get_position(self) -> Optional[int]:
+        """
+        Get current playback position in seconds.
+        
+        Returns:
+            Position in seconds, or None if not available
+        """
+        if not self.pipeline:
+            return None
+        
+        try:
+            Gst = _get_gst()
+            success, position = self.pipeline.query_position(Gst.Format.TIME)
+            if success:
+                # Convert nanoseconds to seconds
+                return position // Gst.SECOND
+            return None
+        except Exception as e:
+            self.logger.warning('Could not get playback position: %s', e)
+            return None
+    
+    def seek(self, position_seconds: int) -> bool:
+        """
+        Seek to a specific position in the stream.
+        
+        Args:
+            position_seconds: Position to seek to in seconds
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.pipeline:
+            self.logger.warning('Cannot seek: no pipeline')
+            return False
+        
+        try:
+            Gst = _get_gst()
+            # Convert seconds to nanoseconds
+            position_ns = position_seconds * Gst.SECOND
+            success = self.pipeline.seek_simple(
+                Gst.Format.TIME,
+                Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                position_ns
+            )
+            if success:
+                self.logger.info('Seeked to position: %s seconds', position_seconds)
+            else:
+                self.logger.warning('Seek failed')
+            return success
+        except Exception as e:
+            self.logger.error('Error seeking: %s', e, exc_info=True)
+            return False
     
     def stop(self):
         self.logger.debug('Stopping gstreamer pipeline...')
