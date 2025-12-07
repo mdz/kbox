@@ -374,6 +374,21 @@ class StreamingController:
         """Create a simple, crash-resistant pipeline for macOS."""
         self.logger.info('Using simplified pipeline for macOS')
         
+        # Initialize NSApplication for video sinks (required on macOS)
+        # This must be done before creating video sinks
+        try:
+            from AppKit import NSApplication
+            app = NSApplication.sharedApplication()
+            if app is None:
+                app = NSApplication.alloc().init()
+            # Activate the app to ensure it's running
+            app.activateIgnoringOtherApps_(True)
+            self.logger.info('NSApplication initialized for video support')
+        except ImportError:
+            self.logger.warning('AppKit not available - install pyobjc for video support: pip install pyobjc')
+        except Exception as e:
+            self.logger.warning('Could not initialize NSApplication: %s (video may not work)', e)
+        
         # Use playbin which is more stable and handles everything internally
         Gst = _get_gst()
         pipeline = Gst.Pipeline.new('YouTubePlayback')
@@ -395,29 +410,30 @@ class StreamingController:
         audio_sink = self.make_element('autoaudiosink', 'audio_sink')
         playbin.set_property('audio-sink', audio_sink)
         
-        # Use autovideosink for macOS (auto-detects best video sink)
-        # Falls back to osxvideosink if autovideosink not available
+        # Use osxvideosink directly for macOS (more reliable than autovideosink)
+        # Falls back to autovideosink if osxvideosink not available
         video_sink = None
         try:
-            video_sink = self.make_element('autovideosink', 'video_sink')
-            self.logger.info('Using autovideosink for video output')
+            video_sink = self.make_element('osxvideosink', 'video_sink')
+            self.logger.info('Using osxvideosink for video output')
+            # osxvideosink should create a window automatically
         except Exception as e:
-            self.logger.debug('autovideosink failed: %s', e)
+            self.logger.debug('osxvideosink failed: %s', e)
             try:
-                video_sink = self.make_element('osxvideosink', 'video_sink')
-                self.logger.info('Using osxvideosink for video output')
+                video_sink = self.make_element('autovideosink', 'video_sink')
+                self.logger.info('Using autovideosink for video output (fallback)')
             except Exception as e2:
-                self.logger.warning('osxvideosink failed: %s', e2)
+                self.logger.warning('autovideosink failed: %s', e2)
                 self.logger.warning('No video sink available, using fakesink (no video will be displayed)')
                 video_sink = self.make_element('fakesink', 'video_sink')
         
         if video_sink:
             playbin.set_property('video-sink', video_sink)
-            # For osxvideosink, we might need to set some properties
+            # For osxvideosink, try to ensure window is visible
             try:
                 if hasattr(video_sink, 'set_property'):
-                    # Try to enable video window embedding if supported
-                    video_sink.set_property('sync', False)  # Don't sync video to audio clock
+                    # Don't sync video to audio clock (can cause issues)
+                    video_sink.set_property('sync', False)
             except:
                 pass
         
