@@ -58,14 +58,12 @@ def get_config_manager(request: Request) -> ConfigManager:
     """Get ConfigManager from app state."""
     return request.app.state.config_manager
 
-def check_operator(request: Request, test_mode: bool = False) -> bool:
+def check_operator(request: Request) -> bool:
     """
     Check if user is authenticated as operator.
-    
-    Args:
-        request: FastAPI request
-        test_mode: If True, always return True (operator enabled by default)
+    In test mode, always returns True.
     """
+    test_mode = getattr(request.app.state, 'test_mode', False)
     if test_mode:
         return True
     return request.session.get('operator', False)
