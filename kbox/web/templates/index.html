@@ -296,6 +296,13 @@
         <button class="danger" onclick="clearQueue()">Clear Queue</button>
     </div>
     
+    <!-- Playback Controls Toggle (Operator Only) -->
+    <div class="section operator-panel hidden" id="toggle-controls-section">
+        <button id="toggle-controls-btn" onclick="togglePlaybackControls()" class="secondary">
+            <span id="toggle-controls-text">Open Playback Controls</span>
+        </button>
+    </div>
+    
     <script>
         let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
@@ -347,24 +354,23 @@
             document.getElementById('name-modal').classList.add('hidden');
         }
         
-        // Auto-enable operator mode in test mode
+        // Auto-enable operator mode in test mode (but don't show controls by default)
         {% if test_mode %}
         (function() {
             function enableOperatorMode() {
-                const operatorPanel = document.getElementById('operator-panel');
                 const authSection = document.getElementById('auth-section');
-                if (operatorPanel) {
-                    operatorPanel.classList.remove('hidden');
-                    console.log('Operator panel enabled');
-                } else {
-                    console.error('operator-panel element not found');
-                }
+                const toggleSection = document.getElementById('toggle-controls-section');
                 if (authSection) {
                     authSection.style.display = 'none';
                     console.log('Auth section hidden');
                 } else {
                     console.error('auth-section element not found');
                 }
+                if (toggleSection) {
+                    toggleSection.classList.remove('hidden');
+                    console.log('Toggle controls section shown');
+                }
+                // Note: Playback controls are hidden by default and must be toggled
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', enableOperatorMode);
@@ -373,6 +379,25 @@
             }
         })();
         {% endif %}
+        
+        // Toggle playback controls visibility
+        function togglePlaybackControls() {
+            const panel = document.getElementById('operator-panel');
+            const toggleBtn = document.getElementById('toggle-controls-btn');
+            const toggleText = document.getElementById('toggle-controls-text');
+            
+            if (!panel || !toggleBtn || !toggleText) return;
+            
+            if (panel.classList.contains('hidden')) {
+                // Open controls
+                panel.classList.remove('hidden');
+                toggleText.textContent = 'Close Playback Controls';
+            } else {
+                // Close controls
+                panel.classList.add('hidden');
+                toggleText.textContent = 'Open Playback Controls';
+            }
+        }
         
         // Auto-refresh queue to show current song
         setInterval(loadQueue, 2000); // Refresh every 2 seconds
@@ -412,6 +437,13 @@
         // Load queue on page load
         loadQueue();
         
+        // Add Enter key support for search input
+        document.getElementById('search-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                search();
+            }
+        });
+        
         // Authenticate as operator
         async function authenticate() {
             const pin = document.getElementById('pin-input').value;
@@ -428,7 +460,11 @@
                     const data = await response.json();
                     isOperator = data.operator;
                     if (isOperator) {
-                        document.getElementById('operator-panel').classList.remove('hidden');
+                        // Show toggle button, but keep controls hidden by default
+                        const toggleSection = document.getElementById('toggle-controls-section');
+                        if (toggleSection) {
+                            toggleSection.classList.remove('hidden');
+                        }
                         messageDiv.innerHTML = '<div class="success">Operator mode enabled</div>';
                         document.getElementById('pin-input').value = '';
                     }
