@@ -415,22 +415,26 @@ class StreamingController:
         audio_sink = self.make_element('autoaudiosink', 'audio_sink')
         playbin.set_property('audio-sink', audio_sink)
         
-        # Use osxvideosink directly for macOS (more reliable than autovideosink)
-        # Falls back to autovideosink if osxvideosink not available
+        # Try glimagesink first (OpenGL-based, doesn't require NSRunLoop)
+        # Falls back to osxvideosink, then autovideosink, then fakesink
         video_sink = None
         try:
-            video_sink = self.make_element('osxvideosink', 'video_sink')
-            self.logger.info('Using osxvideosink for video output')
-            # osxvideosink should create a window automatically
+            video_sink = self.make_element('glimagesink', 'video_sink')
+            self.logger.info('Using glimagesink for video output (OpenGL-based, no NSRunLoop needed)')
         except Exception as e:
-            self.logger.debug('osxvideosink failed: %s', e)
+            self.logger.debug('glimagesink failed: %s', e)
             try:
-                video_sink = self.make_element('autovideosink', 'video_sink')
-                self.logger.info('Using autovideosink for video output (fallback)')
+                video_sink = self.make_element('osxvideosink', 'video_sink')
+                self.logger.info('Using osxvideosink for video output (requires NSRunLoop)')
             except Exception as e2:
-                self.logger.warning('autovideosink failed: %s', e2)
-                self.logger.warning('No video sink available, using fakesink (no video will be displayed)')
-                video_sink = self.make_element('fakesink', 'video_sink')
+                self.logger.debug('osxvideosink failed: %s', e2)
+                try:
+                    video_sink = self.make_element('autovideosink', 'video_sink')
+                    self.logger.info('Using autovideosink for video output (fallback)')
+                except Exception as e3:
+                    self.logger.warning('autovideosink failed: %s', e3)
+                    self.logger.warning('No video sink available, using fakesink (no video will be displayed)')
+                    video_sink = self.make_element('fakesink', 'video_sink')
         
         if video_sink:
             playbin.set_property('video-sink', video_sink)
