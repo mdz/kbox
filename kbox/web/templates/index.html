@@ -1,0 +1,1272 @@
+<!--
+    This is a Jinja2 template file. The JavaScript linter will show false positives
+    because it doesn't understand server-side template syntax.
+    These errors can be safely ignored - the template is processed server-side before
+    being sent to the browser.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>kbox - Karaoke Queue</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 10px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin: 20px 0;
+            color: #fff;
+            position: relative;
+        }
+        
+        .help-button {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .help-button:hover {
+            background: #5aaeff;
+            transform: scale(1.05);
+        }
+        
+        .controls-toggle-button {
+            position: fixed;
+            top: 15px;
+            left: 15px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #666;
+            color: #fff;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .controls-toggle-button:hover {
+            background: #777;
+            transform: scale(1.05);
+        }
+        
+        .controls-toggle-button.active {
+            background: #4a9eff;
+        }
+        
+        .controls-toggle-button.active:hover {
+            background: #5aaeff;
+        }
+        
+        .section {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        
+        .section h2 {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+        
+        input, button, select {
+            width: 100%;
+            padding: 12px;
+            margin: 5px 0;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #333;
+            color: #e0e0e0;
+            font-size: 16px;
+        }
+        
+        #search-input {
+            padding: 24px;
+            font-size: 18px;
+        }
+        
+        button {
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        button.danger {
+            background: #e74c3c;
+        }
+        
+        button.secondary {
+            background: #666;
+        }
+        
+        .search-results {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .search-result {
+            display: flex;
+            padding: 10px;
+            margin: 5px 0;
+            background: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+        }
+        
+        .search-result:hover {
+            border-color: #4a9eff;
+        }
+        
+        .search-result img {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-right: 10px;
+        }
+        
+        .search-result-info {
+            flex: 1;
+        }
+        
+        .search-result-title {
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        
+        .search-result-channel {
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        
+        .queue-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .queue-item:hover {
+            border-color: #4a9eff;
+            background: #3a3a3a;
+        }
+        
+        .queue-item.playing {
+            background: #2a4a6a;
+            border-color: #4a9eff;
+            box-shadow: 0 0 10px rgba(74, 158, 255, 0.3);
+        }
+        
+        .queue-item.playing .queue-item-user {
+            color: #6bb6ff;
+            font-weight: 600;
+        }
+        
+        .queue-item-info {
+            flex: 1;
+        }
+        
+        .queue-item-user {
+            font-weight: 500;
+            color: #4a9eff;
+        }
+        
+        .queue-item-title {
+            font-size: 0.9em;
+            color: #aaa;
+            margin-top: 3px;
+        }
+        
+        .queue-item-status {
+            font-size: 0.8em;
+            padding: 3px 8px;
+            border-radius: 3px;
+            margin-left: 10px;
+        }
+        
+        .status-pending {
+            background: #666;
+        }
+        
+        .status-downloading {
+            background: #f39c12;
+        }
+        
+        .status-ready {
+            background: #27ae60;
+        }
+        
+        .status-error {
+            background: #e74c3c;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .operator-panel {
+            background: #3a3a3a;
+            border: 2px solid #4a9eff;
+        }
+        
+        .operator-panel h2 {
+            color: #4a9eff;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .error {
+            color: #e74c3c;
+            margin: 5px 0;
+            font-size: 0.9em;
+        }
+        
+        .success {
+            color: #27ae60;
+            margin: 5px 0;
+            font-size: 0.9em;
+        }
+        
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 400px;
+            width: 90%;
+            border: 2px solid #4a9eff;
+        }
+        
+        .modal h2 {
+            margin-bottom: 15px;
+            color: #fff;
+        }
+        
+        .modal input {
+            margin-bottom: 15px;
+        }
+        
+        .pitch-control {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .pitch-display {
+            flex: 1;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #4a9eff;
+            min-width: 60px;
+            padding: 10px;
+        }
+        
+        .pitch-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 8px;
+            font-size: 24px;
+            font-weight: bold;
+            border: 2px solid #4a9eff;
+            background: #333;
+            color: #4a9eff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        .pitch-button:active {
+            background: #4a9eff;
+            color: #fff;
+        }
+        
+        .pitch-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .pitch-label {
+            display: block;
+            margin-bottom: 8px;
+            color: #aaa;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <button class="controls-toggle-button" id="controls-toggle-button" onclick="togglePlaybackControls()" title="Enable Playback Controls" style="display: none;">⚙</button>
+    <button class="help-button" onclick="showHelp()" title="Help">?</button>
+        <h1>🎤 kbox</h1>
+        
+    <!-- User Name Prompt Modal -->
+    <div class="modal-overlay hidden" id="name-modal" {% if test_mode %}style="display: none;"{% endif %}>
+        <div class="modal">
+            <h2>Welcome to kbox!</h2>
+            <p style="margin-bottom: 15px; color: #aaa;">Please enter your name to get started:</p>
+            <input type="text" id="name-modal-input" placeholder="Your name" autofocus />
+            <button onclick="saveUserName()">Continue</button>
+            </div>
+        </div>
+        
+    <!-- Add Song Confirmation Modal -->
+    <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
+        <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
+            <h2>Add to Queue</h2>
+            <div id="add-song-modal-content" style="margin-bottom: 20px;">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="pitch-label">Pitch Adjustment (semitones):</label>
+                <div class="pitch-control">
+                    <button class="pitch-button" onclick="adjustPitch('add-song', -1)">−</button>
+                    <div class="pitch-display" id="add-song-pitch-display">
+                        <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
+                        <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
+                    </div>
+                    <button class="pitch-button" onclick="adjustPitch('add-song', 1)">+</button>
+                </div>
+                <input type="hidden" id="add-song-pitch-input" value="0" />
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
+                <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
+            </div>
+            </div>
+        </div>
+        
+    <!-- Edit Queue Item Modal -->
+    <div class="modal-overlay hidden" id="edit-queue-item-modal" style="display: none;" onclick="if(event.target === this) cancelEditQueueItem();">
+        <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
+            <h2>Edit Song</h2>
+            <div id="edit-queue-item-content" style="margin-bottom: 20px;">
+                <!-- Content will be populated by JavaScript -->
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label class="pitch-label">Pitch Adjustment (semitones):</label>
+                <div class="pitch-control">
+                    <button class="pitch-button" onclick="adjustPitch('edit-queue-item', -1)" id="edit-queue-item-pitch-minus">−</button>
+                    <div class="pitch-display" id="edit-queue-item-pitch-display">
+                        <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
+                        <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
+                    </div>
+                    <button class="pitch-button" onclick="adjustPitch('edit-queue-item', 1)" id="edit-queue-item-pitch-plus">+</button>
+                </div>
+                <input type="hidden" id="edit-queue-item-pitch-input" value="0" />
+            </div>
+            <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
+                <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <button onclick="playNowQueueItem()" id="play-now-button" style="width: 100%; background: #27ae60;">▶ Play Now</button>
+                    <button onclick="playNextQueueItem()" style="width: 100%;">Play Next</button>
+                    <button onclick="moveToEndQueueItem()" style="width: 100%;">Move to End</button>
+                    <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button onclick="saveQueueItemPitch()" style="flex: 1;">Save</button>
+                <button onclick="cancelEditQueueItem()" style="flex: 1; background: #444;">Cancel</button>
+            </div>
+        </div>
+        </div>
+        
+    <!-- Help Modal -->
+    <div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
+        <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
+            <h2>How to Use kbox</h2>
+            <div style="color: #e0e0e0; line-height: 1.6;">
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Adding Songs</h3>
+                <ol style="margin-left: 20px; margin-bottom: 20px;">
+                    <li style="margin-bottom: 8px;">Enter a song name in the search box and tap "Search"</li>
+                    <li style="margin-bottom: 8px;">Tap on a search result to open the confirmation dialog</li>
+                    <li style="margin-bottom: 8px;">Optionally adjust the pitch (semitones) if needed</li>
+                    <li style="margin-bottom: 8px;">Tap "Add to Queue" to add the song</li>
+                </ol>
+                
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Queue</h3>
+                <p style="margin-bottom: 20px;">Your songs will appear in the queue. The currently playing song is highlighted in blue. Songs are played in the order they were added.</p>
+                
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Pitch Adjustment</h3>
+                <p style="margin-bottom: 20px;">You can adjust the pitch when adding a song, or operators can adjust it during playback. Range: -12 to +12 semitones (one octave down/up).</p>
+                
+                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Operator Controls</h3>
+                <p style="margin-bottom: 20px;">Operators can control playback (play, pause, skip) and adjust pitch during playback. Tap "Open Playback Controls" to access these features.</p>
+            </div>
+            <button onclick="hideHelp()" style="margin-top: 20px;">Close</button>
+            </div>
+            </div>
+    
+    <!-- Operator Authentication -->
+    <div class="section" id="auth-section">
+        <h2>Operator Controls</h2>
+        <input type="password" id="pin-input" placeholder="Enter PIN to enable controls" />
+        <button onclick="authenticate()">Enable Controls</button>
+        <div id="auth-message"></div>
+    </div>
+    
+    <!-- Search Section -->
+    <div class="section">
+        <input type="text" id="search-input" placeholder="Search for a song..." />
+        <button onclick="search()">Search</button>
+        <div id="search-results" class="search-results"></div>
+        </div>
+        
+        <!-- Queue Section -->
+    <div class="section">
+            <h2>Queue</h2>
+        <div id="queue-list"></div>
+        </div>
+    
+    <!-- Playback Controls (Operator Only) -->
+    <div class="section operator-panel hidden" id="operator-panel">
+        <h2>Playback Controls</h2>
+        <div class="controls">
+            <button id="play-pause-toggle" onclick="togglePlayPause()">▶ Play</button>
+            <button onclick="playback('skip')">⏭ Skip</button>
+            <button onclick="playback('previous')">⏮ Previous</button>
+        </div>
+        <div>
+            <label class="pitch-label">Pitch Adjustment (semitones):</label>
+            <div class="pitch-control">
+                <button class="pitch-button" onclick="adjustPitch('operator', -1)">−</button>
+                <div class="pitch-display" id="operator-pitch-display">
+                    <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
+                    <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
+                </div>
+                <button class="pitch-button" onclick="adjustPitch('operator', 1)">+</button>
+            </div>
+            <input type="hidden" id="pitch-input" value="0" />
+            <button onclick="setPitch()" style="width: 100%; margin-top: 10px;">Set Pitch</button>
+        </div>
+        <button class="danger" onclick="clearQueue()">Clear Queue</button>
+    </div>
+    
+    <script>
+        // @ts-ignore - Jinja2 template syntax
+        let isOperator = {{ 'true' if test_mode else 'false' }};
+        let currentQueue = [];
+        let userName = null;
+        
+        // Convert semitones to musical interval name
+        function getIntervalName(semitones) {
+            const intervals = {
+                0: 'Perfect Unison',
+                1: 'Minor Second',
+                2: 'Major Second',
+                3: 'Minor Third',
+                4: 'Major Third',
+                5: 'Perfect Fourth',
+                6: 'Tritone',
+                7: 'Perfect Fifth',
+                8: 'Minor Sixth',
+                9: 'Major Sixth',
+                10: 'Minor Seventh',
+                11: 'Major Seventh',
+                12: 'Perfect Octave'
+            };
+            
+            const absSemitones = Math.abs(semitones);
+            const interval = intervals[absSemitones] || `${absSemitones} semitones`;
+            
+            if (semitones === 0) {
+                return interval;
+            } else if (semitones < 0) {
+                return `${interval} down`;
+            } else {
+                return `${interval} up`;
+            }
+        }
+        
+        // Update pitch display with number and interval name
+        function updatePitchDisplay(displayId, value) {
+            const display = document.getElementById(displayId);
+            if (!display) return;
+            
+            // Format value with + for positive numbers
+            const formattedValue = value > 0 ? `+${value}` : value.toString();
+            const intervalName = getIntervalName(value);
+            display.innerHTML = `<div style="font-size: 24px; font-weight: bold; color: #4a9eff;">${formattedValue}</div><div style="font-size: 12px; color: #aaa; margin-top: 2px;">${intervalName}</div>`;
+        }
+        
+        // Adjust pitch value with +/- buttons
+        function adjustPitch(context, delta) {
+            const inputId = context === 'add-song' ? 'add-song-pitch-input' : 
+                           context === 'edit-queue-item' ? 'edit-queue-item-pitch-input' : 
+                           'pitch-input';
+            const displayId = context === 'add-song' ? 'add-song-pitch-display' : 
+                             context === 'edit-queue-item' ? 'edit-queue-item-pitch-display' : 
+                             'operator-pitch-display';
+            
+            const input = document.getElementById(inputId);
+            
+            if (!input) return;
+            
+            let currentValue = parseInt(input.value) || 0;
+            let newValue = currentValue + delta;
+            
+            // Clamp to -12 to +12 range
+            newValue = Math.max(-12, Math.min(12, newValue));
+            
+            input.value = newValue;
+            updatePitchDisplay(displayId, newValue);
+            
+            // Update button states
+            if (context === 'edit-queue-item') {
+                const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
+                const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
+                if (minusBtn) minusBtn.disabled = (newValue <= -12);
+                if (plusBtn) plusBtn.disabled = (newValue >= 12);
+            }
+        }
+        
+        // Initialize user name
+        // @ts-ignore - Jinja2 template syntax
+        {% if test_mode %}
+        // In test mode, use a fixed name and skip the prompt
+        userName = 'Test User';
+        localStorage.setItem('kbox_user_name', userName);
+        // Ensure modal is hidden in test mode (run immediately)
+        (function() {
+            const modal = document.getElementById('name-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        })();
+        // @ts-ignore - Jinja2 template syntax
+        {% else %}
+        // Check if user name is stored
+        userName = localStorage.getItem('kbox_user_name');
+        if (!userName) {
+            // Show name prompt modal
+            const modal = document.getElementById('name-modal');
+            if (modal) {
+                modal.classList.remove('hidden');
+                modal.style.display = 'flex';
+                // Handle Enter key in name input
+                const nameInput = document.getElementById('name-modal-input');
+                if (nameInput) {
+                    nameInput.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter') {
+                            saveUserName();
+                        }
+                    });
+                    // Focus the input
+                    setTimeout(() => nameInput.focus(), 100);
+                }
+            }
+        }
+        // @ts-ignore - Jinja2 template syntax
+        {% endif %}
+        
+        // Save user name from modal
+        function saveUserName() {
+            const nameInput = document.getElementById('name-modal-input');
+            if (!nameInput) return;
+            
+            const name = nameInput.value.trim();
+            if (!name) {
+                alert('Please enter your name');
+                    return;
+                }
+            userName = name;
+            localStorage.setItem('kbox_user_name', userName);
+            
+            // Hide modal
+            const modal = document.getElementById('name-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
+        }
+        
+        // Auto-enable operator mode in test mode (but don't show controls by default)
+        // @ts-ignore - Jinja2 template syntax
+        {% if test_mode %}
+        (function() {
+            function enableOperatorMode() {
+                const authSection = document.getElementById('auth-section');
+                const toggleButton = document.getElementById('controls-toggle-button');
+                if (authSection) {
+                    authSection.style.display = 'none';
+                    console.log('Auth section hidden');
+                } else {
+                    console.error('auth-section element not found');
+                }
+                if (toggleButton) {
+                    toggleButton.style.display = 'flex';
+                    console.log('Controls toggle button shown');
+                }
+                // Note: Playback controls are hidden by default and must be toggled
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', enableOperatorMode);
+            } else {
+                enableOperatorMode();
+            }
+        })();
+        // @ts-ignore - Jinja2 template syntax
+        {% endif %}
+        
+        // Toggle playback controls visibility
+        function togglePlaybackControls() {
+            const panel = document.getElementById('operator-panel');
+            const toggleButton = document.getElementById('controls-toggle-button');
+            
+            if (!panel || !toggleButton) return;
+            
+            if (panel.classList.contains('hidden')) {
+                // Open controls
+                panel.classList.remove('hidden');
+                toggleButton.classList.add('active');
+                toggleButton.textContent = '⚙';
+                toggleButton.title = 'Disable Playback Controls';
+            } else {
+                // Close controls
+                panel.classList.add('hidden');
+                toggleButton.classList.remove('active');
+                toggleButton.textContent = '⚙';
+                toggleButton.title = 'Enable Playback Controls';
+            }
+        }
+        
+        // Auto-refresh queue to show current song
+        setInterval(loadQueue, 2000); // Refresh every 2 seconds
+        
+        // Store current queue item being edited
+        let currentQueueItemToEdit = null;
+        
+        // Check if playback controls are open
+        function arePlaybackControlsOpen() {
+            const panel = document.getElementById('operator-panel');
+            return panel && !panel.classList.contains('hidden');
+        }
+        
+        // Show edit queue item modal
+        function showEditQueueItemModal(item) {
+            currentQueueItemToEdit = item;
+            
+            // Check if user can edit this song
+            const canEdit = isOperator || (userName && item.user_name === userName);
+            
+            // Format duration
+            const duration = item.duration_seconds || 0;
+            const minutes = Math.floor(duration / 60);
+            const seconds = duration % 60;
+            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
+            
+            // Populate modal content
+            const contentDiv = document.getElementById('edit-queue-item-content');
+            contentDiv.innerHTML = `
+                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                    ${item.thumbnail_url ? `<img src="${item.thumbnail_url}" alt="${item.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />` : ''}
+                    <div style="flex: 1;">
+                        <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${item.title}</div>
+                        <div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">Requested by: ${item.user_name}</div>
+                        <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
+                        <div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${item.download_status}</div>
+                        ${!canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : ''}
+                        </div>
+                    </div>
+            `;
+            
+            // Set pitch input and display based on permissions
+            const pitchInput = document.getElementById('edit-queue-item-pitch-input');
+            const pitchDisplayId = 'edit-queue-item-pitch-display';
+            const pitchValue = item.pitch_semitones || 0;
+            pitchInput.value = pitchValue;
+            updatePitchDisplay(pitchDisplayId, pitchValue);
+            
+            // Enable/disable pitch buttons based on permissions
+            const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
+            const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
+            if (minusBtn) {
+                minusBtn.disabled = !canEdit || (pitchValue <= -12);
+            }
+            if (plusBtn) {
+                plusBtn.disabled = !canEdit || (pitchValue >= 12);
+            }
+            
+            // Show/hide save button based on permissions
+            const saveButton = document.querySelector('#edit-queue-item-modal button[onclick="saveQueueItemPitch()"]');
+            if (saveButton) {
+                saveButton.disabled = !canEdit;
+                saveButton.style.opacity = canEdit ? '1' : '0.5';
+            }
+            
+            // Show/hide operator options based on operator status and controls visibility
+            const operatorOptions = document.getElementById('edit-queue-item-operator-options');
+            if (isOperator && arePlaybackControlsOpen()) {
+                operatorOptions.style.display = 'block';
+                
+                // Enable/disable "Play Now" button based on download status
+                const playNowButton = document.getElementById('play-now-button');
+                if (playNowButton) {
+                    if (item.download_status === 'ready') {
+                        playNowButton.disabled = false;
+                        playNowButton.style.opacity = '1';
+                    } else {
+                        playNowButton.disabled = true;
+                        playNowButton.style.opacity = '0.5';
+                        playNowButton.title = 'Song must be ready to play';
+                    }
+                }
+            } else {
+                operatorOptions.style.display = 'none';
+            }
+            
+            // Show modal
+            const modal = document.getElementById('edit-queue-item-modal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+        }
+        
+        // Cancel editing queue item
+        function cancelEditQueueItem() {
+            const modal = document.getElementById('edit-queue-item-modal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+            currentQueueItemToEdit = null;
+        }
+        
+        // Save queue item pitch
+        async function saveQueueItemPitch() {
+            if (!currentQueueItemToEdit) return;
+            
+            // Check permissions
+            const canEdit = isOperator || (userName && currentQueueItemToEdit.user_name === userName);
+            if (!canEdit) {
+                alert('You can only edit songs you added');
+                return;
+            }
+            
+            const pitchInput = document.getElementById('edit-queue-item-pitch-input');
+            const pitchSemitones = parseInt(pitchInput.value) || 0;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        pitch_semitones: pitchSemitones,
+                        user_name: userName
+                    })
+                });
+                
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error updating pitch');
+            }
+        }
+        
+        // Play now (operator only) - immediately jump to and start playing the song
+        async function playNowQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            if (currentQueueItemToEdit.download_status !== 'ready') {
+                alert('Song must be ready (downloaded) before it can be played');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/playback/jump/${currentQueueItemToEdit.id}`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error playing song');
+            }
+        }
+        
+        // Play next (operator only)
+        async function playNextQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/play-next`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error moving song to play next');
+            }
+        }
+        
+        // Move to end (operator only)
+        async function moveToEndQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/move-to-end`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error moving song to end');
+            }
+        }
+        
+        // Remove from queue (operator only)
+        async function removeQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            if (!confirm(`Remove "${currentQueueItemToEdit.title}" from queue?`)) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {method: 'DELETE'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error removing song');
+            }
+        }
+        
+        // Check operator status on load
+        async function checkOperator() {
+            try {
+                const response = await fetch('/api/playback/status');
+                // If we can access operator endpoints, we're authenticated
+                // For now, just check if operator panel should be shown
+                // We'll implement proper session checking later
+            } catch (e) {
+                console.error('Error checking operator status:', e);
+            }
+        }
+        
+        // Load queue on page load
+        loadQueue();
+        
+        // Add Enter key support for search input
+        document.getElementById('search-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                search();
+            }
+        });
+        
+        // Authenticate as operator
+        async function authenticate() {
+            const pin = document.getElementById('pin-input').value;
+            const messageDiv = document.getElementById('auth-message');
+            
+            try {
+                const response = await fetch('/api/auth/operator', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pin: pin})
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    isOperator = data.operator;
+                    if (isOperator) {
+                        // Show toggle button, but keep controls hidden by default
+                        const toggleButton = document.getElementById('controls-toggle-button');
+                        if (toggleButton) {
+                            toggleButton.style.display = 'flex';
+                        }
+                        messageDiv.innerHTML = '<div class="success">Operator mode enabled</div>';
+                        document.getElementById('pin-input').value = '';
+                    }
+                } else {
+                    messageDiv.innerHTML = '<div class="error">Invalid PIN</div>';
+                }
+            } catch (e) {
+                messageDiv.innerHTML = '<div class="error">Error authenticating</div>';
+            }
+        }
+        
+        // Search YouTube
+        async function search() {
+            const query = document.getElementById('search-input').value;
+            
+            if (!query) {
+                alert('Please enter a search query');
+                return;
+            }
+            
+            if (!userName) {
+                alert('Please enter your name first');
+                document.getElementById('name-modal').classList.remove('hidden');
+                return;
+            }
+            
+            const resultsDiv = document.getElementById('search-results');
+            resultsDiv.innerHTML = 'Searching...';
+            
+            try {
+                const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                
+                resultsDiv.innerHTML = '';
+                data.results.forEach(video => {
+                    const div = document.createElement('div');
+                    div.className = 'search-result';
+                    div.innerHTML = `
+                        <img src="${video.thumbnail}" alt="${video.title}" />
+                        <div class="search-result-info">
+                            <div class="search-result-title">${video.title}</div>
+                            <div class="search-result-channel">${video.channel}</div>
+                        </div>
+                    `;
+                    div.onclick = () => showAddSongModal(video);
+                    resultsDiv.appendChild(div);
+                });
+            } catch (e) {
+                resultsDiv.innerHTML = '<div class="error">Error searching</div>';
+            }
+        }
+        
+        // Store current video being added
+        let currentVideoToAdd = null;
+        
+        // Show add song confirmation modal
+        function showAddSongModal(video) {
+            if (!userName) {
+                alert('Please enter your name first');
+                document.getElementById('name-modal').classList.remove('hidden');
+                return;
+            }
+            
+            currentVideoToAdd = video;
+            
+            // Format duration
+            const duration = video.duration_seconds || 0;
+            const minutes = Math.floor(duration / 60);
+            const seconds = duration % 60;
+            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
+            
+            // Populate modal content
+            const contentDiv = document.getElementById('add-song-modal-content');
+            contentDiv.innerHTML = `
+                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                    <img src="${video.thumbnail}" alt="${video.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />
+                    <div style="flex: 1;">
+                        <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${video.title}</div>
+                        <div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${video.channel}</div>
+                        <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
+                    </div>
+                </div>
+            `;
+            
+            // Reset pitch input and display
+            const pitchInput = document.getElementById('add-song-pitch-input');
+            pitchInput.value = '0';
+            updatePitchDisplay('add-song-pitch-display', 0);
+            
+            // Show modal
+            const modal = document.getElementById('add-song-modal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+            
+            // Focus pitch input (optional, but helpful)
+            setTimeout(() => pitchInput.focus(), 100);
+        }
+        
+        // Cancel adding song
+        function cancelAddToQueue() {
+            const modal = document.getElementById('add-song-modal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+            currentVideoToAdd = null;
+        }
+        
+        // Confirm and add song to queue
+        async function confirmAddToQueue() {
+            if (!currentVideoToAdd) return;
+            
+            const pitchInput = document.getElementById('add-song-pitch-input');
+            const pitchSemitones = parseInt(pitchInput.value) || 0;
+            
+            try {
+                const response = await fetch('/api/queue', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_name: userName,
+                        youtube_video_id: currentVideoToAdd.id,
+                        title: currentVideoToAdd.title,
+                        duration_seconds: currentVideoToAdd.duration_seconds,
+                        thumbnail_url: currentVideoToAdd.thumbnail,
+                        pitch_semitones: pitchSemitones
+                    })
+                });
+                
+                if (response.ok) {
+                    const modal = document.getElementById('add-song-modal');
+                    modal.classList.add('hidden');
+                    modal.style.display = 'none';
+                    document.getElementById('search-input').value = '';
+                    document.getElementById('search-results').innerHTML = '';
+                    loadQueue();
+                    currentVideoToAdd = null;
+                } else {
+                    alert('Error adding song to queue');
+                }
+            } catch (e) {
+                alert('Error adding song to queue');
+            }
+        }
+        
+        // Show help modal
+        function showHelp() {
+            const modal = document.getElementById('help-modal');
+            modal.classList.remove('hidden');
+            modal.style.display = 'flex';
+        }
+        
+        // Hide help modal
+        function hideHelp() {
+            const modal = document.getElementById('help-modal');
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+        
+        // Load queue
+        async function loadQueue() {
+            try {
+                // Get queue and current playback status
+                const [queueResponse, statusResponse] = await Promise.all([
+                    fetch('/api/queue'),
+                    fetch('/api/playback/status')
+                ]);
+                
+                const queueData = await queueResponse.json();
+                const statusData = await statusResponse.json();
+                currentQueue = queueData.queue;
+                
+                // Update play/pause toggle button
+                updatePlayPauseButton(statusData.state);
+                
+                const queueDiv = document.getElementById('queue-list');
+                
+                // Get current song ID
+                const currentSongId = statusData.current_song ? statusData.current_song.id : null;
+                
+                // If queue is empty but there's a current song, add it to the display
+                if (currentQueue.length === 0 && statusData.current_song) {
+                    currentQueue = [statusData.current_song];
+                }
+                
+                if (currentQueue.length === 0) {
+                    queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
+                    return;
+                }
+                
+                queueDiv.innerHTML = '';
+                currentQueue.forEach(item => {
+                    const div = document.createElement('div');
+                    const isPlaying = item.id === currentSongId;
+                    div.className = `queue-item ${isPlaying ? 'playing' : ''}`;
+                    const statusClass = `status-${item.download_status}`;
+                    div.innerHTML = `
+                        <div class="queue-item-info">
+                            <div class="queue-item-user">${item.user_name}</div>
+                            <div class="queue-item-title">${item.title}</div>
+                            </div>
+                        <span class="queue-item-status ${statusClass}">${item.download_status}</span>
+                    `;
+                    
+                    // Make all queue items clickable to edit
+                    div.onclick = () => showEditQueueItemModal(item);
+                    
+                    queueDiv.appendChild(div);
+                });
+            } catch (e) {
+                console.error('Error loading queue:', e);
+            }
+        }
+        
+        // Update play/pause toggle button based on state
+        function updatePlayPauseButton(state) {
+            const button = document.getElementById('play-pause-toggle');
+            if (!button) return;
+            
+            if (state === 'playing') {
+                button.textContent = '⏸ Pause';
+            } else {
+                button.textContent = '▶ Play';
+            }
+        }
+        
+        // Toggle play/pause
+        async function togglePlayPause() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                // Get current state
+                const statusResponse = await fetch('/api/playback/status');
+                const statusData = await statusResponse.json();
+                const currentState = statusData.state;
+                
+                // Toggle based on current state
+                const action = (currentState === 'playing') ? 'pause' : 'play';
+                const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                } else {
+                    // Update button immediately for better UX
+                    updatePlayPauseButton(action === 'play' ? 'playing' : 'paused');
+                }
+            } catch (e) {
+                alert('Error controlling playback');
+            }
+        }
+        
+        // Playback controls (for skip, previous, etc.)
+        async function playback(action) {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                }
+            } catch (e) {
+                alert('Error controlling playback');
+            }
+        }
+        
+        // Set pitch
+        async function setPitch() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            const semitones = parseInt(document.getElementById('pitch-input').value);
+            try {
+                const response = await fetch('/api/playback/pitch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({semitones: semitones})
+                });
+                if (!response.ok) {
+                    alert('Error setting pitch');
+                }
+            } catch (e) {
+                alert('Error setting pitch');
+            }
+        }
+        
+        // Clear queue
+        async function clearQueue() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            if (!confirm('Clear entire queue?')) return;
+            
+            try {
+                const response = await fetch('/api/queue/clear', {method: 'POST'});
+                if (response.ok) {
+        loadQueue();
+                } else {
+                    alert('Error clearing queue');
+                }
+            } catch (e) {
+                alert('Error clearing queue');
+            }
+        }
+    </script>
+</body>
+</html>

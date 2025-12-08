@@ -1,0 +1,42 @@
+[project]
+name = "kbox"
+version = "0.1.0"
+description = "Self-contained open-source karaoke system"
+requires-python = ">=3.9"
+dependencies = [
+    "pytest",
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "itsdangerous",
+    "google-api-python-client",
+    "yt-dlp",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kbox"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.8",
+]
+
+
+
+
+
