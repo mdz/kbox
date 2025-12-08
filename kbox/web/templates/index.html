@@ -90,6 +90,38 @@
             background: #5aaeff;
         }
         
+        .config-toggle-button {
+            position: fixed;
+            top: 15px;
+            left: 65px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #666;
+            color: #fff;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .config-toggle-button:hover {
+            background: #777;
+            transform: scale(1.05);
+        }
+        
+        .config-toggle-button.active {
+            background: #4a9eff;
+        }
+        
+        .config-toggle-button.active:hover {
+            background: #5aaeff;
+        }
+        
         .section {
             background: #2a2a2a;
             border-radius: 8px;
@@ -282,6 +314,22 @@
             display: none;
         }
         
+        .config-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .config-screen.hidden {
+            display: none;
+        }
+        
         .my-song-notification {
             background: linear-gradient(135deg, #4a9eff 0%, #5aaeff 100%);
             border: 2px solid #4a9eff;
@@ -425,6 +473,8 @@
     {% include 'components/your_turn_screen.html' %}
     
     {% include 'components/operator_controls.html' %}
+    
+    {% include 'components/config_screen.html' %}
     
     <script>
         // @ts-ignore - Jinja2 template syntax
@@ -722,15 +772,18 @@
         (function() {
             function enableOperatorMode() {
                 const authSection = document.getElementById('auth-section');
-                const toggleButton = document.getElementById('controls-toggle-button');
+                const playbackButton = document.getElementById('playback-toggle-button');
+                const configButton = document.getElementById('config-toggle-button');
                 if (authSection) {
                     authSection.style.display = 'none';
                 }
-                if (toggleButton) {
-                    toggleButton.style.display = 'flex';
+                if (playbackButton) {
+                    playbackButton.style.display = 'flex';
+                }
+                if (configButton) {
+                    configButton.style.display = 'flex';
                 }
                 isOperator = true;
-                // Note: Gear button is always visible, controls screen is hidden by default
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', enableOperatorMode);
@@ -744,7 +797,8 @@
         // Toggle playback controls visibility (now a full-screen overlay)
         function togglePlaybackControls() {
             const screen = document.getElementById('operator-controls-screen');
-            const toggleButton = document.getElementById('controls-toggle-button');
+            const configScreen = document.getElementById('config-screen');
+            const toggleButton = document.getElementById('playback-toggle-button');
             
             if (!screen || !toggleButton) return;
             
@@ -752,6 +806,11 @@
             if (!isOperator) {
                 alert('Operator authentication required. Please enter PIN in the operator controls section.');
                 return;
+            }
+            
+            // Close config screen if open
+            if (configScreen && !configScreen.classList.contains('hidden')) {
+                toggleConfigScreen();
             }
             
             if (screen.classList.contains('hidden')) {
@@ -800,6 +859,189 @@
                 screen.classList.add('hidden');
                 toggleButton.classList.remove('active');
                 toggleButton.title = 'Open Playback Controls';
+            }
+        }
+        
+        // Toggle configuration screen
+        function toggleConfigScreen() {
+            const screen = document.getElementById('config-screen');
+            const playbackScreen = document.getElementById('operator-controls-screen');
+            const toggleButton = document.getElementById('config-toggle-button');
+            
+            if (!screen || !toggleButton) return;
+            
+            // Check if user is operator
+            if (!isOperator) {
+                alert('Operator authentication required. Please enter PIN in the operator controls section.');
+                return;
+            }
+            
+            // Close playback screen if open
+            if (playbackScreen && !playbackScreen.classList.contains('hidden')) {
+                togglePlaybackControls();
+            }
+            
+            if (screen.classList.contains('hidden')) {
+                // Open config screen
+                screen.classList.remove('hidden');
+                toggleButton.classList.add('active');
+                toggleButton.title = 'Close Configuration';
+                
+                // Load configuration
+                loadConfiguration();
+            } else {
+                // Close config screen
+                screen.classList.add('hidden');
+                toggleButton.classList.remove('active');
+                toggleButton.title = 'Open Configuration';
+            }
+        }
+        
+        // Load configuration from server
+        async function loadConfiguration() {
+            const container = document.getElementById('config-form-container');
+            const messageDiv = document.getElementById('config-message');
+            
+            if (!container) return;
+            
+            try {
+                const response = await fetch('/api/config');
+                if (!response.ok) {
+                    throw new Error('Failed to load configuration');
+                }
+                
+                const config = await response.json();
+                
+                // Filter out internal/system config keys that shouldn't be edited via UI
+                const editableKeys = [
+                    'operator_pin',
+                    'youtube_api_key',
+                    'cache_directory',
+                    'default_mic_volume',
+                    'default_youtube_volume',
+                    'default_reverb_amount',
+                    'audio_input_device',
+                    'audio_output_device',
+                    'video_input_device'
+                ];
+                
+                let html = '<div style="display: flex; flex-direction: column; gap: 15px;">';
+                
+                for (const key of editableKeys) {
+                    const value = config[key] || '';
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    
+                    // Special handling for sensitive fields
+                    const isPassword = key === 'operator_pin' || key === 'youtube_api_key';
+                    const inputType = isPassword ? 'password' : 'text';
+                    const displayValue = isPassword && value ? '••••••••' : value;
+                    
+                    html += `
+                        <div style="display: flex; flex-direction: column; gap: 5px;">
+                            <label style="color: #aaa; font-size: 0.9em;">${label}</label>
+                            <input 
+                                type="${inputType}" 
+                                id="config-${key}" 
+                                value="${isPassword ? '' : displayValue}" 
+                                placeholder="${isPassword ? (value ? '•••••••• (leave blank to keep current)' : 'Enter value') : ''}"
+                                data-original-value="${value}"
+                                data-is-password="${isPassword}"
+                                style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; font-size: 14px;"
+                                onfocus="${isPassword ? `if(this.value === '') this.placeholder = 'Enter new value';` : ''}"
+                            />
+                            ${isPassword ? `<small style="color: #888; font-size: 0.8em;">Leave blank to keep current value</small>` : ''}
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                
+                container.innerHTML = html;
+                
+                // Add Save and Close buttons to actions container
+                const actionsContainer = document.getElementById('config-actions-container');
+                if (actionsContainer) {
+                    actionsContainer.innerHTML = `
+                        <button onclick="saveConfiguration()" style="width: 100%; padding: 12px; background: #4a9eff; color: #fff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer;">Save Configuration</button>
+                        <button onclick="toggleConfigScreen()" style="width: 100%; margin-top: 15px; background: #444; padding: 12px; border: none; border-radius: 4px; color: #fff; font-size: 16px; cursor: pointer;">✕ Close</button>
+                    `;
+                }
+                
+                if (messageDiv) {
+                    messageDiv.innerHTML = '';
+                }
+            } catch (e) {
+                console.error('Error loading configuration:', e);
+                container.innerHTML = '<div style="text-align: center; color: #f44; padding: 20px;">Error loading configuration</div>';
+            }
+        }
+        
+        // Save configuration to server
+        async function saveConfiguration() {
+            const container = document.getElementById('config-form-container');
+            const messageDiv = document.getElementById('config-message');
+            
+            if (!container) return;
+            
+            // Get all config inputs
+            const inputs = container.querySelectorAll('input[id^="config-"]');
+            const updates = [];
+            
+            for (const input of inputs) {
+                const key = input.id.replace('config-', '');
+                const newValue = input.value.trim();
+                const originalValue = input.getAttribute('data-original-value') || '';
+                const isPassword = input.getAttribute('data-is-password') === 'true';
+                
+                // For password fields, only update if a new value was entered (not empty)
+                if (isPassword && newValue === '') {
+                    continue; // Skip unchanged password fields (left blank)
+                }
+                
+                if (newValue !== originalValue) {
+                    updates.push({ key, value: newValue });
+                }
+            }
+            
+            if (updates.length === 0) {
+                if (messageDiv) {
+                    messageDiv.innerHTML = '<div style="color: #888; padding: 10px; background: #333; border-radius: 4px;">No changes to save</div>';
+                }
+                return;
+            }
+            
+            // Show saving message
+            if (messageDiv) {
+                messageDiv.innerHTML = '<div style="color: #4a9eff; padding: 10px; background: #333; border-radius: 4px;">Saving...</div>';
+            }
+            
+            try {
+                // Save each updated config value
+                for (const update of updates) {
+                    const response = await fetch('/api/config', {
+                        method: 'PATCH',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({key: update.key, value: update.value})
+                    });
+                    
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Failed to save configuration');
+                    }
+                }
+                
+                // Show success message
+                if (messageDiv) {
+                    messageDiv.innerHTML = '<div style="color: #4f4; padding: 10px; background: #333; border-radius: 4px;">Configuration saved successfully</div>';
+                }
+                
+                // Reload configuration to update display
+                setTimeout(loadConfiguration, 1000);
+            } catch (e) {
+                console.error('Error saving configuration:', e);
+                if (messageDiv) {
+                    messageDiv.innerHTML = `<div style="color: #f44; padding: 10px; background: #333; border-radius: 4px;">Error: ${e.message}</div>`;
+                }
             }
         }
         
@@ -1039,8 +1281,8 @@
                     const data = await response.json();
                     isOperator = data.operator;
                     if (isOperator) {
-                        // Gear button is always visible, just enable operator mode
-                        messageDiv.innerHTML = '<div class="success">Operator mode enabled. Click the gear button (⚙) to access controls.</div>';
+                        // Buttons are always visible, just enable operator mode
+                        messageDiv.innerHTML = '<div class="success">Operator mode enabled. Use ⏯ for playback controls and ⚙ for configuration.</div>';
                         document.getElementById('pin-input').value = '';
                     }
                 } else {
