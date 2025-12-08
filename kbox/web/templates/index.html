@@ -70,7 +70,7 @@
             border: none;
             font-size: 20px;
             cursor: pointer;
-            z-index: 100;
+            z-index: 1001;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -266,6 +266,22 @@
             color: #4a9eff;
         }
         
+        .operator-controls-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .operator-controls-screen.hidden {
+            display: none;
+        }
+        
         .my-song-notification {
             background: linear-gradient(135deg, #4a9eff 0%, #5aaeff 100%);
             border: 2px solid #4a9eff;
@@ -400,163 +416,15 @@
     </style>
 </head>
 <body>
-    <!-- Header (always visible) -->
-    <header style="position: relative; margin-bottom: 20px;">
-        <button class="controls-toggle-button" id="controls-toggle-button" onclick="togglePlaybackControls()" title="Enable Playback Controls" style="display: none;">⚙</button>
-        <button class="help-button" onclick="showHelp()" title="Help">?</button>
-        <h1>🎤 kbox</h1>
-    </header>
+    {% include 'components/header.html' %}
     
-    <!-- Main Content (hidden when user's song is playing) -->
-    <div class="main-content" id="main-content">
-        
-    <!-- User Name Prompt Modal -->
-    <div class="modal-overlay hidden" id="name-modal" {% if test_mode %}style="display: none;"{% endif %}>
-        <div class="modal">
-            <h2>Welcome to kbox!</h2>
-            <p style="margin-bottom: 15px; color: #aaa;">Please enter your name to get started:</p>
-            <input type="text" id="name-modal-input" placeholder="Your name" autofocus />
-            <button onclick="saveUserName()">Continue</button>
-            </div>
-        </div>
-        
-    <!-- Add Song Confirmation Modal -->
-    <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
-        <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
-            <h2>Add to Queue</h2>
-            <div id="add-song-modal-content" style="margin-bottom: 20px;">
-                <!-- Content will be populated by JavaScript -->
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label class="pitch-label">Pitch Adjustment (semitones):</label>
-                <div id="add-song-pitch-control-container"></div>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
-                <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
-            </div>
-            </div>
-        </div>
-        
-    <!-- Edit Queue Item Modal -->
-    <div class="modal-overlay hidden" id="edit-queue-item-modal" style="display: none;" onclick="if(event.target === this) cancelEditQueueItem();">
-        <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
-            <h2>Edit Song</h2>
-            <div id="edit-queue-item-content" style="margin-bottom: 20px;">
-                <!-- Content will be populated by JavaScript -->
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label class="pitch-label">Pitch Adjustment (semitones):</label>
-                <div id="edit-queue-item-pitch-control-container"></div>
-            </div>
-            <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
-                <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
-                <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <button onclick="playNowQueueItem()" id="play-now-button" style="width: 100%; background: #27ae60;">▶ Play Now</button>
-                    <button onclick="playNextQueueItem()" style="width: 100%;">Play Next</button>
-                    <button onclick="moveToEndQueueItem()" style="width: 100%;">Move to End</button>
-                    <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
-                </div>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <button onclick="saveQueueItemPitch()" style="flex: 1;">Save</button>
-                <button onclick="cancelEditQueueItem()" style="flex: 1; background: #444;">Cancel</button>
-            </div>
-        </div>
-        </div>
-        
-    <!-- Help Modal -->
-    <div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
-        <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
-            <h2>How to Use kbox</h2>
-            <div style="color: #e0e0e0; line-height: 1.6;">
-                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Adding Songs</h3>
-                <ol style="margin-left: 20px; margin-bottom: 20px;">
-                    <li style="margin-bottom: 8px;">Enter a song name in the search box and tap "Search"</li>
-                    <li style="margin-bottom: 8px;">Tap on a search result to open the confirmation dialog</li>
-                    <li style="margin-bottom: 8px;">Optionally adjust the pitch (semitones) if needed</li>
-                    <li style="margin-bottom: 8px;">Tap "Add to Queue" to add the song</li>
-                </ol>
-                
-                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Queue</h3>
-                <p style="margin-bottom: 20px;">Your songs will appear in the queue. The currently playing song is highlighted in blue. Songs are played in the order they were added.</p>
-                
-                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Pitch Adjustment</h3>
-                <p style="margin-bottom: 20px;">You can adjust the pitch when adding a song, or operators can adjust it during playback. Range: -12 to +12 semitones (one octave down/up).</p>
-                
-                <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Operator Controls</h3>
-                <p style="margin-bottom: 20px;">Operators can control playback (play, pause, skip) and adjust pitch during playback. Tap "Open Playback Controls" to access these features.</p>
-            </div>
-            <button onclick="hideHelp()" style="margin-top: 20px;">Close</button>
-            </div>
-            </div>
+    {% include 'components/modals.html' %}
     
-    <!-- Operator Authentication -->
-    <div class="section" id="auth-section">
-        <h2>Operator Controls</h2>
-        <input type="password" id="pin-input" placeholder="Enter PIN to enable controls" />
-        <button onclick="authenticate()">Enable Controls</button>
-        <div id="auth-message"></div>
-    </div>
+    {% include 'components/main_screen.html' %}
     
-    <!-- Search Section -->
-    <div class="section">
-        <input type="text" id="search-input" placeholder="Search for a song..." />
-        <button onclick="search()">Search</button>
-        <div id="search-results" class="search-results"></div>
-        </div>
-        
-        <!-- Queue Section -->
-    <div class="section">
-            <h2>Queue</h2>
-        <div id="queue-list"></div>
-        </div>
+    {% include 'components/your_turn_screen.html' %}
     
-    <!-- Playback Controls (Operator Only) -->
-    <div class="section operator-panel hidden" id="operator-panel">
-        <h2>Playback Controls</h2>
-        <div class="controls">
-            <button id="play-pause-toggle" onclick="togglePlayPause()">▶ Play</button>
-            <button onclick="playback('skip')">⏭ Skip</button>
-            <button onclick="playback('previous')">⏮ Previous</button>
-        </div>
-        <div>
-            <label class="pitch-label">Pitch Adjustment (semitones):</label>
-            <div id="operator-pitch-control-container"></div>
-            <button onclick="setPitch()" style="width: 100%; margin-top: 10px;">Set Pitch</button>
-        </div>
-        <button class="danger" onclick="clearQueue()">Clear Queue</button>
-    </div>
-    
-    <!-- Your Song Notification (shown in main content when coming up) -->
-    <div class="section my-song-notification hidden" id="my-song-notification">
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-            <span style="font-size: 24px;">🎤</span>
-            <div style="flex: 1;">
-                <h2 style="margin: 0; color: #4a9eff;">Your Song is Coming Up!</h2>
-                <div style="font-size: 0.9em; color: #aaa; margin-top: 4px;" id="my-song-notification-text"></div>
-            </div>
-        </div>
-    </div>
-    </div> <!-- End main-content -->
-    
-    <!-- Your Song Screen (distinct screen when user's song is playing) -->
-    <div class="my-song-screen" id="my-song-screen">
-        <div class="section" style="max-width: 500px; margin: 40px auto;">
-            <div style="text-align: center; margin-bottom: 30px;">
-                <div style="font-size: 48px; margin-bottom: 15px;">🎵</div>
-                <h1 style="margin: 0; color: #4a9eff; font-size: 2em;">Your Turn!</h1>
-                <div style="font-size: 1.2em; color: #aaa; margin-top: 10px;" id="my-song-screen-title"></div>
-            </div>
-            <div style="background: #1a1a1a; border-radius: 12px; padding: 25px; margin-bottom: 20px;">
-                <label class="pitch-label" style="text-align: center; display: block; margin-bottom: 15px; color: #fff; font-weight: 500; font-size: 1.1em;">Adjust Pitch (Live)</label>
-                <div id="my-song-screen-pitch-control"></div>
-                <div style="text-align: center; margin-top: 15px; font-size: 0.9em; color: #888;">
-                    Changes take effect immediately
-                </div>
-            </div>
-        </div>
-    </div>
+    {% include 'components/operator_controls.html' %}
     
     <script>
         // @ts-ignore - Jinja2 template syntax
@@ -628,20 +496,97 @@
             if (plusBtn) plusBtn.disabled = (value >= 12);
         }
         
+        // Render reusable song settings component
+        // songData: { title, thumbnail_url, user_name/channel, duration_seconds, download_status?, pitch_semitones }
+        // options: { context, live, fontSize, showStatus, showThumbnail, additionalControls }
+        function renderSongSettings(containerId, songData, options = {}) {
+            const container = document.getElementById(containerId);
+            if (!container) {
+                console.error('Container not found:', containerId);
+                return;
+            }
+            
+            const {
+                context = 'song-settings',
+                live = false,
+                fontSize = 24,
+                showStatus = false,
+                showThumbnail = true,
+                showUser = true,
+                additionalControls = '' // For future extensions like volume
+            } = options;
+            
+            // Format duration
+            const duration = songData.duration_seconds || 0;
+            const minutes = Math.floor(duration / 60);
+            const seconds = duration % 60;
+            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
+            
+            // Get user/channel name
+            const userText = songData.user_name ? `Requested by: ${songData.user_name}` : 
+                           songData.channel ? songData.channel : '';
+            
+            // Build song info HTML
+            let thumbnailHTML = '';
+            if (showThumbnail && songData.thumbnail_url) {
+                thumbnailHTML = `<img src="${songData.thumbnail_url}" alt="${songData.title || ''}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />`;
+            }
+            
+            const infoHTML = `
+                <div style="flex: 1;">
+                    <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${songData.title || 'Unknown'}</div>
+                    ${showUser && userText ? `<div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${userText}</div>` : ''}
+                    <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
+                    ${showStatus && songData.download_status ? `<div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${songData.download_status}</div>` : ''}
+                </div>
+            `;
+            
+            const pitchValue = songData.pitch_semitones || 0;
+            const liveText = live ? '<div style="text-align: center; margin-top: 10px; font-size: 0.85em; color: #888;">Changes take effect immediately</div>' : '';
+            
+            // Build song info section (only if we have info to show)
+            const hasSongInfo = (thumbnailHTML || songData.title) && (showThumbnail || songData.title);
+            const songInfoSection = hasSongInfo ? `<div style="display: flex; gap: 15px; margin-bottom: 20px;">${thumbnailHTML}${infoHTML}</div>` : '';
+            
+            // Build the complete HTML
+            const html = `
+                ${songInfoSection}
+                <div style="margin-bottom: 15px;">
+                    <label class="pitch-label" style="${live ? 'text-align: center; display: block; margin-bottom: 10px; color: #fff; font-weight: 500; font-size: 1.1em;' : ''}">${live ? 'Adjust Pitch (Live)' : 'Pitch Adjustment (semitones):'}</label>
+                    <div id="${context}-pitch-control-container"></div>
+                    ${liveText}
+                </div>
+                ${additionalControls}
+            `;
+            
+            container.innerHTML = html;
+            
+            // Initialize pitch control
+            const pitchControlContainer = document.getElementById(`${context}-pitch-control-container`);
+            if (pitchControlContainer) {
+                pitchControlContainer.innerHTML = createPitchControlHTML(context, pitchValue, fontSize);
+                updatePitchButtons(context, pitchValue);
+            }
+        }
+        
         // Adjust pitch value with +/- buttons (reusable for all contexts)
         function adjustPitch(context, delta) {
-            // Handle special case for my-song-screen (immediate effect)
+            // Handle special cases with immediate effect (my-song-screen and operator)
             if (context === 'my-song-screen') {
                 adjustMySongPitch(delta);
                 return;
             }
             
+            if (context === 'operator') {
+                adjustOperatorPitch(delta);
+                return;
+            }
+            
+            // For other contexts (add-song, edit-queue-item), just update the UI
             const inputId = context === 'add-song' ? 'add-song-pitch-input' : 
-                           context === 'edit-queue-item' ? 'edit-queue-item-pitch-input' : 
-                           'pitch-input';
+                           'edit-queue-item-pitch-input';
             const displayId = context === 'add-song' ? 'add-song-pitch-display' : 
-                             context === 'edit-queue-item' ? 'edit-queue-item-pitch-display' : 
-                             'operator-pitch-display';
+                             'edit-queue-item-pitch-display';
             
             const input = document.getElementById(inputId);
             
@@ -659,8 +604,55 @@
             // Update button states
             if (context === 'edit-queue-item') {
                 updatePitchButtons('edit-queue-item', newValue);
-            } else if (context === 'operator') {
-                updatePitchButtons('operator', newValue);
+            }
+        }
+        
+        // Adjust pitch for operator (immediate effect)
+        async function adjustOperatorPitch(delta) {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            // Get current pitch from input
+            const input = document.getElementById('operator-pitch-input');
+            if (!input) return;
+            
+            let currentValue = parseInt(input.value) || 0;
+            let newValue = currentValue + delta;
+            
+            // Clamp to -12 to +12 range
+            newValue = Math.max(-12, Math.min(12, newValue));
+            
+            // Update display immediately for responsive UI
+            updatePitchDisplay('operator-pitch-display', newValue);
+            input.value = newValue;
+            updatePitchButtons('operator', newValue);
+            
+            // Apply pitch change immediately via API
+            try {
+                const response = await fetch('/api/playback/pitch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({semitones: newValue})
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    console.error('Error setting pitch:', error);
+                    // Revert display on error
+                    updatePitchDisplay('operator-pitch-display', currentValue);
+                    input.value = currentValue;
+                    updatePitchButtons('operator', currentValue);
+                    alert('Error adjusting pitch: ' + (error.detail || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Error setting pitch:', e);
+                // Revert display on error
+                updatePitchDisplay('operator-pitch-display', currentValue);
+                input.value = currentValue;
+                updatePitchButtons('operator', currentValue);
+                alert('Error adjusting pitch');
             }
         }
         
@@ -724,7 +716,7 @@
             }
         }
         
-        // Auto-enable operator mode in test mode (but don't show controls by default)
+        // Auto-enable operator mode in test mode
         // @ts-ignore - Jinja2 template syntax
         {% if test_mode %}
         (function() {
@@ -733,15 +725,12 @@
                 const toggleButton = document.getElementById('controls-toggle-button');
                 if (authSection) {
                     authSection.style.display = 'none';
-                    console.log('Auth section hidden');
-                } else {
-                    console.error('auth-section element not found');
                 }
                 if (toggleButton) {
                     toggleButton.style.display = 'flex';
-                    console.log('Controls toggle button shown');
                 }
-                // Note: Playback controls are hidden by default and must be toggled
+                isOperator = true;
+                // Note: Gear button is always visible, controls screen is hidden by default
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', enableOperatorMode);
@@ -752,33 +741,65 @@
         // @ts-ignore - Jinja2 template syntax
         {% endif %}
         
-        // Toggle playback controls visibility
+        // Toggle playback controls visibility (now a full-screen overlay)
         function togglePlaybackControls() {
-            const panel = document.getElementById('operator-panel');
+            const screen = document.getElementById('operator-controls-screen');
             const toggleButton = document.getElementById('controls-toggle-button');
             
-            if (!panel || !toggleButton) return;
+            if (!screen || !toggleButton) return;
             
-            if (panel.classList.contains('hidden')) {
-                // Open controls
-                panel.classList.remove('hidden');
+            // Check if user is operator
+            if (!isOperator) {
+                alert('Operator authentication required. Please enter PIN in the operator controls section.');
+                return;
+            }
+            
+            if (screen.classList.contains('hidden')) {
+                // Open controls screen
+                screen.classList.remove('hidden');
                 toggleButton.classList.add('active');
-                toggleButton.textContent = '⚙';
-                toggleButton.title = 'Disable Playback Controls';
+                toggleButton.title = 'Close Playback Controls';
                 
-                // Initialize operator pitch control if not already initialized
-                const pitchControlContainer = document.getElementById('operator-pitch-control-container');
-                if (pitchControlContainer && !pitchControlContainer.querySelector('.pitch-control')) {
-                    // Get current song pitch if available
-                    const currentPitch = 0; // Default, could be enhanced to get from current song
-                    pitchControlContainer.innerHTML = createPitchControlHTML('operator', currentPitch);
+                // Initialize operator song settings if not already initialized
+                const settingsContainer = document.getElementById('operator-song-settings-container');
+                if (settingsContainer && !settingsContainer.querySelector('.pitch-control')) {
+                    // Get current song info from playback status
+                    fetch('/api/playback/status')
+                        .then(response => response.json())
+                        .then(statusData => {
+                            const currentSong = statusData.current_song;
+                            if (currentSong) {
+                                // Use reusable song settings component
+                                renderSongSettings('operator-song-settings-container', {
+                                    title: currentSong.title,
+                                    thumbnail_url: currentSong.thumbnail_url,
+                                    user_name: currentSong.user_name,
+                                    duration_seconds: currentSong.duration_seconds,
+                                    pitch_semitones: currentSong.pitch_semitones || 0
+                                }, {
+                                    context: 'operator',
+                                    live: true,
+                                    fontSize: 24,
+                                    showStatus: false,
+                                    showThumbnail: true,
+                                    showUser: true,
+                                    additionalControls: ''
+                                });
+                            } else {
+                                // No song playing - show message
+                                settingsContainer.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">No song currently playing</div>';
+                            }
+                        })
+                        .catch(e => {
+                            console.error('Error getting playback status:', e);
+                            settingsContainer.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">Unable to load song info</div>';
+                        });
                 }
             } else {
-                // Close controls
-                panel.classList.add('hidden');
+                // Close controls screen
+                screen.classList.add('hidden');
                 toggleButton.classList.remove('active');
-                toggleButton.textContent = '⚙';
-                toggleButton.title = 'Enable Playback Controls';
+                toggleButton.title = 'Open Playback Controls';
             }
         }
         
@@ -790,8 +811,8 @@
         
         // Check if playback controls are open
         function arePlaybackControlsOpen() {
-            const panel = document.getElementById('operator-panel');
-            return panel && !panel.classList.contains('hidden');
+            const screen = document.getElementById('operator-controls-screen');
+            return screen && !screen.classList.contains('hidden');
         }
         
         // Show edit queue item modal
@@ -801,49 +822,34 @@
             // Check if user can edit this song
             const canEdit = isOperator || (userName && item.user_name === userName);
             
-            // Format duration
-            const duration = item.duration_seconds || 0;
-            const minutes = Math.floor(duration / 60);
-            const seconds = duration % 60;
-            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
+            // Use reusable song settings component
+            const additionalControls = !canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : '';
             
-            // Populate modal content
-            const contentDiv = document.getElementById('edit-queue-item-content');
-            contentDiv.innerHTML = `
-                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
-                    ${item.thumbnail_url ? `<img src="${item.thumbnail_url}" alt="${item.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />` : ''}
-                    <div style="flex: 1;">
-                        <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${item.title}</div>
-                        <div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">Requested by: ${item.user_name}</div>
-                        <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
-                        <div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${item.download_status}</div>
-                        ${!canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : ''}
-                        </div>
-                    </div>
-            `;
+            renderSongSettings('edit-queue-item-content', {
+                title: item.title,
+                thumbnail_url: item.thumbnail_url,
+                user_name: item.user_name,
+                duration_seconds: item.duration_seconds,
+                download_status: item.download_status,
+                pitch_semitones: item.pitch_semitones || 0
+            }, {
+                context: 'edit-queue-item',
+                live: false,
+                showStatus: true,
+                showThumbnail: true,
+                showUser: true,
+                additionalControls: additionalControls
+            });
             
-            // Initialize pitch control
-            const pitchControlContainer = document.getElementById('edit-queue-item-pitch-control-container');
-            const pitchValue = item.pitch_semitones || 0;
-            if (pitchControlContainer) {
-                pitchControlContainer.innerHTML = createPitchControlHTML('edit-queue-item', pitchValue);
-                // Enable/disable buttons based on permissions
-                if (!canEdit) {
-                    const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
-                    const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
-                    if (minusBtn) minusBtn.disabled = true;
-                    if (plusBtn) plusBtn.disabled = true;
-                } else {
-                    updatePitchButtons('edit-queue-item', pitchValue);
-                }
+            // Enable/disable buttons based on permissions
+            if (!canEdit) {
+                const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
+                const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
+                if (minusBtn) minusBtn.disabled = true;
+                if (plusBtn) plusBtn.disabled = true;
             }
             
-            // Show/hide save button based on permissions
-            const saveButton = document.querySelector('#edit-queue-item-modal button[onclick="saveQueueItemPitch()"]');
-            if (saveButton) {
-                saveButton.disabled = !canEdit;
-                saveButton.style.opacity = canEdit ? '1' : '0.5';
-            }
+            // Save button is in the modal footer, handled separately
             
             // Show/hide operator options based on operator status and controls visibility
             const operatorOptions = document.getElementById('edit-queue-item-operator-options');
@@ -1033,12 +1039,8 @@
                     const data = await response.json();
                     isOperator = data.operator;
                     if (isOperator) {
-                        // Show toggle button, but keep controls hidden by default
-                        const toggleButton = document.getElementById('controls-toggle-button');
-                        if (toggleButton) {
-                            toggleButton.style.display = 'flex';
-                        }
-                        messageDiv.innerHTML = '<div class="success">Operator mode enabled</div>';
+                        // Gear button is always visible, just enable operator mode
+                        messageDiv.innerHTML = '<div class="success">Operator mode enabled. Click the gear button (⚙) to access controls.</div>';
                         document.getElementById('pin-input').value = '';
                     }
                 } else {
@@ -1103,30 +1105,20 @@
             
             currentVideoToAdd = video;
             
-            // Format duration
-            const duration = video.duration_seconds || 0;
-            const minutes = Math.floor(duration / 60);
-            const seconds = duration % 60;
-            const durationText = duration > 0 ? `${minutes}:${seconds.toString().padStart(2, '0')}` : 'Unknown';
-            
-            // Populate modal content
-            const contentDiv = document.getElementById('add-song-modal-content');
-            contentDiv.innerHTML = `
-                <div style="display: flex; gap: 15px; margin-bottom: 15px;">
-                    <img src="${video.thumbnail}" alt="${video.title}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />
-                    <div style="flex: 1;">
-                        <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${video.title}</div>
-                        <div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${video.channel}</div>
-                        <div style="color: #888; font-size: 0.85em;">Duration: ${durationText}</div>
-                    </div>
-                </div>
-            `;
-            
-            // Initialize pitch control
-            const pitchControlContainer = document.getElementById('add-song-pitch-control-container');
-            if (pitchControlContainer) {
-                pitchControlContainer.innerHTML = createPitchControlHTML('add-song', 0);
-            }
+            // Use reusable song settings component
+            renderSongSettings('add-song-modal-content', {
+                title: video.title,
+                thumbnail_url: video.thumbnail,
+                channel: video.channel,
+                duration_seconds: video.duration_seconds,
+                pitch_semitones: 0
+            }, {
+                context: 'add-song',
+                live: false,
+                showStatus: false,
+                showThumbnail: true,
+                showUser: true
+            });
             
             // Show modal
             const modal = document.getElementById('add-song-modal');
@@ -1147,6 +1139,10 @@
             if (!currentVideoToAdd) return;
             
             const pitchInput = document.getElementById('add-song-pitch-input');
+            if (!pitchInput) {
+                alert('Pitch control not initialized');
+                return;
+            }
             const pitchSemitones = parseInt(pitchInput.value) || 0;
             
             try {
@@ -1282,23 +1278,23 @@
                 }
                 if (mySongScreen) {
                     mySongScreen.classList.add('active');
-                    // Update song title
-                    document.getElementById('my-song-screen-title').textContent = currentSong.title;
                     
-                    // Create/update pitch control
-                    const pitchControlDiv = document.getElementById('my-song-screen-pitch-control');
-                    const currentPitch = currentSong.pitch_semitones || 0;
-                    
-                    if (pitchControlDiv && !pitchControlDiv.querySelector('.pitch-control')) {
-                        // Create pitch control if it doesn't exist
-                        pitchControlDiv.innerHTML = createPitchControlHTML('my-song-screen', currentPitch, 32);
-                    } else if (pitchControlDiv) {
-                        // Update existing pitch control
-                        updatePitchDisplay('my-song-screen-pitch-display', currentPitch, 32);
-                        const input = document.getElementById('my-song-screen-pitch-input');
-                        if (input) input.value = currentPitch;
-                        updatePitchButtons('my-song-screen', currentPitch);
-                    }
+                    // Use reusable song settings component for "your turn" screen
+                    renderSongSettings('my-song-screen-settings-container', {
+                        title: currentSong.title,
+                        thumbnail_url: currentSong.thumbnail_url,
+                        user_name: currentSong.user_name,
+                        duration_seconds: currentSong.duration_seconds,
+                        pitch_semitones: currentSong.pitch_semitones || 0
+                    }, {
+                        context: 'my-song-screen',
+                        live: true,
+                        fontSize: 32,
+                        showStatus: false,
+                        showThumbnail: true,
+                        showUser: true,
+                        additionalControls: ''
+                    });
                 }
                 return;
             }
@@ -1465,32 +1461,12 @@
             }
         }
         
-        // Set pitch (operator only)
+        // Set pitch (operator only) - kept for backwards compatibility but no longer used
+        // Operator pitch is now live via adjustOperatorPitch
         async function setPitch() {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
-            const input = document.getElementById('operator-pitch-input');
-            if (!input) {
-                alert('Pitch control not initialized');
-                return;
-            }
-            
-            const semitones = parseInt(input.value) || 0;
-            try {
-                const response = await fetch('/api/playback/pitch', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({semitones: semitones})
-                });
-                if (!response.ok) {
-                    alert('Error setting pitch');
-                }
-            } catch (e) {
-                alert('Error setting pitch');
-            }
+            // This function is deprecated - operator pitch is now live
+            // Keeping for backwards compatibility but it should not be called
+            console.warn('setPitch() is deprecated - operator pitch is now live');
         }
         
         // Clear queue

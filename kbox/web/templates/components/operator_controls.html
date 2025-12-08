@@ -1,0 +1,19 @@
+<!-- Operator Controls Screen (accessible at any time via gear button) -->
+<div class="operator-controls-screen hidden" id="operator-controls-screen">
+    <div class="section operator-panel" style="max-width: 500px; margin: 20px auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 style="margin: 0; color: #4a9eff;">Playback Controls</h2>
+            <button onclick="togglePlaybackControls()" style="background: #444; padding: 8px 15px; border-radius: 4px;">✕ Close</button>
+        </div>
+        <div class="controls">
+            <button id="play-pause-toggle" onclick="togglePlayPause()">▶ Play</button>
+            <button onclick="playback('skip')">⏭ Skip</button>
+            <button onclick="playback('previous')">⏮ Previous</button>
+        </div>
+        <div id="operator-song-settings-container" style="margin-top: 20px;">
+            <!-- Song settings will be rendered here by JavaScript when a song is playing -->
+        </div>
+        <button class="danger" onclick="clearQueue()" style="width: 100%; margin-top: 15px;">Clear Queue</button>
+    </div>
+</div>
+

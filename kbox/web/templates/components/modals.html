@@ -1,0 +1,73 @@
+<!-- User Name Prompt Modal -->
+<div class="modal-overlay hidden" id="name-modal" {% if test_mode %}style="display: none;"{% endif %}>
+    <div class="modal">
+        <h2>Welcome to kbox!</h2>
+        <p style="margin-bottom: 15px; color: #aaa;">Please enter your name to get started:</p>
+        <input type="text" id="name-modal-input" placeholder="Your name" autofocus />
+        <button onclick="saveUserName()">Continue</button>
+    </div>
+</div>
+
+<!-- Add Song Confirmation Modal -->
+<div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
+    <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
+        <h2>Add to Queue</h2>
+        <div id="add-song-modal-content">
+            <!-- Song settings will be rendered here by JavaScript -->
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
+            <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Queue Item Modal -->
+<div class="modal-overlay hidden" id="edit-queue-item-modal" style="display: none;" onclick="if(event.target === this) cancelEditQueueItem();">
+    <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
+        <h2>Edit Song</h2>
+        <div id="edit-queue-item-content">
+            <!-- Song settings will be rendered here by JavaScript -->
+        </div>
+        <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
+            <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="playNowQueueItem()" id="play-now-button" style="width: 100%; background: #27ae60;">▶ Play Now</button>
+                <button onclick="playNextQueueItem()" style="width: 100%;">Play Next</button>
+                <button onclick="moveToEndQueueItem()" style="width: 100%;">Move to End</button>
+                <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="saveQueueItemPitch()" style="flex: 1;">Save</button>
+            <button onclick="cancelEditQueueItem()" style="flex: 1; background: #444;">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Help Modal -->
+<div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
+    <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
+        <h2>How to Use kbox</h2>
+        <div style="color: #e0e0e0; line-height: 1.6;">
+            <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Adding Songs</h3>
+            <ol style="margin-left: 20px; margin-bottom: 20px;">
+                <li style="margin-bottom: 8px;">Enter a song name in the search box and tap "Search"</li>
+                <li style="margin-bottom: 8px;">Tap on a search result to open the confirmation dialog</li>
+                <li style="margin-bottom: 8px;">Optionally adjust the pitch (semitones) if needed</li>
+                <li style="margin-bottom: 8px;">Tap "Add to Queue" to add the song</li>
+            </ol>
+            
+            <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Queue</h3>
+            <p style="margin-bottom: 20px;">Your songs will appear in the queue. The currently playing song is highlighted in blue. Songs are played in the order they were added.</p>
+            
+            <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Pitch Adjustment</h3>
+            <p style="margin-bottom: 20px;">You can adjust the pitch when adding a song, or operators can adjust it during playback. Range: -12 to +12 semitones (one octave down/up).</p>
+            
+            <h3 style="color: #4a9eff; margin-top: 20px; margin-bottom: 10px;">Operator Controls</h3>
+            <p style="margin-bottom: 20px;">Operators can control playback (play, pause, skip) and adjust pitch during playback. Tap "Open Playback Controls" to access these features.</p>
+        </div>
+        <button onclick="hideHelp()" style="margin-top: 20px;">Close</button>
+    </div>
+</div>
+
