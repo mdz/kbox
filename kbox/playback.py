@@ -350,8 +350,31 @@ class PlaybackController:
         with self.lock:
             self.logger.info('Skipping current song')
             
-            # Stop current playback (but keep position saved in case user wants to resume)
+            # Record playback history before skipping (to save pitch settings)
             if self.current_song:
+                # Get current playback position
+                current_position = self.streaming_controller.get_position()
+                if current_position is None:
+                    current_position = self.current_song.get('playback_position_seconds', 0)
+                
+                # Get start position (for resume cases)
+                start_position = self.current_song.get('playback_position_seconds', 0)
+                
+                # Record in playback history (saves pitch even if changed during playback)
+                self.queue_manager.record_playback_history(
+                    queue_item_id=self.current_song['id'],
+                    user_name=self.current_song['user_name'],
+                    youtube_video_id=self.current_song['youtube_video_id'],
+                    title=self.current_song['title'],
+                    duration_seconds=self.current_song.get('duration_seconds'),
+                    pitch_semitones=self.current_song.get('pitch_semitones', 0),
+                    playback_position_start=start_position,
+                    playback_position_end=current_position
+                )
+                
+                # Mark as played
+                self.queue_manager.mark_played(self.current_song['id'])
+                
                 self.streaming_controller.stop()
                 # Don't clear playback position - user might want to resume later
                 # Position will only be cleared when song completes (EOS) or is explicitly reset
