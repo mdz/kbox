@@ -4,10 +4,12 @@ end to end test with karaoke rig (need cable)
 supervisor
 -- ready for the party --
 
-fix ^C behavior
+fix signal handling behavior
 
 theme
 "suggest a song" button using AI - using songs from queue
 show if someone else already has the same song in the queue
 extract artist/title from metadata in a structured way
 thumbs up/down on tracks
+
+public hosted version so people can add songs ahead of time??

@@ -131,7 +131,7 @@ def run_uvicorn_in_thread(uvicorn_server) -> Tuple[threading.Thread, Callable]:
 
     Args:
         uvicorn_server: The uvicorn.Server instance
-
+f
     Returns:
         Tuple of (thread, wait_function)
         The wait_function should be called to wait for the server thread
