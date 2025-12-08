@@ -32,12 +32,13 @@ class StreamingController:
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
         self.pipeline = None
-        self.mode = 'passthrough'  # 'passthrough' or 'youtube'
         self.current_file = None
         self.eos_callback = None  # Callback for end-of-stream
         # Audio mixing elements (stored for volume control)
-        self.mic_volume_element = None
-        self.youtube_volume_element = None
+        self.mic_dry_volume_element = None
+        self.mic_reverb_volume_element = None  # Controls reverb send level (reverb effect only)
+        self.backing_track_volume_element = None
+        self.reverb_element = None
         # Initialize GStreamer but defer pipeline creation until needed
         # On macOS, GStreamer init can hang/crash, so we'll initialize lazily
         self._gst_initialized = False
@@ -187,12 +188,72 @@ class StreamingController:
             raise ValueError('Unable to initialize gstreamer element %s as %s. Available plugins may be missing.' % (element_type, name))
         return element
     
+    def _get_mic_source_type(self):
+        """Get the appropriate mic source element type for the current platform."""
+        if self.config_manager:
+            source = self.config_manager.get('audio_input_source')
+            if source and source != '':
+                return source
+        
+        # Platform defaults
+        if sys.platform == 'darwin':
+            # Prefer avfaudiosrc for better latency on macOS
+            return 'avfaudiosrc'
+        elif sys.platform == 'linux':
+            # Try pipewiresrc first (modern), fallback to alsasrc
+            return 'pipewiresrc'
+        else:
+            return 'autoaudiosrc'
+    
+    def _get_audio_sink_type(self):
+        """Get the appropriate audio sink element type for the current platform."""
+        if self.config_manager:
+            sink = self.config_manager.get('audio_output_sink')
+            if sink and sink != '':
+                return sink
+        
+        # Platform defaults
+        if sys.platform == 'darwin':
+            return 'osxaudiosink'
+        elif sys.platform == 'linux':
+            # Try pipewiresink first (modern), fallback to alsasink
+            return 'pipewiresink'
+        else:
+            return 'autoaudiosink'
+    
+    def _get_sample_rate(self):
+        """Get configured sample rate, default 48000 Hz."""
+        if self.config_manager:
+            return self.config_manager.get_int('audio_sample_rate', 48000)
+        return 48000
+    
+    def _get_latency_ns(self):
+        """Get configured latency in nanoseconds."""
+        latency_ms = 10
+        if self.config_manager:
+            latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+        return latency_ms * 1000000  # Convert ms to nanoseconds
+    
+    def _get_latency_us(self):
+        """Get configured latency in microseconds (for ALSA)."""
+        latency_ms = 10
+        if self.config_manager:
+            latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+        return latency_ms * 1000  # Convert ms to microseconds
+    
+    def _is_hardware_monitor_mode(self):
+        """Check if hardware monitor mode is enabled."""
+        if self.config_manager:
+            return self.config_manager.get_bool('hardware_monitor_mode', False)
+        return False
+    
     def set_device(self, element, device):
         if device is None:
             return
         
         element_type = type(element).__name__
-        if element_type in ('GstAlsaSrc', 'GstAlsaSink'):
+        if element_type in ('GstAlsaSrc', 'GstAlsaSink', 'GstPipewireSrc', 'GstPipewireSink', 
+                           'GstAvfAudioSrc', 'GstOsxAudioSink'):
             element.set_property('device', device)
         elif element_type == 'GstURIDecodeBin':
             element.set_property('uri', device)
@@ -221,81 +282,158 @@ class StreamingController:
             except Exception as e:
                 self.logger.warning('Could not update pitch shift: %s', e)
     
-    def set_mic_volume(self, volume: float):
+    def set_mic_dry_level(self, level: float):
         """
-        Set microphone input volume.
+        Set dry mic level (original signal, no effects).
         
         Args:
-            volume: Volume level (0.0 to 1.0)
+            level: Level (0.0 to 1.0)
         """
-        if volume < 0.0 or volume > 1.0:
-            self.logger.warning('Mic volume out of range: %s (clamping to 0.0-1.0)', volume)
-            volume = max(0.0, min(1.0, volume))
+        if level < 0.0 or level > 1.0:
+            self.logger.warning('Mic dry level out of range: %s (clamping to 0.0-1.0)', level)
+            level = max(0.0, min(1.0, level))
         
-        self.logger.info('Setting mic volume to %s', volume)
+        self.logger.info('Setting mic dry level to %s', level)
         
         # Update stored element if available
-        if self.mic_volume_element:
+        if self.mic_dry_volume_element:
             try:
-                self.mic_volume_element.set_property('volume', volume)
-                self.logger.info('Mic volume updated in pipeline')
+                self.mic_dry_volume_element.set_property('volume', level)
+                self.logger.info('Mic dry level updated in pipeline')
             except Exception as e:
-                self.logger.warning('Could not update mic volume: %s', e)
+                self.logger.warning('Could not update mic dry level: %s', e)
         else:
             # Try to get from pipeline
             if self.pipeline:
                 try:
-                    mic_volume = self.pipeline.get_by_name('mic_volume')
-                    if mic_volume:
-                        mic_volume.set_property('volume', volume)
-                        self.mic_volume_element = mic_volume
-                        self.logger.info('Mic volume updated in pipeline')
+                    mic_dry_volume = self.pipeline.get_by_name('mic_dry_volume')
+                    if mic_dry_volume:
+                        mic_dry_volume.set_property('volume', level)
+                        self.mic_dry_volume_element = mic_dry_volume
+                        self.logger.info('Mic dry level updated in pipeline')
                     else:
-                        self.logger.warning('Mic volume element not found in pipeline')
+                        self.logger.warning('Mic dry volume element not found in pipeline')
                 except Exception as e:
-                    self.logger.warning('Could not update mic volume: %s', e)
+                    self.logger.warning('Could not update mic dry level: %s', e)
         
         # Update config if config_manager is available
         if self.config_manager:
-            self.config_manager.set('default_mic_volume', str(volume))
+            self.config_manager.set('default_mic_dry_level', str(level))
     
-    def set_youtube_volume(self, volume: float):
+    def set_mic_reverb_level(self, level: float):
         """
-        Set YouTube audio volume.
+        Set reverb send level (reverb effect only, no original signal).
+        
+        Args:
+            level: Level (0.0 to 1.0)
+        """
+        if level < 0.0 or level > 1.0:
+            self.logger.warning('Mic reverb level out of range: %s (clamping to 0.0-1.0)', level)
+            level = max(0.0, min(1.0, level))
+        
+        self.logger.info('Setting mic reverb send level to %s', level)
+        
+        # Update stored element if available
+        if self.mic_reverb_volume_element:
+            try:
+                self.mic_reverb_volume_element.set_property('volume', level)
+                self.logger.info('Mic reverb send level updated in pipeline')
+            except Exception as e:
+                self.logger.warning('Could not update mic reverb send level: %s', e)
+        else:
+            # Try to get from pipeline
+            if self.pipeline:
+                try:
+                    mic_reverb_volume = self.pipeline.get_by_name('mic_reverb_volume')
+                    if mic_reverb_volume:
+                        mic_reverb_volume.set_property('volume', level)
+                        self.mic_reverb_volume_element = mic_reverb_volume
+                        self.logger.info('Mic reverb send level updated in pipeline')
+                    else:
+                        self.logger.warning('Mic reverb volume element not found in pipeline')
+                except Exception as e:
+                    self.logger.warning('Could not update mic reverb send level: %s', e)
+        
+        # Update config if config_manager is available
+        if self.config_manager:
+            self.config_manager.set('default_mic_reverb_level', str(level))
+    
+    def set_backing_track_volume(self, volume: float):
+        """
+        Set backing track audio volume.
         
         Args:
             volume: Volume level (0.0 to 1.0)
         """
         if volume < 0.0 or volume > 1.0:
-            self.logger.warning('YouTube volume out of range: %s (clamping to 0.0-1.0)', volume)
+            self.logger.warning('Backing track volume out of range: %s (clamping to 0.0-1.0)', volume)
             volume = max(0.0, min(1.0, volume))
         
-        self.logger.info('Setting YouTube volume to %s', volume)
+        self.logger.info('Setting backing track volume to %s', volume)
         
         # Update stored element if available
-        if self.youtube_volume_element:
+        if self.backing_track_volume_element:
             try:
-                self.youtube_volume_element.set_property('volume', volume)
-                self.logger.info('YouTube volume updated in pipeline')
+                self.backing_track_volume_element.set_property('volume', volume)
+                self.logger.info('Backing track volume updated in pipeline')
             except Exception as e:
-                self.logger.warning('Could not update YouTube volume: %s', e)
+                self.logger.warning('Could not update backing track volume: %s', e)
         else:
             # Try to get from pipeline
             if self.pipeline:
                 try:
-                    youtube_volume = self.pipeline.get_by_name('youtube_volume')
-                    if youtube_volume:
-                        youtube_volume.set_property('volume', volume)
-                        self.youtube_volume_element = youtube_volume
-                        self.logger.info('YouTube volume updated in pipeline')
+                    backing_track_volume = self.pipeline.get_by_name('backing_track_volume')
+                    if backing_track_volume:
+                        backing_track_volume.set_property('volume', volume)
+                        self.backing_track_volume_element = backing_track_volume
+                        self.logger.info('Backing track volume updated in pipeline')
                     else:
-                        self.logger.warning('YouTube volume element not found in pipeline')
+                        self.logger.warning('Backing track volume element not found in pipeline')
                 except Exception as e:
-                    self.logger.warning('Could not update YouTube volume: %s', e)
+                    self.logger.warning('Could not update backing track volume: %s', e)
         
         # Update config if config_manager is available
         if self.config_manager:
-            self.config_manager.set('default_youtube_volume', str(volume))
+            self.config_manager.set('default_backing_track_volume', str(volume))
+    
+    def set_reverb_params(self, room_size: Optional[float] = None, damping: Optional[float] = None, 
+                        width: Optional[float] = None, level: Optional[float] = None):
+        """
+        Set reverb parameters (freeverb-specific).
+        
+        Args:
+            room_size: Room size (0.0-1.0, default: 0.5)
+            damping: Damping of high frequencies (0.0-1.0, default: 0.2)
+            width: Stereo panorama width (0.0-1.0, default: 1.0)
+            level: dry/wet level (0.0-1.0, default: 1.0 for reverb-only)
+                   Note: Should be 1.0 for reverb-only output (no dry signal)
+        """
+        if not self.reverb_element:
+            self.logger.warning('No reverb element available')
+            return
+        
+        try:
+            # freeverb properties
+            if room_size is not None:
+                self.reverb_element.set_property('room-size', room_size)
+            
+            if damping is not None:
+                self.reverb_element.set_property('damping', damping)
+            
+            if width is not None:
+                self.reverb_element.set_property('width', width)
+            
+            if level is not None:
+                # Warn if level is not 1.0 (we want reverb-only output)
+                if level != 1.0:
+                    self.logger.warning('Reverb level set to %s (expected 1.0 for reverb-only output)', level)
+                self.reverb_element.set_property('level', level)
+            
+            self.logger.info('Updated reverb parameters: room_size=%s, damping=%s, width=%s, level=%s',
+                           room_size, damping, width, level)
+        except Exception as e:
+            self.logger.error('Could not set reverb parameters: %s', e)
+            raise
 
     def run(self):
         """Run the streaming controller (start pipeline if not already started)."""
@@ -363,7 +501,7 @@ class StreamingController:
     
     def load_file(self, filepath: str):
         """
-        Load a video file for YouTube playback mode.
+        Load a video file for backing track playback mode.
         
         Args:
             filepath: Path to video file
@@ -380,32 +518,39 @@ class StreamingController:
                     self.logger.warning('Error stopping previous pipeline: %s', e)
             
             self.current_file = filepath
-            self.mode = 'youtube'
-            self._create_youtube_pipeline(filepath)
+            self._create_backing_track_pipeline(filepath)
             
             # Start playback
             Gst = _get_gst()
             ret = self.pipeline.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
-                self.logger.error('Failed to start YouTube playback')
+                self.logger.error('Failed to start backing track playback')
                 raise RuntimeError('Failed to start playback')
         except Exception as e:
             self.logger.error('Error loading file %s: %s', filepath, e, exc_info=True)
             # Don't crash - just log the error
             raise
     
-    def _create_youtube_pipeline(self, filepath: str):
-        """Create pipeline for YouTube file playback with optional audio mixing."""
+    def _create_backing_track_pipeline(self, filepath: str):
+        """
+        Create pipeline for backing track file playback with optional audio mixing.
+        
+        Signal flow:
+        - Mic source → tee → [dry branch] + [reverb branch]
+        - Backing track → volume
+        - All branches → audiomixer → audioconvert → audioresample → sink
+        """
         self._ensure_gst_initialized()
         
-        # On macOS, we can now use the full pipeline with pitch shifting support
-        # The gst_macos_main() integration makes this stable
-        # if sys.platform == 'darwin':
-        #     return self._create_simple_macos_pipeline(filepath)
-        
-        self.logger.info('Creating YouTube playback pipeline for: %s', filepath)
+        self.logger.info('Creating backing track playback pipeline for: %s', filepath)
         Gst = _get_gst()
-        pipeline = Gst.Pipeline.new('YouTubePlayback')
+        pipeline = Gst.Pipeline.new('BackingTrackPlayback')
+        
+        # Get configuration
+        sample_rate = self._get_sample_rate()
+        latency_ns = self._get_latency_ns()
+        latency_us = self._get_latency_us()
+        hardware_monitor = self._is_hardware_monitor_mode()
         
         # Get audio input source configuration
         # Audio mixing is OFF by default - must be explicitly enabled via configuration
@@ -418,6 +563,10 @@ class StreamingController:
         # Only enable mixing if explicitly configured (not None and not empty string)
         use_audio_mixing = audio_input_source is not None and audio_input_source != ''
         
+        # Audio caps: 48kHz, F32LE, stereo (or match input)
+        audio_caps_string = f'audio/x-raw, format=F32LE, rate={sample_rate}, channels=2'
+        audio_caps = Gst.Caps.from_string(audio_caps_string)
+        
         # File source
         filesrc = self.make_element('filesrc', 'filesrc')
         filesrc.set_property('location', filepath)
@@ -427,19 +576,19 @@ class StreamingController:
         decodebin = self.make_element('decodebin', 'decodebin')
         pipeline.add(decodebin)
         
-        # YouTube audio pipeline
-        youtube_audioconvert_input = self.make_element('audioconvert', 'youtube_audioconvert_input')
-        pipeline.add(youtube_audioconvert_input)
+        # Backing track audio pipeline
+        backing_track_audioconvert_input = self.make_element('audioconvert', 'backing_track_audioconvert_input')
+        pipeline.add(backing_track_audioconvert_input)
         
-        # YouTube volume control
-        youtube_volume = self.make_element('volume', 'youtube_volume')
+        # Backing track volume control
+        backing_track_volume = self.make_element('volume', 'backing_track_volume')
         if self.config_manager:
-            default_youtube_volume = self.config_manager.get_float('default_youtube_volume', 0.8)
-            youtube_volume.set_property('volume', default_youtube_volume)
+            default_backing_track_volume = self.config_manager.get_float('default_backing_track_volume', 0.8)
+            backing_track_volume.set_property('volume', default_backing_track_volume)
         else:
-            youtube_volume.set_property('volume', 0.8)
-        pipeline.add(youtube_volume)
-        self.youtube_volume_element = youtube_volume
+            backing_track_volume.set_property('volume', 0.8)
+        pipeline.add(backing_track_volume)
+        self.backing_track_volume_element = backing_track_volume
         
         # Try to add pitch shift, but make it optional
         use_pitch_shift = False
@@ -469,171 +618,277 @@ class StreamingController:
         except Exception as e:
             self.logger.warning('Could not create pitch shift element: %s. Continuing without pitch shift.', e)
         
-        youtube_audioconvert_output = self.make_element('audioconvert', 'youtube_audioconvert_output')
-        pipeline.add(youtube_audioconvert_output)
+        backing_track_audioconvert_output = self.make_element('audioconvert', 'backing_track_audioconvert_output')
+        pipeline.add(backing_track_audioconvert_output)
         
         # Audio mixing setup
         if use_audio_mixing:
-            self.logger.info('Audio mixing enabled with source: %s', audio_input_source)
+            self.logger.info('Audio mixing enabled with source: %s (hardware monitor: %s)', 
+                           audio_input_source, hardware_monitor)
             
-            # Microphone input source with low latency settings
-            mic_source = self.make_element(audio_input_source, 'mic_source')
+            # Get mic source type (platform-specific)
+            mic_source_type = self._get_mic_source_type()
+            
+            # Microphone input source
+            mic_source = self.make_element(mic_source_type, 'mic_source')
             if audio_input_device:
                 self.set_device(mic_source, audio_input_device)
             
             # Configure low latency for audio source
-            # Get latency from config (default 10ms)
-            latency_ms = 10
-            if self.config_manager:
-                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
-            
-            # Convert to appropriate units for each platform
-            if sys.platform == 'darwin':
-                # osxaudiosrc: buffer-time property (in nanoseconds)
-                buffer_time_ns = latency_ms * 1000000  # Convert ms to nanoseconds
-                try:
-                    mic_source.set_property('buffer-time', buffer_time_ns)
-                    self.logger.info('Set mic source buffer-time to %dms (%d ns)', latency_ms, buffer_time_ns)
-                except Exception as e:
-                    self.logger.warning('Could not set buffer-time on mic source: %s', e)
-            elif sys.platform == 'linux':
-                # alsasrc: buffer-time and latency-time (in microseconds)
-                buffer_time_us = latency_ms * 1000  # Convert ms to microseconds
-                try:
-                    mic_source.set_property('buffer-time', buffer_time_us)
-                    mic_source.set_property('latency-time', buffer_time_us)
-                    self.logger.info('Set mic source buffer-time and latency-time to %dms (%d us)', latency_ms, buffer_time_us)
-                except Exception as e:
-                    self.logger.warning('Could not set low latency properties on mic source: %s', e)
+            try:
+                if sys.platform == 'darwin':
+                    # avfaudiosrc/osxaudiosrc: buffer-time in nanoseconds
+                    mic_source.set_property('buffer-time', latency_ns)
+                    self.logger.info('Set mic source buffer-time to %d ns', latency_ns)
+                elif sys.platform == 'linux':
+                    # alsasrc/pipewiresrc: buffer-time and latency-time in microseconds
+                    mic_source.set_property('buffer-time', latency_us)
+                    mic_source.set_property('latency-time', latency_us)
+                    self.logger.info('Set mic source buffer-time and latency-time to %d us', latency_us)
+            except Exception as e:
+                self.logger.warning('Could not set low latency properties on mic source: %s', e)
             
             pipeline.add(mic_source)
             
-            # Mic audio pipeline
+            # Mic: convert → resample → tee (splits into dry and reverb branches)
             mic_audioconvert = self.make_element('audioconvert', 'mic_audioconvert')
             pipeline.add(mic_audioconvert)
             
-            # Mic volume control
-            mic_volume = self.make_element('volume', 'mic_volume')
-            if self.config_manager:
-                default_mic_volume = self.config_manager.get_float('default_mic_volume', 0.8)
-                mic_volume.set_property('volume', default_mic_volume)
-            else:
-                mic_volume.set_property('volume', 0.8)
-            pipeline.add(mic_volume)
-            self.mic_volume_element = mic_volume
+            mic_audioresample = self.make_element('audioresample', 'mic_audioresample')
+            pipeline.add(mic_audioresample)
             
-            # Audio mixer with low latency configuration
-            audiomixer = self.make_element('audiomixer', 'audiomixer')
-            # Set low latency: Get from config (default 10ms)
-            # This controls how much the mixer buffers before outputting
-            latency_ms = 10
+            mic_tee = self.make_element('tee', 'mic_tee')
+            pipeline.add(mic_tee)
+            
+            # Link mic source chain
+            mic_source.link(mic_audioconvert)
+            mic_audioconvert.link(mic_audioresample)
+            mic_audioresample.link(mic_tee)
+            
+            # === DRY BRANCH (original mic signal) ===
+            # Only include if hardware monitor mode is disabled
+            if not hardware_monitor:
+                mic_dry_queue = self.make_element('queue', 'mic_dry_queue')
+                # Small queue for low latency: ~10ms max
+                mic_dry_queue.set_property('max-size-buffers', 0)
+                mic_dry_queue.set_property('max-size-bytes', 0)
+                mic_dry_queue.set_property('max-size-time', latency_ns)
+                pipeline.add(mic_dry_queue)
+                
+                mic_dry_audioconvert = self.make_element('audioconvert', 'mic_dry_audioconvert')
+                pipeline.add(mic_dry_audioconvert)
+                
+                mic_dry_audioresample = self.make_element('audioresample', 'mic_dry_audioresample')
+                pipeline.add(mic_dry_audioresample)
+                
+                mic_dry_volume = self.make_element('volume', 'mic_dry_volume')
+                if self.config_manager:
+                    default_dry = self.config_manager.get_float('default_mic_dry_level', 0.8)
+                    mic_dry_volume.set_property('volume', default_dry)
+                else:
+                    mic_dry_volume.set_property('volume', 0.8)
+                pipeline.add(mic_dry_volume)
+                self.mic_dry_volume_element = mic_dry_volume
+                
+                # Link dry branch
+                mic_tee_dry_pad = mic_tee.get_request_pad('src_%u')
+                mic_dry_queue_pad = mic_dry_queue.get_static_pad('sink')
+                mic_tee_dry_pad.link(mic_dry_queue_pad)
+                mic_dry_queue.link(mic_dry_audioconvert)
+                mic_dry_audioconvert.link(mic_dry_audioresample)
+                mic_dry_audioresample.link(mic_dry_volume)
+            else:
+                self.logger.info('Hardware monitor mode: dry mic branch disabled')
+                self.mic_dry_volume_element = None
+            
+            # === REVERB BRANCH (reverb effect only) ===
+            mic_reverb_queue = self.make_element('queue', 'mic_reverb_queue')
+            # Small queue for low latency: ~10ms max
+            mic_reverb_queue.set_property('max-size-buffers', 0)
+            mic_reverb_queue.set_property('max-size-bytes', 0)
+            mic_reverb_queue.set_property('max-size-time', latency_ns)
+            pipeline.add(mic_reverb_queue)
+            
+            mic_reverb_audioconvert = self.make_element('audioconvert', 'mic_reverb_audioconvert')
+            pipeline.add(mic_reverb_audioconvert)
+            
+            mic_reverb_audioresample = self.make_element('audioresample', 'mic_reverb_audioresample')
+            pipeline.add(mic_reverb_audioresample)
+            
+            # Reverb element (outputs reverb effect only, no original signal)
+            reverb = None
+            reverb_plugin = None
             if self.config_manager:
-                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
-            latency_ns = latency_ms * 1000000  # Convert ms to nanoseconds
+                reverb_plugin = self.config_manager.get('reverb_plugin')
+            
+            # Try to create reverb element
+            if reverb_plugin:
+                try:
+                    reverb = self.make_element(reverb_plugin, 'reverb')
+                    pipeline.add(reverb)
+                    self.reverb_element = reverb
+                    self.logger.info('Using configured reverb plugin: %s', reverb_plugin)
+                except Exception as e:
+                    self.logger.error('Could not create reverb plugin %s: %s', reverb_plugin, e)
+                    raise
+            
+            # Use freeverb (available in gst-plugins-bad)
+            if reverb is None:
+                try:
+                    reverb = self.make_element('freeverb', 'reverb')
+                    # Configure freeverb for reverb-only output (no dry signal)
+                    # level property: 0.0 = all dry, 1.0 = all wet (reverb only)
+                    reverb.set_property('level', 1.0)  # 100% wet = reverb effect only
+                    pipeline.add(reverb)
+                    self.reverb_element = reverb
+                    self.logger.info('Using freeverb reverb element (configured for reverb-only output)')
+                except Exception as e:
+                    self.logger.error('Could not create freeverb reverb element: %s', e)
+                    raise
+            
+            mic_reverb_volume = self.make_element('volume', 'mic_reverb_volume')
+            if self.config_manager:
+                default_reverb = self.config_manager.get_float('default_mic_reverb_level', 0.3)
+                mic_reverb_volume.set_property('volume', default_reverb)
+            else:
+                mic_reverb_volume.set_property('volume', 0.3)
+            pipeline.add(mic_reverb_volume)
+            self.mic_reverb_volume_element = mic_reverb_volume
+            
+            # Link reverb branch
+            mic_tee_reverb_pad = mic_tee.get_request_pad('src_%u')
+            mic_reverb_queue_pad = mic_reverb_queue.get_static_pad('sink')
+            mic_tee_reverb_pad.link(mic_reverb_queue_pad)
+            mic_reverb_queue.link(mic_reverb_audioconvert)
+            mic_reverb_audioconvert.link(mic_reverb_audioresample)
+            mic_reverb_audioresample.link(reverb)
+            reverb.link(mic_reverb_volume)
+            
+            # === BACKING TRACK PIPELINE ===
+            # Add audioresample to backing track
+            backing_track_audioresample = self.make_element('audioresample', 'backing_track_audioresample')
+            pipeline.add(backing_track_audioresample)
+            
+            # Link backing track with pitch shift if enabled
+            if use_pitch_shift and pitch_shift:
+                backing_track_audioconvert_input.link(backing_track_volume)
+                backing_track_volume.link(pitch_shift)
+                pitch_shift.link(backing_track_audioconvert_output)
+                backing_track_audioconvert_output.link(backing_track_audioresample)
+            else:
+                backing_track_audioconvert_input.link(backing_track_volume)
+                backing_track_volume.link(backing_track_audioconvert_output)
+                backing_track_audioconvert_output.link(backing_track_audioresample)
+            
+            # === AUDIO MIXER ===
+            audiomixer = self.make_element('audiomixer', 'audiomixer')
             try:
                 audiomixer.set_property('latency', latency_ns)
-                self.logger.info('Set audiomixer latency to %dms (%d ns) for low latency', latency_ms, latency_ns)
+                self.logger.info('Set audiomixer latency to %d ns', latency_ns)
             except Exception as e:
                 self.logger.warning('Could not set latency property on audiomixer: %s', e)
             pipeline.add(audiomixer)
             
-            # Final audio conversion and sink
+            # Request mixer sink pads
+            mixer_sink_pads = []
+            
+            # Dry mic branch (if enabled)
+            if not hardware_monitor:
+                mic_dry_sink_pad = audiomixer.get_request_pad('sink_%u')
+                mixer_sink_pads.append(('dry', mic_dry_sink_pad))
+                mic_dry_volume.get_static_pad('src').link(mic_dry_sink_pad)
+            
+            # Reverb branch
+            mic_reverb_sink_pad = audiomixer.get_request_pad('sink_%u')
+            mixer_sink_pads.append(('reverb', mic_reverb_sink_pad))
+            mic_reverb_volume.get_static_pad('src').link(mic_reverb_sink_pad)
+            
+            # Backing track
+            backing_track_sink_pad = audiomixer.get_request_pad('sink_%u')
+            mixer_sink_pads.append(('backing', backing_track_sink_pad))
+            backing_track_audioresample.get_static_pad('src').link(backing_track_sink_pad)
+            
+            self.logger.debug('Requested mixer sink pads: %s', 
+                            ', '.join([f'{name}={pad.get_name()}' for name, pad in mixer_sink_pads]))
+            
+            # === FINAL OUTPUT ===
             mixer_audioconvert = self.make_element('audioconvert', 'mixer_audioconvert')
             pipeline.add(mixer_audioconvert)
             
-            # Audio sink - use autoaudiosink which auto-detects
-            audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
-            if self.config.audio_output:
-                self.set_device(audio_sink, self.config.audio_output)
+            mixer_audioresample = self.make_element('audioresample', 'mixer_audioresample')
+            pipeline.add(mixer_audioresample)
             
-            # Configure low latency for audio sink (mixing mode)
-            latency_ms = 10
+            # Audio sink
+            audio_sink_type = self._get_audio_sink_type()
+            audio_sink = self.make_element(audio_sink_type, 'audio_sink')
+            
+            # Get output device
+            audio_output_device = None
             if self.config_manager:
-                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+                audio_output_device = self.config_manager.get('audio_output_device')
+            if audio_output_device:
+                self.set_device(audio_sink, audio_output_device)
+            
+            # Configure low latency for audio sink
             try:
                 if sys.platform == 'darwin':
-                    buffer_time_ns = latency_ms * 1000000
-                    audio_sink.set_property('buffer-time', buffer_time_ns)
+                    audio_sink.set_property('buffer-time', latency_ns)
                 elif sys.platform == 'linux':
-                    buffer_time_us = latency_ms * 1000
-                    audio_sink.set_property('buffer-time', buffer_time_us)
-                    audio_sink.set_property('latency-time', buffer_time_us)
-                self.logger.info('Set audio sink latency to %dms', latency_ms)
+                    audio_sink.set_property('buffer-time', latency_us)
+                    audio_sink.set_property('latency-time', latency_us)
+                self.logger.info('Set audio sink latency to %d ms', latency_ns // 1000000)
             except Exception as e:
                 self.logger.warning('Could not set low latency properties on audio sink: %s', e)
             
             pipeline.add(audio_sink)
-            
-            # Link mic pipeline
-            mic_source.link(mic_audioconvert)
-            mic_audioconvert.link(mic_volume)
-            
-            # Link YouTube audio pipeline - handle optional pitch shift
-            if use_pitch_shift and pitch_shift:
-                youtube_audioconvert_input.link(youtube_volume)
-                youtube_volume.link(pitch_shift)
-                pitch_shift.link(youtube_audioconvert_output)
-            else:
-                youtube_audioconvert_input.link(youtube_volume)
-                youtube_volume.link(youtube_audioconvert_output)
-            
-            # Request mixer sink pads and link
-            # audiomixer creates sink pads on demand via get_request_pad
-            # We'll request two sink pads for mic and YouTube
-            mic_sink_pad = audiomixer.get_request_pad('sink_%u')
-            youtube_sink_pad = audiomixer.get_request_pad('sink_%u')
-            
-            self.logger.debug('Requested mixer sink pads: mic=%s, youtube=%s', 
-                            mic_sink_pad.get_name(), youtube_sink_pad.get_name())
-            
-            # Link mic to mixer sink pad
-            mic_volume_pad = mic_volume.get_static_pad('src')
-            mic_volume_pad.link(mic_sink_pad)
-            
-            # Link YouTube to mixer sink pad
-            youtube_output_pad = youtube_audioconvert_output.get_static_pad('src')
-            youtube_output_pad.link(youtube_sink_pad)
             
             # Link mixer output
-            mixer_src_pad = audiomixer.get_static_pad('src')
-            mixer_src_pad.link(mixer_audioconvert.get_static_pad('sink'))
-            mixer_audioconvert.link(audio_sink)
+            audiomixer.get_static_pad('src').link(mixer_audioconvert.get_static_pad('sink'))
+            mixer_audioconvert.link(mixer_audioresample)
+            mixer_audioresample.link(audio_sink)
         else:
-            self.logger.info('Audio mixing disabled - YouTube audio only')
-            # No mixing - direct YouTube audio output
-            # Link static parts - handle optional pitch shift
+            self.logger.info('Audio mixing disabled - backing track audio only')
+            
+            # Add audioresample to backing track
+            backing_track_audioresample = self.make_element('audioresample', 'backing_track_audioresample')
+            pipeline.add(backing_track_audioresample)
+            
+            # Link backing track - handle optional pitch shift
             if use_pitch_shift and pitch_shift:
-                youtube_audioconvert_input.link(youtube_volume)
-                youtube_volume.link(pitch_shift)
-                pitch_shift.link(youtube_audioconvert_output)
+                backing_track_audioconvert_input.link(backing_track_volume)
+                backing_track_volume.link(pitch_shift)
+                pitch_shift.link(backing_track_audioconvert_output)
+                backing_track_audioconvert_output.link(backing_track_audioresample)
             else:
-                youtube_audioconvert_input.link(youtube_volume)
-                youtube_volume.link(youtube_audioconvert_output)
+                backing_track_audioconvert_input.link(backing_track_volume)
+                backing_track_volume.link(backing_track_audioconvert_output)
+                backing_track_audioconvert_output.link(backing_track_audioresample)
             
-            # Audio sink - use autoaudiosink which auto-detects
-            audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
-            if self.config.audio_output:
-                self.set_device(audio_sink, self.config.audio_output)
+            # Audio sink
+            audio_sink_type = self._get_audio_sink_type()
+            audio_sink = self.make_element(audio_sink_type, 'audio_sink')
             
-            # Configure low latency for audio sink (YouTube-only mode)
-            latency_ms = 10
+            # Get output device
+            audio_output_device = None
             if self.config_manager:
-                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+                audio_output_device = self.config_manager.get('audio_output_device')
+            if audio_output_device:
+                self.set_device(audio_sink, audio_output_device)
+            
+            # Configure low latency for audio sink
             try:
                 if sys.platform == 'darwin':
-                    buffer_time_ns = latency_ms * 1000000
-                    audio_sink.set_property('buffer-time', buffer_time_ns)
+                    audio_sink.set_property('buffer-time', latency_ns)
                 elif sys.platform == 'linux':
-                    buffer_time_us = latency_ms * 1000
-                    audio_sink.set_property('buffer-time', buffer_time_us)
-                    audio_sink.set_property('latency-time', buffer_time_us)
-                self.logger.info('Set audio sink latency to %dms', latency_ms)
+                    audio_sink.set_property('buffer-time', latency_us)
+                    audio_sink.set_property('latency-time', latency_us)
+                self.logger.info('Set audio sink latency to %d ms', latency_ns // 1000000)
             except Exception as e:
                 self.logger.warning('Could not set low latency properties on audio sink: %s', e)
             
             pipeline.add(audio_sink)
             
-            youtube_audioconvert_output.link(audio_sink)
+            backing_track_audioresample.link(audio_sink)
         
         # Video pipeline
         videoconvert = self.make_element('videoconvert', 'videoconvert')
@@ -668,8 +923,8 @@ class StreamingController:
             self.logger.debug('Decodebin pad added: %s', caps_string)
             
             if caps_string.startswith('audio/'):
-                # Link to YouTube audio input converter
-                pad.link(youtube_audioconvert_input.get_static_pad('sink'))
+                # Link to backing track audio input converter
+                pad.link(backing_track_audioconvert_input.get_static_pad('sink'))
             elif caps_string.startswith('video/'):
                 pad.link(videoconvert.get_static_pad('sink'))
         
@@ -689,7 +944,7 @@ class StreamingController:
         
         # Use playbin which is more stable and handles everything internally
         Gst = _get_gst()
-        pipeline = Gst.Pipeline.new('YouTubePlayback')
+        pipeline = Gst.Pipeline.new('BackingTrackPlayback')
         
         # Use playbin3 or playbin - simpler and more stable
         try:
