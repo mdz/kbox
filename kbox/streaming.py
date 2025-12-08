@@ -63,6 +63,11 @@ class StreamingController:
                     import os
                     os.environ.setdefault('GST_PLUGIN_SCANNER', '')
                     os.environ.setdefault('GST_REGISTRY_FORK', 'no')
+                    # Ensure LADSPA path is set if not already set
+                    if 'LADSPA_PATH' not in os.environ:
+                        ladspa_path = os.path.expanduser('~/.ladspa')
+                        if os.path.exists(ladspa_path):
+                            os.environ['LADSPA_PATH'] = ladspa_path
                 
                 Gst.init(argv)
                 self.logger.info('GStreamer initialized successfully')
@@ -97,9 +102,31 @@ class StreamingController:
         convert_audio_input = self.make_element('audioconvert', 'convert_audio_input')
         pipeline.add(convert_audio_input)
 
-        pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
-        pitch_shift.set_property('semitones', self.pitch_shift_semitones)
-        pipeline.add(pitch_shift)
+        # Try to add pitch shift, but make it optional
+        use_pitch_shift = False
+        pitch_shift = None
+        try:
+            pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
+            if pitch_shift:
+                # Check if this is actually a pitch shift element (not an identity fallback)
+                element_type = type(pitch_shift).__name__
+                if element_type == 'GstIdentity':
+                    self.logger.warning('Pitch shift plugin not found in _create_pipeline, using identity (passthrough)')
+                    pitch_shift = None
+                elif hasattr(pitch_shift, 'set_property'):
+                    # Check if the element has the semitones property
+                    try:
+                        pitch_shift.set_property('semitones', self.pitch_shift_semitones)
+                        pipeline.add(pitch_shift)
+                        use_pitch_shift = True
+                        self.logger.info('Pitch shift enabled in _create_pipeline')
+                    except Exception as prop_error:
+                        self.logger.warning('Pitch shift element does not support semitones property: %s. Element type: %s', prop_error, element_type)
+                        pitch_shift = None
+                else:
+                    self.logger.warning('Pitch shift element created but not usable (no set_property)')
+        except Exception as e:
+            self.logger.warning('Could not create pitch shift element in _create_pipeline: %s. Continuing without pitch shift.', e)
 
         convert_audio_output = self.make_element('audioconvert', 'convert_audio_output')
         pipeline.add(convert_audio_output)
@@ -117,21 +144,24 @@ class StreamingController:
             string = pad.query_caps(None).to_string()
             self.logger.debug('Found stream: %s' % string)
             if string.startswith('audio/x-raw'):
-                pad.link(convert_audio_input.get_static_pad('sink'))
+                if use_pitch_shift and pitch_shift:
+                    pad.link(convert_audio_input.get_static_pad('sink'))
+                else:
+                    pad.link(convert_audio_input.get_static_pad('sink'))
             elif string.startswith('video/x-raw'):
                 pad.link(video_sink.get_static_pad('sink'))
 
         decode.connect("pad-added", decodebin_pad_added)
 
         source.link(decode)
-        #video_demux.link(audio_decode)
-        #print(video_demux)
-        #video_demux.link_pads('audio_0', audio_decode, None)
-        #video_demux.link_pads('video_0', video_sink, None)
-        #decode.link(convert_audio_input)
-        #convert_audio_input.link(pitch_shift)
-        #pitch_shift.link(convert_audio_output)
-        convert_audio_input.link(convert_audio_output)
+        
+        # Link audio pipeline - handle optional pitch shift
+        if use_pitch_shift and pitch_shift:
+            convert_audio_input.link(pitch_shift)
+            pitch_shift.link(convert_audio_output)
+        else:
+            convert_audio_input.link(convert_audio_output)
+        
         convert_audio_output.link(audio_sink)
 
 
@@ -140,12 +170,14 @@ class StreamingController:
         return pipeline
     
     def make_element(self, element_type, name):
+        import os
         Gst = _get_gst()
         element = Gst.ElementFactory.make(element_type, name)
         if element is None:
             # Try to find alternative elements
             if element_type == self.config.RUBBERBAND_PLUGIN:
-                self.logger.warning('Rubberband plugin not found, pitch shifting will be disabled')
+                self.logger.warning('Rubberband plugin "%s" not found, pitch shifting will be disabled', element_type)
+                self.logger.info('LADSPA_PATH is: %s', os.environ.get('LADSPA_PATH', 'not set'))
                 # Return a passthrough element instead
                 return self.make_element('identity', name)
             raise ValueError('Unable to initialize gstreamer element %s as %s. Available plugins may be missing.' % (element_type, name))
@@ -313,13 +345,26 @@ class StreamingController:
         pitch_shift = None
         try:
             pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
-            if pitch_shift and hasattr(pitch_shift, 'set_property'):
-                pitch_shift.set_property('semitones', self.pitch_shift_semitones)
-                pipeline.add(pitch_shift)
-                use_pitch_shift = True
-                self.logger.info('Pitch shift enabled')
+            if pitch_shift:
+                # Check if this is actually a pitch shift element (not an identity fallback)
+                element_type = type(pitch_shift).__name__
+                if element_type == 'GstIdentity':
+                    self.logger.warning('Pitch shift plugin not found, using identity (passthrough)')
+                    pitch_shift = None
+                elif hasattr(pitch_shift, 'set_property'):
+                    # Check if the element has the semitones property
+                    try:
+                        pitch_shift.set_property('semitones', self.pitch_shift_semitones)
+                        pipeline.add(pitch_shift)
+                        use_pitch_shift = True
+                        self.logger.info('Pitch shift enabled')
+                    except Exception as prop_error:
+                        self.logger.warning('Pitch shift element does not support semitones property: %s. Element type: %s', prop_error, element_type)
+                        pitch_shift = None
+                else:
+                    self.logger.warning('Pitch shift element created but not usable (no set_property)')
             else:
-                self.logger.warning('Pitch shift element created but not usable')
+                self.logger.warning('Could not create pitch shift element')
         except Exception as e:
             self.logger.warning('Could not create pitch shift element: %s. Continuing without pitch shift.', e)
         
