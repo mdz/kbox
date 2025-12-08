@@ -1,8 +1,0 @@
-gst-launch-1.0 alsasrc device=dsnoop:CARD=Video,DEV=0 \! audioconvert \! alsasink device=hdmi:CARD=vc4hdmi0,DEV=0
-gst-launch-1.0 v4l2src device=/dev/video0 \! jpegdec \! kmssink alsasrc device=dsnoop:CARD=Video,DEV=0 \! audioconvert \! alsasink device=hdmi:CARD=vc4hdmi0,DEV=0
-
-gst-launch-1.0 v4l2src do-timestamp=true device=/dev/video0 \! 'image/jpeg,width=640,height=480' \!  jpegdec \! kmssink alsasrc device=hw:CARD=Video,DEV=0 \! audioconvert \! alsasink device=hdmi:CARD=vc4hdmi0,DEV=
-gst-launch-1.0 v4l2src do-timestamp=true device=/dev/video0 \! jpegdec \!  kmssink alsasrc device=hw:CARD=Video,DEV=0 \! audioconvert \! alsasink device=hdmi:CARD=vc4hdmi0,DEV=0
-
-
-gst-launch-1.0 v4l2src do-timestamp=true device=/dev/video0 \! 'image/jpeg,width=1920,height=1080,framerate=20/1' \!  jpegdec \! kmssink alsasrc device=hw:CARD=Video,DEV=0 \! audioconvert \! alsasink device=hdmi:CARD=vc4hdmi0,DEV=0

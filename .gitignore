@@ -27,6 +27,7 @@ Thumbs.db
 .kbox/
 *.log
 TODO
+notes.txt
 
 # Test artifacts
 .pytest_cache/
