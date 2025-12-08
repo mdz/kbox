@@ -35,10 +35,13 @@ class QueueManager:
         title: str,
         duration_seconds: Optional[int] = None,
         thumbnail_url: Optional[str] = None,
-        pitch_semitones: int = 0
+        pitch_semitones: Optional[int] = None
     ) -> int:
         """
         Add a song to the end of the queue.
+        
+        If pitch_semitones is not provided (None), will check for a saved pitch setting
+        for this video and use it if available. Otherwise defaults to 0.
         
         Args:
             user_name: Name of the user who requested the song
@@ -46,7 +49,7 @@ class QueueManager:
             title: Song title
             duration_seconds: Duration in seconds (optional)
             thumbnail_url: Thumbnail URL (optional)
-            pitch_semitones: Pitch adjustment in semitones (default: 0)
+            pitch_semitones: Pitch adjustment in semitones. If None, will use saved setting if available, otherwise 0.
         
         Returns:
             ID of the created queue item
@@ -54,6 +57,14 @@ class QueueManager:
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            
+            # If pitch not explicitly provided, check for saved setting
+            if pitch_semitones is None:
+                settings = self.get_last_song_settings(youtube_video_id)
+                saved_pitch = settings.get('pitch_semitones')
+                pitch_semitones = saved_pitch if saved_pitch is not None else 0
+                if saved_pitch is not None:
+                    self.logger.debug('Using saved pitch setting for %s: %s semitones', youtube_video_id, saved_pitch)
             
             # Get the highest position
             cursor.execute('SELECT MAX(position) as max_pos FROM queue_items')
@@ -80,7 +91,7 @@ class QueueManager:
             item_id = cursor.lastrowid
             conn.commit()
             
-            self.logger.info('Added song to queue: %s by %s (ID: %s)', title, user_name, item_id)
+            self.logger.info('Added song to queue: %s by %s (ID: %s, pitch: %s)', title, user_name, item_id, pitch_semitones)
             return item_id
         finally:
             conn.close()
@@ -478,9 +489,47 @@ class QueueManager:
         finally:
             conn.close()
     
+    def get_last_song_settings(self, youtube_video_id: str) -> Dict[str, Any]:
+        """
+        Get all last used settings for a song from playback history.
+        
+        Args:
+            youtube_video_id: YouTube video ID
+        
+        Returns:
+            Dictionary of settings from the most recent playback, or empty dict if not found.
+            Currently includes: pitch_semitones (and can be extended for other settings)
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Query playback history for the most recent entry with this video ID
+            # Get all settings-related columns
+            cursor.execute('''
+                SELECT pitch_semitones
+                FROM playback_history
+                WHERE youtube_video_id = ?
+                ORDER BY played_at DESC
+                LIMIT 1
+            ''', (youtube_video_id,))
+            
+            result = cursor.fetchone()
+            if result:
+                settings = {
+                    'pitch_semitones': result['pitch_semitones']
+                }
+                return settings
+            return {}
+        finally:
+            conn.close()
+    
     def update_pitch(self, item_id: int, pitch_semitones: int) -> bool:
         """
         Update pitch adjustment for a queue item.
+        
+        The pitch will be saved to playback history when the song ends.
+        This ensures the last used pitch (even if changed during playback) is recorded.
         
         Args:
             item_id: ID of the queue item
@@ -493,6 +542,7 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
+            # Update pitch in queue item
             cursor.execute('''
                 UPDATE queue_items 
                 SET pitch_semitones = ?

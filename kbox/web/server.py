@@ -28,7 +28,7 @@ class AddSongRequest(BaseModel):
     title: str
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
-    pitch_semitones: int = 0
+    pitch_semitones: int = 0  # If 0, will check for saved setting; otherwise uses provided value
 
 
 class ReorderRequest(BaseModel):
@@ -156,13 +156,17 @@ def create_app(
     ):
         """Add song to queue."""
         try:
+            # If pitch_semitones is 0, let add_song check for saved setting
+            # Otherwise, use the explicitly provided value
+            pitch_to_use = None if request_data.pitch_semitones == 0 else request_data.pitch_semitones
+            
             item_id = queue_mgr.add_song(
                 user_name=request_data.user_name,
                 youtube_video_id=request_data.youtube_video_id,
                 title=request_data.title,
                 duration_seconds=request_data.duration_seconds,
                 thumbnail_url=request_data.thumbnail_url,
-                pitch_semitones=request_data.pitch_semitones,
+                pitch_semitones=pitch_to_use,
             )
 
             # Trigger download (PlaybackController will handle this)

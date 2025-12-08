@@ -86,10 +86,15 @@ class Database:
             )
         ''')
         
-        # Create index on played_at for efficient queries
+        # Create indexes for efficient queries
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_playback_history_played_at 
             ON playback_history(played_at)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_playback_history_video_id_played_at 
+            ON playback_history(youtube_video_id, played_at DESC)
         ''')
         
         # Create indexes
