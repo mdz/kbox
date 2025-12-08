@@ -8,6 +8,8 @@ venv/
 env/
 ENV/
 .venv
+Pipfile
+Pipfile.lock
 
 # IDE
 .vscode/
