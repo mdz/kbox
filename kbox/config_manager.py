@@ -20,9 +20,18 @@ class ConfigManager:
         'cache_directory': None,  # Will default to ~/.kbox/cache
         'operator_pin': '1234',
         'default_mic_volume': '0.8',
-        'default_youtube_volume': '0.8',
+        'default_backing_track_volume': '0.8',
+        'default_mic_dry_level': '0.8',  # Dry mic level (0.0-1.0)
+        'default_mic_reverb_level': '0.3',  # Reverb send level (reverb effect only, no original) (0.0-1.0)
         'default_reverb_amount': '0.3',
         'reverb_plugin': None,  # Will be determined at runtime
+        'audio_input_source': None,  # GStreamer source type (e.g., 'alsasrc', 'osxaudiosrc', 'avfaudiosrc', 'pipewiresrc')
+        'audio_input_source_device': None,  # Device string for audio input source
+        'audio_output_sink': None,  # GStreamer sink type (e.g., 'alsasink', 'osxaudiosink', 'pipewiresink')
+        'audio_output_device': None,  # Device string for audio output
+        'audio_latency_ms': '10',  # Target audio latency in milliseconds (lower = less latency but more CPU)
+        'audio_sample_rate': '48000',  # Sample rate in Hz (default: 48000)
+        'hardware_monitor_mode': 'false',  # Enable hardware direct monitoring mode
     }
     
     def __init__(self, database: Database):

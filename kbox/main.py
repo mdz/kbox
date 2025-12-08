@@ -66,7 +66,7 @@ class KboxServer:
 
         # StreamingController needs a server reference for callbacks
         # We'll pass self for now
-        self.streaming_controller = StreamingController(self.config, self)
+        self.streaming_controller = StreamingController(self.config, self, self.config_manager)
 
         # PlaybackController
         self.playback_controller = PlaybackController(
