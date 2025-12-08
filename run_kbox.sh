@@ -17,8 +17,11 @@ export DYLD_LIBRARY_PATH="$GLIB_PREFIX/lib:$GSTREAMER_PREFIX/lib${DYLD_LIBRARY_P
 # Set typelib path for GObject Introspection
 export GI_TYPELIB_PATH="$GSTREAMER_PREFIX/share/gir-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}"
 
-# Set GStreamer plugin path
-export GST_PLUGIN_PATH="$GSTREAMER_PREFIX/lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
+# Set GStreamer plugin path (include user's custom plugins directory)
+export GST_PLUGIN_PATH="$HOME/.gstreamer-1.0:$GSTREAMER_PREFIX/lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
+
+# Set LADSPA plugin path (for pitch shifting)
+export LADSPA_PATH="$HOME/.ladspa${LADSPA_PATH:+:$LADSPA_PATH}"
 
 # Disable problematic Python plugin that causes segfaults on macOS
 export GST_PLUGIN_SYSTEM_PATH_1_0="$GSTREAMER_PREFIX/lib/gstreamer-1.0"

@@ -266,6 +266,25 @@
             color: #4a9eff;
         }
         
+        .my-song-notification {
+            background: linear-gradient(135deg, #4a9eff 0%, #5aaeff 100%);
+            border: 2px solid #4a9eff;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        .my-song-notification h2 {
+            color: #fff;
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(74, 158, 255, 0.7);
+            }
+            50% {
+                box-shadow: 0 0 0 10px rgba(74, 158, 255, 0);
+            }
+        }
+        
         .hidden {
             display: none;
         }
@@ -363,12 +382,33 @@
             color: #aaa;
             font-size: 0.9em;
         }
+        .main-content {
+            transition: opacity 0.3s ease;
+        }
+        
+        .main-content.hidden {
+            display: none;
+        }
+        
+        .my-song-screen {
+            display: none;
+        }
+        
+        .my-song-screen.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
-    <button class="controls-toggle-button" id="controls-toggle-button" onclick="togglePlaybackControls()" title="Enable Playback Controls" style="display: none;">⚙</button>
-    <button class="help-button" onclick="showHelp()" title="Help">?</button>
+    <!-- Header (always visible) -->
+    <header style="position: relative; margin-bottom: 20px;">
+        <button class="controls-toggle-button" id="controls-toggle-button" onclick="togglePlaybackControls()" title="Enable Playback Controls" style="display: none;">⚙</button>
+        <button class="help-button" onclick="showHelp()" title="Help">?</button>
         <h1>🎤 kbox</h1>
+    </header>
+    
+    <!-- Main Content (hidden when user's song is playing) -->
+    <div class="main-content" id="main-content">
         
     <!-- User Name Prompt Modal -->
     <div class="modal-overlay hidden" id="name-modal" {% if test_mode %}style="display: none;"{% endif %}>
@@ -389,15 +429,7 @@
             </div>
             <div style="margin-bottom: 15px;">
                 <label class="pitch-label">Pitch Adjustment (semitones):</label>
-                <div class="pitch-control">
-                    <button class="pitch-button" onclick="adjustPitch('add-song', -1)">−</button>
-                    <div class="pitch-display" id="add-song-pitch-display">
-                        <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
-                        <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
-                    </div>
-                    <button class="pitch-button" onclick="adjustPitch('add-song', 1)">+</button>
-                </div>
-                <input type="hidden" id="add-song-pitch-input" value="0" />
+                <div id="add-song-pitch-control-container"></div>
             </div>
             <div style="display: flex; gap: 10px;">
                 <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
@@ -415,15 +447,7 @@
             </div>
             <div style="margin-bottom: 15px;">
                 <label class="pitch-label">Pitch Adjustment (semitones):</label>
-                <div class="pitch-control">
-                    <button class="pitch-button" onclick="adjustPitch('edit-queue-item', -1)" id="edit-queue-item-pitch-minus">−</button>
-                    <div class="pitch-display" id="edit-queue-item-pitch-display">
-                        <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
-                        <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
-                    </div>
-                    <button class="pitch-button" onclick="adjustPitch('edit-queue-item', 1)" id="edit-queue-item-pitch-plus">+</button>
-                </div>
-                <input type="hidden" id="edit-queue-item-pitch-input" value="0" />
+                <div id="edit-queue-item-pitch-control-container"></div>
             </div>
             <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
                 <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
@@ -498,18 +522,40 @@
         </div>
         <div>
             <label class="pitch-label">Pitch Adjustment (semitones):</label>
-            <div class="pitch-control">
-                <button class="pitch-button" onclick="adjustPitch('operator', -1)">−</button>
-                <div class="pitch-display" id="operator-pitch-display">
-                    <div style="font-size: 24px; font-weight: bold; color: #4a9eff;">0</div>
-                    <div style="font-size: 12px; color: #aaa; margin-top: 2px;">Perfect Unison</div>
-                </div>
-                <button class="pitch-button" onclick="adjustPitch('operator', 1)">+</button>
-            </div>
-            <input type="hidden" id="pitch-input" value="0" />
+            <div id="operator-pitch-control-container"></div>
             <button onclick="setPitch()" style="width: 100%; margin-top: 10px;">Set Pitch</button>
         </div>
         <button class="danger" onclick="clearQueue()">Clear Queue</button>
+    </div>
+    
+    <!-- Your Song Notification (shown in main content when coming up) -->
+    <div class="section my-song-notification hidden" id="my-song-notification">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <span style="font-size: 24px;">🎤</span>
+            <div style="flex: 1;">
+                <h2 style="margin: 0; color: #4a9eff;">Your Song is Coming Up!</h2>
+                <div style="font-size: 0.9em; color: #aaa; margin-top: 4px;" id="my-song-notification-text"></div>
+            </div>
+        </div>
+    </div>
+    </div> <!-- End main-content -->
+    
+    <!-- Your Song Screen (distinct screen when user's song is playing) -->
+    <div class="my-song-screen" id="my-song-screen">
+        <div class="section" style="max-width: 500px; margin: 40px auto;">
+            <div style="text-align: center; margin-bottom: 30px;">
+                <div style="font-size: 48px; margin-bottom: 15px;">🎵</div>
+                <h1 style="margin: 0; color: #4a9eff; font-size: 2em;">Your Turn!</h1>
+                <div style="font-size: 1.2em; color: #aaa; margin-top: 10px;" id="my-song-screen-title"></div>
+            </div>
+            <div style="background: #1a1a1a; border-radius: 12px; padding: 25px; margin-bottom: 20px;">
+                <label class="pitch-label" style="text-align: center; display: block; margin-bottom: 15px; color: #fff; font-weight: 500; font-size: 1.1em;">Adjust Pitch (Live)</label>
+                <div id="my-song-screen-pitch-control"></div>
+                <div style="text-align: center; margin-top: 15px; font-size: 0.9em; color: #888;">
+                    Changes take effect immediately
+                </div>
+            </div>
+        </div>
     </div>
     
     <script>
@@ -549,18 +595,47 @@
         }
         
         // Update pitch display with number and interval name
-        function updatePitchDisplay(displayId, value) {
+        function updatePitchDisplay(displayId, value, fontSize = 24) {
             const display = document.getElementById(displayId);
             if (!display) return;
             
             // Format value with + for positive numbers
             const formattedValue = value > 0 ? `+${value}` : value.toString();
             const intervalName = getIntervalName(value);
-            display.innerHTML = `<div style="font-size: 24px; font-weight: bold; color: #4a9eff;">${formattedValue}</div><div style="font-size: 12px; color: #aaa; margin-top: 2px;">${intervalName}</div>`;
+            display.innerHTML = `<div style="font-size: ${fontSize}px; font-weight: bold; color: #4a9eff;">${formattedValue}</div><div style="font-size: ${fontSize * 0.5}px; color: #aaa; margin-top: 2px;">${intervalName}</div>`;
         }
         
-        // Adjust pitch value with +/- buttons
+        // Create reusable pitch control HTML
+        function createPitchControlHTML(prefix, initialValue = 0, fontSize = 24) {
+            return `
+                <div class="pitch-control">
+                    <button class="pitch-button" onclick="adjustPitch('${prefix}', -1)" id="${prefix}-pitch-minus">−</button>
+                    <div class="pitch-display" id="${prefix}-pitch-display">
+                        <div style="font-size: ${fontSize}px; font-weight: bold; color: #4a9eff;">${initialValue > 0 ? '+' + initialValue : initialValue}</div>
+                        <div style="font-size: ${fontSize * 0.5}px; color: #aaa; margin-top: 2px;">${getIntervalName(initialValue)}</div>
+                    </div>
+                    <button class="pitch-button" onclick="adjustPitch('${prefix}', 1)" id="${prefix}-pitch-plus">+</button>
+                </div>
+                <input type="hidden" id="${prefix}-pitch-input" value="${initialValue}" />
+            `;
+        }
+        
+        // Update pitch control buttons state
+        function updatePitchButtons(prefix, value) {
+            const minusBtn = document.getElementById(`${prefix}-pitch-minus`);
+            const plusBtn = document.getElementById(`${prefix}-pitch-plus`);
+            if (minusBtn) minusBtn.disabled = (value <= -12);
+            if (plusBtn) plusBtn.disabled = (value >= 12);
+        }
+        
+        // Adjust pitch value with +/- buttons (reusable for all contexts)
         function adjustPitch(context, delta) {
+            // Handle special case for my-song-screen (immediate effect)
+            if (context === 'my-song-screen') {
+                adjustMySongPitch(delta);
+                return;
+            }
+            
             const inputId = context === 'add-song' ? 'add-song-pitch-input' : 
                            context === 'edit-queue-item' ? 'edit-queue-item-pitch-input' : 
                            'pitch-input';
@@ -583,10 +658,9 @@
             
             // Update button states
             if (context === 'edit-queue-item') {
-                const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
-                const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
-                if (minusBtn) minusBtn.disabled = (newValue <= -12);
-                if (plusBtn) plusBtn.disabled = (newValue >= 12);
+                updatePitchButtons('edit-queue-item', newValue);
+            } else if (context === 'operator') {
+                updatePitchButtons('operator', newValue);
             }
         }
         
@@ -691,6 +765,14 @@
                 toggleButton.classList.add('active');
                 toggleButton.textContent = '⚙';
                 toggleButton.title = 'Disable Playback Controls';
+                
+                // Initialize operator pitch control if not already initialized
+                const pitchControlContainer = document.getElementById('operator-pitch-control-container');
+                if (pitchControlContainer && !pitchControlContainer.querySelector('.pitch-control')) {
+                    // Get current song pitch if available
+                    const currentPitch = 0; // Default, could be enhanced to get from current song
+                    pitchControlContainer.innerHTML = createPitchControlHTML('operator', currentPitch);
+                }
             } else {
                 // Close controls
                 panel.classList.add('hidden');
@@ -740,21 +822,20 @@
                     </div>
             `;
             
-            // Set pitch input and display based on permissions
-            const pitchInput = document.getElementById('edit-queue-item-pitch-input');
-            const pitchDisplayId = 'edit-queue-item-pitch-display';
+            // Initialize pitch control
+            const pitchControlContainer = document.getElementById('edit-queue-item-pitch-control-container');
             const pitchValue = item.pitch_semitones || 0;
-            pitchInput.value = pitchValue;
-            updatePitchDisplay(pitchDisplayId, pitchValue);
-            
-            // Enable/disable pitch buttons based on permissions
-            const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
-            const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
-            if (minusBtn) {
-                minusBtn.disabled = !canEdit || (pitchValue <= -12);
-            }
-            if (plusBtn) {
-                plusBtn.disabled = !canEdit || (pitchValue >= 12);
+            if (pitchControlContainer) {
+                pitchControlContainer.innerHTML = createPitchControlHTML('edit-queue-item', pitchValue);
+                // Enable/disable buttons based on permissions
+                if (!canEdit) {
+                    const minusBtn = document.getElementById('edit-queue-item-pitch-minus');
+                    const plusBtn = document.getElementById('edit-queue-item-pitch-plus');
+                    if (minusBtn) minusBtn.disabled = true;
+                    if (plusBtn) plusBtn.disabled = true;
+                } else {
+                    updatePitchButtons('edit-queue-item', pitchValue);
+                }
             }
             
             // Show/hide save button based on permissions
@@ -1041,18 +1122,16 @@
                 </div>
             `;
             
-            // Reset pitch input and display
-            const pitchInput = document.getElementById('add-song-pitch-input');
-            pitchInput.value = '0';
-            updatePitchDisplay('add-song-pitch-display', 0);
+            // Initialize pitch control
+            const pitchControlContainer = document.getElementById('add-song-pitch-control-container');
+            if (pitchControlContainer) {
+                pitchControlContainer.innerHTML = createPitchControlHTML('add-song', 0);
+            }
             
             // Show modal
             const modal = document.getElementById('add-song-modal');
             modal.classList.remove('hidden');
             modal.style.display = 'flex';
-            
-            // Focus pitch input (optional, but helpful)
-            setTimeout(() => pitchInput.focus(), 100);
         }
         
         // Cancel adding song
@@ -1142,6 +1221,8 @@
                 
                 if (currentQueue.length === 0) {
                     queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
+                    // Hide user song notifications when queue is empty
+                    updateMySongUI(null, statusData, currentQueue);
                     return;
                 }
                 
@@ -1164,8 +1245,167 @@
                     
                     queueDiv.appendChild(div);
                 });
+                
+                // Update user song UI (notification and controls)
+                updateMySongUI(currentSongId, statusData, currentQueue);
             } catch (e) {
                 console.error('Error loading queue:', e);
+            }
+        }
+        
+        // Update UI for user's song (notification and live controls)
+        function updateMySongUI(currentSongId, statusData, queue) {
+            if (!userName) {
+                // Hide my-song-screen if no user name
+                const mySongScreen = document.getElementById('my-song-screen');
+                const mainContent = document.getElementById('main-content');
+                if (mySongScreen) mySongScreen.classList.remove('active');
+                if (mainContent) mainContent.classList.remove('hidden');
+                return;
+            }
+            
+            const notificationDiv = document.getElementById('my-song-notification');
+            const mySongScreen = document.getElementById('my-song-screen');
+            const mainContent = document.getElementById('main-content');
+            
+            // Check if user's song is currently playing
+            const currentSong = statusData.current_song;
+            const isMySongPlaying = currentSong && currentSong.user_name === userName;
+            
+            if (isMySongPlaying) {
+                // Hide main content (search + queue), show distinct my-song screen
+                if (mainContent) {
+                    mainContent.classList.add('hidden');
+                }
+                if (notificationDiv) {
+                    notificationDiv.classList.add('hidden');
+                }
+                if (mySongScreen) {
+                    mySongScreen.classList.add('active');
+                    // Update song title
+                    document.getElementById('my-song-screen-title').textContent = currentSong.title;
+                    
+                    // Create/update pitch control
+                    const pitchControlDiv = document.getElementById('my-song-screen-pitch-control');
+                    const currentPitch = currentSong.pitch_semitones || 0;
+                    
+                    if (pitchControlDiv && !pitchControlDiv.querySelector('.pitch-control')) {
+                        // Create pitch control if it doesn't exist
+                        pitchControlDiv.innerHTML = createPitchControlHTML('my-song-screen', currentPitch, 32);
+                    } else if (pitchControlDiv) {
+                        // Update existing pitch control
+                        updatePitchDisplay('my-song-screen-pitch-display', currentPitch, 32);
+                        const input = document.getElementById('my-song-screen-pitch-input');
+                        if (input) input.value = currentPitch;
+                        updatePitchButtons('my-song-screen', currentPitch);
+                    }
+                }
+                return;
+            }
+            
+            // Not playing user's song - show main content, hide my-song screen
+            if (mainContent) {
+                mainContent.classList.remove('hidden');
+            }
+            if (mySongScreen) {
+                mySongScreen.classList.remove('active');
+            }
+            
+            // Check if user's song is coming up soon (within next 2 songs)
+            // Get all ready songs that haven't been played, excluding the currently playing one
+            const readySongs = queue.filter(item => 
+                item.download_status === 'ready' && 
+                !item.played_at &&
+                item.id !== currentSongId
+            );
+            
+            // Sort by position to maintain queue order
+            readySongs.sort((a, b) => (a.position || 0) - (b.position || 0));
+            
+            // Find user's songs in the ready queue
+            const mySongs = readySongs.filter(item => item.user_name === userName);
+            
+            if (mySongs.length > 0) {
+                // Find the position of the first user song in the ready queue
+                const firstMySong = mySongs[0];
+                const firstMySongIndex = readySongs.findIndex(item => item.id === firstMySong.id);
+                
+                // Show notification if user's song is within next 2 songs (index 0 = next, index 1 = after next)
+                if (firstMySongIndex >= 0 && firstMySongIndex < 2) {
+                    const songsAhead = firstMySongIndex;
+                    let notificationText = '';
+                    if (songsAhead === 0) {
+                        notificationText = `"${firstMySong.title}" is next!`;
+                    } else if (songsAhead === 1) {
+                        notificationText = `"${firstMySong.title}" is coming up in 1 song!`;
+                    }
+                    
+                    if (notificationDiv && notificationText) {
+                        document.getElementById('my-song-notification-text').textContent = notificationText;
+                        notificationDiv.classList.remove('hidden');
+                    }
+                } else {
+                    if (notificationDiv) {
+                        notificationDiv.classList.add('hidden');
+                    }
+                }
+            } else {
+                if (notificationDiv) {
+                    notificationDiv.classList.add('hidden');
+                }
+            }
+            
+        }
+        
+        // Adjust pitch for user's own song (immediate effect) - uses 'my-song-screen' prefix
+        async function adjustMySongPitch(delta) {
+            if (!userName) {
+                alert('Please set your name first');
+                return;
+            }
+            
+            // Get current pitch from input
+            const input = document.getElementById('my-song-screen-pitch-input');
+            if (!input) return;
+            
+            let currentValue = parseInt(input.value) || 0;
+            let newValue = currentValue + delta;
+            
+            // Clamp to -12 to +12 range
+            newValue = Math.max(-12, Math.min(12, newValue));
+            
+            // Update display immediately for responsive UI
+            updatePitchDisplay('my-song-screen-pitch-display', newValue, 32);
+            input.value = newValue;
+            updatePitchButtons('my-song-screen', newValue);
+            
+            // Apply pitch change immediately via API
+            try {
+                const response = await fetch('/api/playback/pitch/my-song', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        semitones: newValue,
+                        user_name: userName
+                    })
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    console.error('Error setting pitch:', error);
+                    // Revert display on error
+                    updatePitchDisplay('my-song-screen-pitch-display', currentValue, 32);
+                    input.value = currentValue;
+                    updatePitchButtons('my-song-screen', currentValue);
+                    alert('Error adjusting pitch: ' + (error.detail || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Error setting pitch:', e);
+                // Revert display on error
+                updatePitchDisplay('my-song-screen-pitch-display', currentValue, 32);
+                input.value = currentValue;
+                updatePitchButtons('my-song-screen', currentValue);
+                alert('Error adjusting pitch');
             }
         }
         
@@ -1225,14 +1465,20 @@
             }
         }
         
-        // Set pitch
+        // Set pitch (operator only)
         async function setPitch() {
             if (!isOperator) {
                 alert('Operator authentication required');
                 return;
             }
             
-            const semitones = parseInt(document.getElementById('pitch-input').value);
+            const input = document.getElementById('operator-pitch-input');
+            if (!input) {
+                alert('Pitch control not initialized');
+                return;
+            }
+            
+            const semitones = parseInt(input.value) || 0;
             try {
                 const response = await fetch('/api/playback/pitch', {
                     method: 'POST',

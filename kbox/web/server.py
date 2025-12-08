@@ -39,6 +39,11 @@ class PitchRequest(BaseModel):
     semitones: int
 
 
+class MySongPitchRequest(BaseModel):
+    semitones: int
+    user_name: str
+
+
 class UpdateQueueItemRequest(BaseModel):
     """Request model for updating queue item properties."""
 
@@ -408,6 +413,36 @@ def create_app(
         else:
             raise HTTPException(
                 status_code=400, detail="No current song or failed to update"
+            )
+
+    @app.post("/api/playback/pitch/my-song")
+    async def set_my_song_pitch(
+        request_data: MySongPitchRequest,
+        playback: PlaybackController = Depends(get_playback_controller),
+    ):
+        """
+        Set pitch adjustment for current song if it belongs to the requesting user.
+        No operator authentication required - users can adjust their own song's pitch.
+        """
+        status = playback.get_status()
+        current_song = status.get("current_song")
+        
+        if not current_song:
+            raise HTTPException(
+                status_code=400, detail="No song is currently playing"
+            )
+        
+        # Verify the song belongs to the requesting user
+        if current_song.get("user_name") != request_data.user_name:
+            raise HTTPException(
+                status_code=403, detail="You can only adjust pitch for your own song"
+            )
+        
+        if playback.set_pitch(request_data.semitones):
+            return {"status": "updated", "pitch": request_data.semitones}
+        else:
+            raise HTTPException(
+                status_code=400, detail="Failed to update pitch"
             )
 
     # Authentication endpoints
