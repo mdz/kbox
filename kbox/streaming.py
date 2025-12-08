@@ -25,15 +25,19 @@ def _get_gst():
         raise
 
 class StreamingController:
-    def __init__(self, config, server):
+    def __init__(self, config, server, config_manager=None):
         self.config = config
         self.server = server
+        self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
         self.pipeline = None
         self.mode = 'passthrough'  # 'passthrough' or 'youtube'
         self.current_file = None
         self.eos_callback = None  # Callback for end-of-stream
+        # Audio mixing elements (stored for volume control)
+        self.mic_volume_element = None
+        self.youtube_volume_element = None
         # Initialize GStreamer but defer pipeline creation until needed
         # On macOS, GStreamer init can hang/crash, so we'll initialize lazily
         self._gst_initialized = False
@@ -216,6 +220,82 @@ class StreamingController:
                     self.logger.warning('Pitch shift element not found in pipeline - may not be supported')
             except Exception as e:
                 self.logger.warning('Could not update pitch shift: %s', e)
+    
+    def set_mic_volume(self, volume: float):
+        """
+        Set microphone input volume.
+        
+        Args:
+            volume: Volume level (0.0 to 1.0)
+        """
+        if volume < 0.0 or volume > 1.0:
+            self.logger.warning('Mic volume out of range: %s (clamping to 0.0-1.0)', volume)
+            volume = max(0.0, min(1.0, volume))
+        
+        self.logger.info('Setting mic volume to %s', volume)
+        
+        # Update stored element if available
+        if self.mic_volume_element:
+            try:
+                self.mic_volume_element.set_property('volume', volume)
+                self.logger.info('Mic volume updated in pipeline')
+            except Exception as e:
+                self.logger.warning('Could not update mic volume: %s', e)
+        else:
+            # Try to get from pipeline
+            if self.pipeline:
+                try:
+                    mic_volume = self.pipeline.get_by_name('mic_volume')
+                    if mic_volume:
+                        mic_volume.set_property('volume', volume)
+                        self.mic_volume_element = mic_volume
+                        self.logger.info('Mic volume updated in pipeline')
+                    else:
+                        self.logger.warning('Mic volume element not found in pipeline')
+                except Exception as e:
+                    self.logger.warning('Could not update mic volume: %s', e)
+        
+        # Update config if config_manager is available
+        if self.config_manager:
+            self.config_manager.set('default_mic_volume', str(volume))
+    
+    def set_youtube_volume(self, volume: float):
+        """
+        Set YouTube audio volume.
+        
+        Args:
+            volume: Volume level (0.0 to 1.0)
+        """
+        if volume < 0.0 or volume > 1.0:
+            self.logger.warning('YouTube volume out of range: %s (clamping to 0.0-1.0)', volume)
+            volume = max(0.0, min(1.0, volume))
+        
+        self.logger.info('Setting YouTube volume to %s', volume)
+        
+        # Update stored element if available
+        if self.youtube_volume_element:
+            try:
+                self.youtube_volume_element.set_property('volume', volume)
+                self.logger.info('YouTube volume updated in pipeline')
+            except Exception as e:
+                self.logger.warning('Could not update YouTube volume: %s', e)
+        else:
+            # Try to get from pipeline
+            if self.pipeline:
+                try:
+                    youtube_volume = self.pipeline.get_by_name('youtube_volume')
+                    if youtube_volume:
+                        youtube_volume.set_property('volume', volume)
+                        self.youtube_volume_element = youtube_volume
+                        self.logger.info('YouTube volume updated in pipeline')
+                    else:
+                        self.logger.warning('YouTube volume element not found in pipeline')
+                except Exception as e:
+                    self.logger.warning('Could not update YouTube volume: %s', e)
+        
+        # Update config if config_manager is available
+        if self.config_manager:
+            self.config_manager.set('default_youtube_volume', str(volume))
 
     def run(self):
         """Run the streaming controller (start pipeline if not already started)."""
@@ -315,7 +395,7 @@ class StreamingController:
             raise
     
     def _create_youtube_pipeline(self, filepath: str):
-        """Create pipeline for YouTube file playback."""
+        """Create pipeline for YouTube file playback with optional audio mixing."""
         self._ensure_gst_initialized()
         
         # On macOS, we can now use the full pipeline with pitch shifting support
@@ -327,6 +407,17 @@ class StreamingController:
         Gst = _get_gst()
         pipeline = Gst.Pipeline.new('YouTubePlayback')
         
+        # Get audio input source configuration
+        # Audio mixing is OFF by default - must be explicitly enabled via configuration
+        audio_input_source = None
+        audio_input_device = None
+        if self.config_manager:
+            audio_input_source = self.config_manager.get('audio_input_source')
+            audio_input_device = self.config_manager.get('audio_input_source_device')
+        
+        # Only enable mixing if explicitly configured (not None and not empty string)
+        use_audio_mixing = audio_input_source is not None and audio_input_source != ''
+        
         # File source
         filesrc = self.make_element('filesrc', 'filesrc')
         filesrc.set_property('location', filepath)
@@ -336,9 +427,19 @@ class StreamingController:
         decodebin = self.make_element('decodebin', 'decodebin')
         pipeline.add(decodebin)
         
-        # Audio pipeline
-        audioconvert_input = self.make_element('audioconvert', 'audioconvert_input')
-        pipeline.add(audioconvert_input)
+        # YouTube audio pipeline
+        youtube_audioconvert_input = self.make_element('audioconvert', 'youtube_audioconvert_input')
+        pipeline.add(youtube_audioconvert_input)
+        
+        # YouTube volume control
+        youtube_volume = self.make_element('volume', 'youtube_volume')
+        if self.config_manager:
+            default_youtube_volume = self.config_manager.get_float('default_youtube_volume', 0.8)
+            youtube_volume.set_property('volume', default_youtube_volume)
+        else:
+            youtube_volume.set_property('volume', 0.8)
+        pipeline.add(youtube_volume)
+        self.youtube_volume_element = youtube_volume
         
         # Try to add pitch shift, but make it optional
         use_pitch_shift = False
@@ -368,14 +469,171 @@ class StreamingController:
         except Exception as e:
             self.logger.warning('Could not create pitch shift element: %s. Continuing without pitch shift.', e)
         
-        audioconvert_output = self.make_element('audioconvert', 'audioconvert_output')
-        pipeline.add(audioconvert_output)
+        youtube_audioconvert_output = self.make_element('audioconvert', 'youtube_audioconvert_output')
+        pipeline.add(youtube_audioconvert_output)
         
-        # Audio sink - use autoaudiosink which auto-detects
-        audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
-        if self.config.audio_output:
-            self.set_device(audio_sink, self.config.audio_output)
-        pipeline.add(audio_sink)
+        # Audio mixing setup
+        if use_audio_mixing:
+            self.logger.info('Audio mixing enabled with source: %s', audio_input_source)
+            
+            # Microphone input source with low latency settings
+            mic_source = self.make_element(audio_input_source, 'mic_source')
+            if audio_input_device:
+                self.set_device(mic_source, audio_input_device)
+            
+            # Configure low latency for audio source
+            # Get latency from config (default 10ms)
+            latency_ms = 10
+            if self.config_manager:
+                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+            
+            # Convert to appropriate units for each platform
+            if sys.platform == 'darwin':
+                # osxaudiosrc: buffer-time property (in nanoseconds)
+                buffer_time_ns = latency_ms * 1000000  # Convert ms to nanoseconds
+                try:
+                    mic_source.set_property('buffer-time', buffer_time_ns)
+                    self.logger.info('Set mic source buffer-time to %dms (%d ns)', latency_ms, buffer_time_ns)
+                except Exception as e:
+                    self.logger.warning('Could not set buffer-time on mic source: %s', e)
+            elif sys.platform == 'linux':
+                # alsasrc: buffer-time and latency-time (in microseconds)
+                buffer_time_us = latency_ms * 1000  # Convert ms to microseconds
+                try:
+                    mic_source.set_property('buffer-time', buffer_time_us)
+                    mic_source.set_property('latency-time', buffer_time_us)
+                    self.logger.info('Set mic source buffer-time and latency-time to %dms (%d us)', latency_ms, buffer_time_us)
+                except Exception as e:
+                    self.logger.warning('Could not set low latency properties on mic source: %s', e)
+            
+            pipeline.add(mic_source)
+            
+            # Mic audio pipeline
+            mic_audioconvert = self.make_element('audioconvert', 'mic_audioconvert')
+            pipeline.add(mic_audioconvert)
+            
+            # Mic volume control
+            mic_volume = self.make_element('volume', 'mic_volume')
+            if self.config_manager:
+                default_mic_volume = self.config_manager.get_float('default_mic_volume', 0.8)
+                mic_volume.set_property('volume', default_mic_volume)
+            else:
+                mic_volume.set_property('volume', 0.8)
+            pipeline.add(mic_volume)
+            self.mic_volume_element = mic_volume
+            
+            # Audio mixer with low latency configuration
+            audiomixer = self.make_element('audiomixer', 'audiomixer')
+            # Set low latency: Get from config (default 10ms)
+            # This controls how much the mixer buffers before outputting
+            latency_ms = 10
+            if self.config_manager:
+                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+            latency_ns = latency_ms * 1000000  # Convert ms to nanoseconds
+            try:
+                audiomixer.set_property('latency', latency_ns)
+                self.logger.info('Set audiomixer latency to %dms (%d ns) for low latency', latency_ms, latency_ns)
+            except Exception as e:
+                self.logger.warning('Could not set latency property on audiomixer: %s', e)
+            pipeline.add(audiomixer)
+            
+            # Final audio conversion and sink
+            mixer_audioconvert = self.make_element('audioconvert', 'mixer_audioconvert')
+            pipeline.add(mixer_audioconvert)
+            
+            # Audio sink - use autoaudiosink which auto-detects
+            audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
+            if self.config.audio_output:
+                self.set_device(audio_sink, self.config.audio_output)
+            
+            # Configure low latency for audio sink (mixing mode)
+            latency_ms = 10
+            if self.config_manager:
+                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+            try:
+                if sys.platform == 'darwin':
+                    buffer_time_ns = latency_ms * 1000000
+                    audio_sink.set_property('buffer-time', buffer_time_ns)
+                elif sys.platform == 'linux':
+                    buffer_time_us = latency_ms * 1000
+                    audio_sink.set_property('buffer-time', buffer_time_us)
+                    audio_sink.set_property('latency-time', buffer_time_us)
+                self.logger.info('Set audio sink latency to %dms', latency_ms)
+            except Exception as e:
+                self.logger.warning('Could not set low latency properties on audio sink: %s', e)
+            
+            pipeline.add(audio_sink)
+            
+            # Link mic pipeline
+            mic_source.link(mic_audioconvert)
+            mic_audioconvert.link(mic_volume)
+            
+            # Link YouTube audio pipeline - handle optional pitch shift
+            if use_pitch_shift and pitch_shift:
+                youtube_audioconvert_input.link(youtube_volume)
+                youtube_volume.link(pitch_shift)
+                pitch_shift.link(youtube_audioconvert_output)
+            else:
+                youtube_audioconvert_input.link(youtube_volume)
+                youtube_volume.link(youtube_audioconvert_output)
+            
+            # Request mixer sink pads and link
+            # audiomixer creates sink pads on demand via get_request_pad
+            # We'll request two sink pads for mic and YouTube
+            mic_sink_pad = audiomixer.get_request_pad('sink_%u')
+            youtube_sink_pad = audiomixer.get_request_pad('sink_%u')
+            
+            self.logger.debug('Requested mixer sink pads: mic=%s, youtube=%s', 
+                            mic_sink_pad.get_name(), youtube_sink_pad.get_name())
+            
+            # Link mic to mixer sink pad
+            mic_volume_pad = mic_volume.get_static_pad('src')
+            mic_volume_pad.link(mic_sink_pad)
+            
+            # Link YouTube to mixer sink pad
+            youtube_output_pad = youtube_audioconvert_output.get_static_pad('src')
+            youtube_output_pad.link(youtube_sink_pad)
+            
+            # Link mixer output
+            mixer_src_pad = audiomixer.get_static_pad('src')
+            mixer_src_pad.link(mixer_audioconvert.get_static_pad('sink'))
+            mixer_audioconvert.link(audio_sink)
+        else:
+            self.logger.info('Audio mixing disabled - YouTube audio only')
+            # No mixing - direct YouTube audio output
+            # Link static parts - handle optional pitch shift
+            if use_pitch_shift and pitch_shift:
+                youtube_audioconvert_input.link(youtube_volume)
+                youtube_volume.link(pitch_shift)
+                pitch_shift.link(youtube_audioconvert_output)
+            else:
+                youtube_audioconvert_input.link(youtube_volume)
+                youtube_volume.link(youtube_audioconvert_output)
+            
+            # Audio sink - use autoaudiosink which auto-detects
+            audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
+            if self.config.audio_output:
+                self.set_device(audio_sink, self.config.audio_output)
+            
+            # Configure low latency for audio sink (YouTube-only mode)
+            latency_ms = 10
+            if self.config_manager:
+                latency_ms = self.config_manager.get_int('audio_latency_ms', 10)
+            try:
+                if sys.platform == 'darwin':
+                    buffer_time_ns = latency_ms * 1000000
+                    audio_sink.set_property('buffer-time', buffer_time_ns)
+                elif sys.platform == 'linux':
+                    buffer_time_us = latency_ms * 1000
+                    audio_sink.set_property('buffer-time', buffer_time_us)
+                    audio_sink.set_property('latency-time', buffer_time_us)
+                self.logger.info('Set audio sink latency to %dms', latency_ms)
+            except Exception as e:
+                self.logger.warning('Could not set low latency properties on audio sink: %s', e)
+            
+            pipeline.add(audio_sink)
+            
+            youtube_audioconvert_output.link(audio_sink)
         
         # Video pipeline
         videoconvert = self.make_element('videoconvert', 'videoconvert')
@@ -399,14 +657,7 @@ class StreamingController:
                     video_sink = self.make_element('fakesink', 'video_sink')
         pipeline.add(video_sink)
         
-        # Link static parts - handle optional pitch shift
-        if use_pitch_shift and pitch_shift:
-            audioconvert_input.link(pitch_shift)
-            pitch_shift.link(audioconvert_output)
-        else:
-            audioconvert_input.link(audioconvert_output)
-        audioconvert_output.link(audio_sink)
-        
+        # Link video pipeline
         videoconvert.link(videoscale)
         videoscale.link(video_sink)
         
@@ -417,7 +668,8 @@ class StreamingController:
             self.logger.debug('Decodebin pad added: %s', caps_string)
             
             if caps_string.startswith('audio/'):
-                pad.link(audioconvert_input.get_static_pad('sink'))
+                # Link to YouTube audio input converter
+                pad.link(youtube_audioconvert_input.get_static_pad('sink'))
             elif caps_string.startswith('video/'):
                 pad.link(videoconvert.get_static_pad('sink'))
         

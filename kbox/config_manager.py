@@ -23,6 +23,9 @@ class ConfigManager:
         'default_youtube_volume': '0.8',
         'default_reverb_amount': '0.3',
         'reverb_plugin': None,  # Will be determined at runtime
+        'audio_input_source': None,  # GStreamer source type (e.g., 'alsasrc', 'osxaudiosrc', 'pulsesrc')
+        'audio_input_source_device': None,  # Device string for audio input source
+        'audio_latency_ms': '10',  # Target audio latency in milliseconds (lower = less latency but more CPU)
     }
     
     def __init__(self, database: Database):
