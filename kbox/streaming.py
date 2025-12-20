@@ -379,7 +379,9 @@ class StreamingController:
         use_pitch_shift = False
         pitch_shift = None
         try:
-            pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
+            rubberband_plugin = self.config_manager.get('rubberband_plugin')
+            if rubberband_plugin:
+                pitch_shift = self.make_element(rubberband_plugin, 'pitch_shift')
             if pitch_shift:
                 # Check if this is actually a pitch shift element (not an identity fallback)
                 element_type = type(pitch_shift).__name__
