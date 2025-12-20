@@ -4,4 +4,14 @@ services:
     build: .
     devices:
       - "/dev/snd:/dev/snd"
+      - "/dev/dri:/dev/dri"  # For KMS video
+    ports:
+      - "8000:8000"
+    volumes:
+      - kbox-data:/root/.kbox  # Persist database and config
+      - kbox-cache:/root/.cache/kbox  # Persist downloads
     restart: unless-stopped
+
+volumes:
+  kbox-cache:
+  kbox-data:

@@ -100,12 +100,7 @@ class PlaybackController:
                                     QueueManager.STATUS_READY,
                                     download_path=str(download_path)
                                 )
-                                # Trigger auto-play if idle
-                                if self.state == PlaybackState.IDLE:
-                                    next_song = self.queue_manager.get_next_song()
-                                    if next_song and next_song['id'] == item['id']:
-                                        self.logger.info('Next song ready, auto-starting playback')
-                                        self.play()
+                                # Note: Playback will start when operator presses play button
                             else:
                                 # Check if download has been stuck for too long
                                 # Parse created_at timestamp
@@ -211,13 +206,7 @@ class PlaybackController:
                 download_path=path
             )
             self.logger.info('Download complete for queue item %s: %s', item_id, path)
-            
-            # If we're idle and this is the next song, auto-start playback
-            if self.state == PlaybackState.IDLE:
-                next_song = self.queue_manager.get_next_song()
-                if next_song and next_song['id'] == item_id:
-                    self.logger.info('Next song ready, auto-starting playback')
-                    self.play()
+            # Note: Playback will start when operator presses play button
         elif status == 'error' and error:
             self.queue_manager.update_download_status(
                 item_id,
