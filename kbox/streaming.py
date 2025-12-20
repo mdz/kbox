@@ -444,11 +444,18 @@ class StreamingController:
         def on_pad_added(element, pad):
             caps = pad.query_caps(None)
             caps_string = caps.to_string()
-            self.logger.debug('Decodebin pad added: %s', caps_string)
+            self.logger.info('Decodebin pad added: %s', caps_string)
             
             if caps_string.startswith('audio/'):
-                pad.link(audioconvert_input.get_static_pad('sink'))
+                self.logger.info('Linking audio pad to audioconvert_input')
+                sink_pad = audioconvert_input.get_static_pad('sink')
+                ret = pad.link(sink_pad)
+                if ret == Gst.PadLinkReturn.OK:
+                    self.logger.info('Audio pad linked successfully')
+                else:
+                    self.logger.error('Failed to link audio pad: %s', ret)
             elif caps_string.startswith('video/'):
+                self.logger.info('Linking video pad to videoconvert')
                 pad.link(videoconvert.get_static_pad('sink'))
         
         decodebin.connect('pad-added', on_pad_added)
