@@ -25,8 +25,8 @@ def _get_gst():
         raise
 
 class StreamingController:
-    def __init__(self, config, server):
-        self.config = config
+    def __init__(self, config_manager, server):
+        self.config_manager = config_manager
         self.server = server
         self.logger = logging.getLogger(__name__)
         self.pitch_shift_semitones = 0
