@@ -87,9 +87,11 @@ class StreamingController:
         Gst = _get_gst()
         pipeline = Gst.Pipeline.new('StreamingController')
 
-        self.logger.info('Creating source element: %s', self.config.GSTREAMER_SOURCE)
-        source = self.make_element(self.config.GSTREAMER_SOURCE, 'source')
-        self.set_device(source, self.config.video_input)
+        gstreamer_source = self.config_manager.get('gstreamer_source')
+        self.logger.info('Creating source element: %s', gstreamer_source)
+        source = self.make_element(gstreamer_source, 'source')
+        video_input = self.config_manager.get('video_input_device')
+        self.set_device(source, video_input)
         pipeline.add(source)
 
         #video_demux = self.make_element('matroskademux', 'demux')
@@ -106,7 +108,9 @@ class StreamingController:
         use_pitch_shift = False
         pitch_shift = None
         try:
-            pitch_shift = self.make_element(self.config.RUBBERBAND_PLUGIN, 'pitch_shift')
+            rubberband_plugin = self.config_manager.get('rubberband_plugin')
+            if rubberband_plugin:
+                pitch_shift = self.make_element(rubberband_plugin, 'pitch_shift')
             if pitch_shift:
                 # Check if this is actually a pitch shift element (not an identity fallback)
                 element_type = type(pitch_shift).__name__
