@@ -5,17 +5,53 @@ Provides access to configuration values with defaults and type conversion.
 """
 
 import logging
+import sys
 from typing import Any, Optional
 from .database import Database
 
 class ConfigManager:
     """Manages configuration stored in database."""
     
-    # Default configuration values
+    @staticmethod
+    def _get_platform_defaults():
+        """Get platform-specific default values."""
+        if sys.platform == 'darwin':
+            return {
+                'gstreamer_source': 'osxaudiosrc',
+                'gstreamer_sink': 'autoaudiosink',
+                'rubberband_plugin': 'ladspa-ladspa-rubberband-dylib-rubberband-r3-pitchshifter-stereo',
+                'audio_input_device': None,
+                'audio_output_device': None,
+                'video_input_device': None,
+            }
+        elif sys.platform == 'linux':
+            return {
+                'gstreamer_source': 'alsasrc',
+                'gstreamer_sink': 'alsasink',
+                'rubberband_plugin': 'ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo',
+                'audio_input_device': 'plughw:CARD=CODEC,DEV=0',
+                'audio_output_device': 'plughw:CARD=CODEC,DEV=0',
+                'video_input_device': None,
+            }
+        else:
+            # Fallback for other platforms
+            return {
+                'gstreamer_source': 'autoaudiosrc',
+                'gstreamer_sink': 'autoaudiosink',
+                'rubberband_plugin': None,
+                'audio_input_device': None,
+                'audio_output_device': None,
+                'video_input_device': None,
+            }
+    
+    # Default configuration values (merged with platform-specific)
     DEFAULTS = {
-        'audio_input_device': None,  # Platform-specific
-        'audio_output_device': None,  # Platform-specific
-        'video_input_device': None,  # Platform-specific
+        'audio_input_device': None,  # Overridden by platform defaults
+        'audio_output_device': None,  # Overridden by platform defaults
+        'video_input_device': None,  # Overridden by platform defaults
+        'gstreamer_source': None,  # Overridden by platform defaults
+        'gstreamer_sink': None,  # Overridden by platform defaults
+        'rubberband_plugin': None,  # Overridden by platform defaults
         'youtube_api_key': None,
         'cache_directory': None,  # Will default to ~/.kbox/cache
         'operator_pin': '1234',
@@ -34,6 +70,9 @@ class ConfigManager:
         """
         self.database = database
         self.logger = logging.getLogger(__name__)
+        # Merge platform-specific defaults
+        platform_defaults = self._get_platform_defaults()
+        self._merged_defaults = {**self.DEFAULTS, **platform_defaults}
         self._initialize_defaults()
     
     def _initialize_defaults(self):
@@ -42,7 +81,7 @@ class ConfigManager:
         try:
             cursor = conn.cursor()
             
-            for key, value in self.DEFAULTS.items():
+            for key, value in self._merged_defaults.items():
                 cursor.execute('SELECT key FROM config WHERE key = ?', (key,))
                 if not cursor.fetchone():
                     cursor.execute('''
@@ -61,13 +100,13 @@ class ConfigManager:
         
         Args:
             key: Configuration key
-            default: Default value if not found (uses DEFAULTS if None)
+            default: Default value if not found (uses merged defaults if None)
         
         Returns:
             Configuration value as string, or None if not found
         """
         if default is None:
-            default = self.DEFAULTS.get(key)
+            default = self._merged_defaults.get(key)
         
         conn = self.database.get_connection()
         try:
@@ -157,7 +196,7 @@ class ConfigManager:
                 config[row['key']] = row['value']
             
             # Merge with defaults to ensure all keys are present
-            result = self.DEFAULTS.copy()
+            result = self._merged_defaults.copy()
             result.update(config)
             return result
         finally:
