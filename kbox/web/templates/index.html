@@ -918,6 +918,9 @@
                 toggleButton.classList.add('active');
                 toggleButton.title = 'Close Playback Controls';
                 
+                // Refresh queue to ensure current state is displayed
+                loadQueue();
+                
                 // Initialize operator song settings if not already initialized
                 const settingsContainer = document.getElementById('operator-song-settings-container');
                 if (settingsContainer && !settingsContainer.querySelector('.pitch-control')) {
