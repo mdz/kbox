@@ -329,15 +329,53 @@ class PlaybackController:
                 self.logger.error('Error pausing playback: %s', e, exc_info=True)
                 return False
     
+    def stop_playback(self) -> bool:
+        """
+        Stop current playback and return to idle state.
+        Unlike skip(), this does not try to load the next song.
+        
+        Returns:
+            True if stopped, False otherwise
+        """
+        with self.lock:
+            if not self.current_song and self.state == PlaybackState.IDLE:
+                self.logger.debug('Already idle, nothing to stop')
+                return False
+            
+            self.logger.info('Stopping playback')
+            try:
+                if self.current_song:
+                    self.streaming_controller.stop_playback()
+                self.current_song = None
+                self.state = PlaybackState.IDLE
+                return True
+            except Exception as e:
+                self.logger.error('Error stopping playback: %s', e, exc_info=True)
+                return False
+    
     def skip(self) -> bool:
         """
         Skip to next song.
         
         Returns:
-            True if skipped, False otherwise
+            True if skipped, False if no next song available
         """
         with self.lock:
             self.logger.info('Skipping current song')
+            
+            # Check if there's a next song before stopping current one
+            queue = self.queue_manager.get_queue()
+            ready_songs = [item for item in queue 
+                          if item['download_status'] == QueueManager.STATUS_READY 
+                          and not item.get('played_at')]  # Not yet played
+            
+            # Exclude current song if it exists
+            if self.current_song:
+                ready_songs = [item for item in ready_songs if item['id'] != self.current_song['id']]
+            
+            if not ready_songs:
+                self.logger.info('No next song available to skip to')
+                return False
             
             # Record playback history before skipping (to save pitch settings)
             if self.current_song:
@@ -364,7 +402,7 @@ class PlaybackController:
                 # Mark as played
                 self.queue_manager.mark_played(self.current_song['id'])
                 
-                self.streaming_controller.stop()
+                self.streaming_controller.stop_playback()
                 # Don't clear playback position - user might want to resume later
                 # Position will only be cleared when song completes (EOS) or is explicitly reset
             
@@ -398,7 +436,7 @@ class PlaybackController:
             
             # Stop current playback
             if self.current_song:
-                self.streaming_controller.stop()
+                self.streaming_controller.stop_playback()
             
             # Mark all songs before this one as played (so they don't play again)
             queue = self.queue_manager.get_queue()
@@ -425,6 +463,12 @@ class PlaybackController:
                 
                 # Load file into streaming controller
                 self.streaming_controller.load_file(download_path)
+                
+                # Seek to resume position if provided
+                if resume_position and resume_position > 0:
+                    self.logger.info('Resuming playback at position: %s seconds', resume_position)
+                    if not self.streaming_controller.seek(resume_position):
+                        self.logger.warning('Failed to seek to resume position')
                 
                 # Mark as current song
                 self.current_song = song
@@ -556,9 +600,9 @@ class PlaybackController:
             self.logger.info('Set pitch to %s semitones for current song', semitones)
             return True
     
-    def stop(self):
-        """Stop playback and cleanup."""
-        self.logger.info('Stopping playback controller')
+    def shutdown(self):
+        """Shutdown the playback controller and cleanup all resources."""
+        self.logger.info('Shutting down playback controller')
         self._monitoring = False
         self._tracking_position = False
         
@@ -578,5 +622,5 @@ class PlaybackController:
         if self.streaming_controller:
             self.streaming_controller.stop()
         
-        self.logger.info('Playback controller stopped')
+        self.logger.info('Playback controller shut down')
 

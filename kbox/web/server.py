@@ -367,6 +367,22 @@ def create_app(
         else:
             raise HTTPException(status_code=400, detail="Failed to pause")
 
+    @app.post("/api/playback/stop")
+    async def stop(
+        playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator),
+    ):
+        """Stop playback and return to idle (operator only)."""
+        if not is_operator:
+            raise HTTPException(
+                status_code=403, detail="Operator authentication required"
+            )
+
+        if playback.stop_playback():
+            return {"status": "stopped"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to stop")
+
     @app.post("/api/playback/skip")
     async def skip(
         playback: PlaybackController = Depends(get_playback_controller),
@@ -381,7 +397,25 @@ def create_app(
         if playback.skip():
             return {"status": "skipped"}
         else:
-            raise HTTPException(status_code=400, detail="Failed to skip")
+            # Return 200 with warning instead of error - no next song available
+            return {"status": "no_next_song", "message": "No next song in queue to skip to"}
+
+    @app.post("/api/playback/previous")
+    async def previous(
+        playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator),
+    ):
+        """Go to previous song (operator only)."""
+        if not is_operator:
+            raise HTTPException(
+                status_code=403, detail="Operator authentication required"
+            )
+
+        if playback.previous():
+            return {"status": "previous"}
+        else:
+            # Return 200 with warning instead of error - no previous song available
+            return {"status": "no_previous_song", "message": "Previous song not available"}
 
     @app.post("/api/playback/jump/{item_id}")
     async def jump_to_song(

@@ -60,7 +60,10 @@ class KboxServer:
         )
 
         # StreamingController uses ConfigManager for configuration
-        self.streaming_controller = StreamingController(self.config_manager, self)
+        # Pass test_mode to use fakesinks for testing
+        self.streaming_controller = StreamingController(
+            self.config_manager, self, test_mode=test_mode
+        )
 
         # PlaybackController
         self.playback_controller = PlaybackController(
@@ -134,7 +137,7 @@ class KboxServer:
             self.server_thread.join(timeout=2.0)
 
         if self.playback_controller:
-            self.playback_controller.stop()
+            self.playback_controller.shutdown()
 
         if self.streaming_controller:
             self.streaming_controller.stop()

@@ -31,6 +31,7 @@ def mock_streaming_controller():
     controller.pause = Mock()
     controller.resume = Mock()
     controller.stop = Mock()
+    controller.stop_playback = Mock()  # Returns pipeline to idle without destroying it
     controller.set_eos_callback = Mock()
     controller.get_position = Mock(return_value=0)
     controller.seek = Mock(return_value=True)
@@ -160,7 +161,14 @@ def test_resume(playback_controller, mock_streaming_controller):
 
 def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test skipping to next song."""
-    playback_controller.current_song = {'id': 1}
+    playback_controller.current_song = {
+        'id': 1,
+        'title': 'Current Song',
+        'user_name': 'Alice',
+        'youtube_video_id': 'abc123',
+        'pitch_semitones': 0,
+        'playback_position_seconds': 0
+    }
     playback_controller.state = PlaybackState.PLAYING
     
     mock_next_song = {
@@ -179,22 +187,42 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     result = playback_controller.skip()
     
     assert result is True
-    mock_streaming_controller.stop.assert_called_once()
+    # IMPORTANT: skip() must call stop_playback() (returns to idle) NOT stop() (destroys pipeline)
+    mock_streaming_controller.stop_playback.assert_called_once()
+    mock_streaming_controller.stop.assert_not_called()
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/next.mp4')
     # Skip should NOT clear playback position - it's preserved for potential resume
     mock_queue_manager.update_playback_position.assert_not_called()
 
 
 def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streaming_controller):
-    """Test skip when no next song available."""
-    playback_controller.current_song = {'id': 1}
+    """Test skip when no next song available.
+    
+    When there's no next song, skip() should return False without stopping
+    the current song, so playback continues.
+    """
+    current_song = {
+        'id': 1,
+        'title': 'Current Song',
+        'user_name': 'Alice',
+        'youtube_video_id': 'abc123',
+        'pitch_semitones': 0,
+        'playback_position_seconds': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None
+    }
+    playback_controller.current_song = current_song
     playback_controller.state = PlaybackState.PLAYING
-    mock_queue_manager.get_next_song.return_value = None
+    # Mock get_queue to return only the current song (no next songs)
+    mock_queue_manager.get_queue.return_value = [current_song]
     
     result = playback_controller.skip()
     
     assert result is False
-    assert playback_controller.state == PlaybackState.IDLE
+    # State should remain PLAYING - we don't stop current song if there's no next
+    assert playback_controller.state == PlaybackState.PLAYING
+    # Should not have stopped playback
+    mock_streaming_controller.stop_playback.assert_not_called()
 
 
 def test_set_pitch(playback_controller, mock_queue_manager, mock_streaming_controller):
@@ -221,7 +249,14 @@ def test_set_pitch_no_current_song(playback_controller):
 
 def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test handling end of song."""
-    playback_controller.current_song = {'id': 1, 'title': 'Song 1'}
+    playback_controller.current_song = {
+        'id': 1,
+        'title': 'Song 1',
+        'user_name': 'Alice',
+        'youtube_video_id': 'abc123',
+        'pitch_semitones': 0,
+        'playback_position_seconds': 0
+    }
     playback_controller.state = PlaybackState.PLAYING
     
     mock_next_song = {
@@ -252,7 +287,14 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
 
 def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test end of song when no next song."""
-    playback_controller.current_song = {'id': 1, 'title': 'Song 1'}
+    playback_controller.current_song = {
+        'id': 1,
+        'title': 'Song 1',
+        'user_name': 'Alice',
+        'youtube_video_id': 'abc123',
+        'pitch_semitones': 0,
+        'playback_position_seconds': 0
+    }
     playback_controller.state = PlaybackState.PLAYING
     mock_queue_manager.get_queue.return_value = []
     
@@ -356,5 +398,37 @@ def test_jump_to_song_with_resume(playback_controller, mock_queue_manager,
     # Should seek to resume position
     mock_streaming_controller.seek.assert_called_once_with(30)
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4')
+
+
+def test_jump_to_song_while_playing(playback_controller, mock_queue_manager,
+                                    mock_streaming_controller):
+    """Test jumping to a song while another song is playing.
+    
+    This is a regression test for the bug where jump_to_song called stop()
+    instead of stop_playback(), which destroyed the pipeline.
+    """
+    # Set up current song playing
+    playback_controller.current_song = {'id': 1, 'title': 'Current Song'}
+    playback_controller.state = PlaybackState.PLAYING
+    
+    mock_song = {
+        'id': 2,
+        'title': 'New Song',
+        'user_name': 'Bob',
+        'download_path': '/path/to/new.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 0
+    }
+    mock_queue_manager.get_item.return_value = mock_song
+    
+    result = playback_controller.jump_to_song(2)
+    
+    assert result is True
+    # IMPORTANT: jump_to_song() must call stop_playback() (returns to idle) NOT stop() (destroys pipeline)
+    mock_streaming_controller.stop_playback.assert_called_once()
+    mock_streaming_controller.stop.assert_not_called()
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/new.mp4')
 
 

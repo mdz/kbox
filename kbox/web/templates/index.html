@@ -283,10 +283,16 @@
         }
         
         .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .controls-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 10px;
-            margin-top: 10px;
         }
         
         .operator-panel {
@@ -921,9 +927,9 @@
                 // Refresh queue to ensure current state is displayed
                 loadQueue();
                 
-                // Initialize operator song settings if not already initialized
+                // Always refresh operator song settings when opening
                 const settingsContainer = document.getElementById('operator-song-settings-container');
-                if (settingsContainer && !settingsContainer.querySelector('.pitch-control')) {
+                if (settingsContainer) {
                     // Get current song info from playback status
                     fetch('/api/playback/status')
                         .then(response => response.json())
@@ -1721,6 +1727,20 @@
             }
         }
         
+        // Show/hide buffering indicator
+        function showBufferingIndicator(show) {
+            const settingsContainer = document.getElementById('operator-song-settings-container');
+            if (!settingsContainer) return;
+            
+            if (show) {
+                // Show buffering message
+                settingsContainer.innerHTML = '<div style="text-align: center; color: #4a9eff; padding: 20px; font-size: 18px;">⏳ Starting playback...</div>';
+            } else {
+                // Clear buffering message - loadQueue will refresh the content
+                settingsContainer.innerHTML = '';
+            }
+        }
+        
         // Toggle play/pause
         async function togglePlayPause() {
             if (!isOperator) {
@@ -1736,15 +1756,55 @@
                 
                 // Toggle based on current state
                 const action = (currentState === 'playing') ? 'pause' : 'play';
+                
+                // Show buffering indicator when starting playback
+                if (action === 'play') {
+                    showBufferingIndicator(true);
+                }
+                
                 const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
                 if (!response.ok) {
+                    showBufferingIndicator(false);
                     alert('Error: ' + (await response.json()).detail);
                 } else {
                     // Update button immediately for better UX
                     updatePlayPauseButton(action === 'play' ? 'playing' : 'paused');
+                    
+                    // Hide buffering indicator and refresh queue after a short delay
+                    // to allow playback to start
+                    if (action === 'play') {
+                        setTimeout(() => {
+                            showBufferingIndicator(false);
+                            loadQueue();
+                        }, 500);
+                    } else {
+                        loadQueue();
+                    }
                 }
             } catch (e) {
+                showBufferingIndicator(false);
                 alert('Error controlling playback');
+            }
+        }
+        
+        // Stop playback
+        async function stopPlayback() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/playback/stop', {method: 'POST'});
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                } else {
+                    // Update UI
+                    updatePlayPauseButton('idle');
+                    loadQueue();
+                }
+            } catch (e) {
+                alert('Error stopping playback');
             }
         }
         
@@ -1757,8 +1817,21 @@
             
             try {
                 const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
+                const data = await response.json();
+                
+                // Handle warning responses (no next/previous song)
+                if (data.status === 'no_next_song' || data.status === 'no_previous_song') {
+                    // Show warning message instead of error
+                    const message = data.message || `No ${action} song available`;
+                    alert(message);
+                    return;
+                }
+                
                 if (!response.ok) {
-                    alert('Error: ' + (await response.json()).detail);
+                    alert('Error: ' + data.detail);
+                } else {
+                    // Refresh queue on successful skip/previous
+                    loadQueue();
                 }
             } catch (e) {
                 alert('Error controlling playback');
