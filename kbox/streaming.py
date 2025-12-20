@@ -303,12 +303,40 @@ class StreamingController:
             self.mode = 'youtube'
             self._create_youtube_pipeline(filepath)
             
-            # Start playback
+            # Start playback and wait for async completion
             Gst = _get_gst()
             ret = self.pipeline.set_state(Gst.State.PLAYING)
-            if ret == Gst.StateChangeReturn.FAILURE:
-                self.logger.error('Failed to start YouTube playback')
-                raise RuntimeError('Failed to start playback')
+            
+            # Check bus for error or state change messages
+            bus = self.pipeline.get_bus()
+            error_msg = None
+            
+            # Wait up to 5 seconds for error or successful state change
+            for _ in range(5):  # Check 5 times, 1 second each
+                bus_msg = bus.timed_pop(Gst.SECOND)
+                if bus_msg:
+                    if bus_msg.type == Gst.MessageType.ERROR:
+                        err, debug = bus_msg.parse_error()
+                        error_msg = f'{err.message}'
+                        self.logger.error('GStreamer error: %s', err)
+                        self.logger.error('Debug info: %s', debug)
+                        break
+                    elif bus_msg.type == Gst.MessageType.STATE_CHANGED:
+                        if bus_msg.src == self.pipeline:
+                            old_state, new_state, pending_state = bus_msg.parse_state_changed()
+                            self.logger.debug('Pipeline state: %s -> %s', old_state.value_name, new_state.value_name)
+                            if new_state == Gst.State.PLAYING:
+                                # Success - pipeline is playing
+                                self.logger.info('Pipeline started successfully')
+                                return
+                            elif new_state == Gst.State.NULL and ret != Gst.StateChangeReturn.FAILURE:
+                                error_msg = 'Pipeline returned to NULL state (failed to start)'
+                                break
+            
+            if error_msg:
+                raise RuntimeError(f'Failed to start playback: {error_msg}')
+            elif ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError('Failed to start playback (immediate failure)')
         except Exception as e:
             self.logger.error('Error loading file %s: %s', filepath, e, exc_info=True)
             # Don't crash - just log the error
