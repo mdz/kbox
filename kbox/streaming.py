@@ -399,10 +399,12 @@ class StreamingController:
         audioconvert_output = self.make_element('audioconvert', 'audioconvert_output')
         pipeline.add(audioconvert_output)
         
-        # Audio sink - use autoaudiosink which auto-detects
-        audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
-        if self.config.audio_output:
-            self.set_device(audio_sink, self.config.audio_output)
+        # Audio sink - use config from ConfigManager
+        gstreamer_sink = self.config_manager.get('gstreamer_sink')
+        audio_sink = self.make_element(gstreamer_sink, 'audio_sink')
+        audio_output = self.config_manager.get('audio_output_device')
+        if audio_output:
+            self.set_device(audio_sink, audio_output)
         pipeline.add(audio_sink)
         
         # Video pipeline
