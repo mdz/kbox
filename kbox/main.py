@@ -8,7 +8,6 @@ import logging
 import sys
 import uvicorn
 
-from .config import Config
 from .database import Database
 from .config_manager import ConfigManager
 from .queue import QueueManager
@@ -60,13 +59,8 @@ class KboxServer:
             youtube_api_key, cache_directory=self.config_manager.get("cache_directory")
         )
 
-        # Create a minimal config object for StreamingController
-        # TODO: Refactor to use ConfigManager instead
-        self.config = Config()
-
-        # StreamingController needs a server reference for callbacks
-        # We'll pass self for now
-        self.streaming_controller = StreamingController(self.config, self)
+        # StreamingController uses ConfigManager for configuration
+        self.streaming_controller = StreamingController(self.config_manager, self)
 
         # PlaybackController
         self.playback_controller = PlaybackController(
