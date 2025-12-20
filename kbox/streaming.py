@@ -135,8 +135,10 @@ class StreamingController:
         convert_audio_output = self.make_element('audioconvert', 'convert_audio_output')
         pipeline.add(convert_audio_output)
 
-        audio_sink = self.make_element(self.config.GSTREAMER_SINK, 'audio_sink')
-        self.set_device(audio_sink, self.config.audio_output)
+        gstreamer_sink = self.config_manager.get('gstreamer_sink')
+        audio_sink = self.make_element(gstreamer_sink, 'audio_sink')
+        audio_output = self.config_manager.get('audio_output_device')
+        self.set_device(audio_sink, audio_output)
         pipeline.add(audio_sink)
 
         video_sink = self.make_element('fakesink', 'video_sink')
@@ -179,7 +181,8 @@ class StreamingController:
         element = Gst.ElementFactory.make(element_type, name)
         if element is None:
             # Try to find alternative elements
-            if element_type == self.config.RUBBERBAND_PLUGIN:
+            rubberband_plugin = self.config_manager.get('rubberband_plugin')
+            if element_type == rubberband_plugin:
                 self.logger.warning('Rubberband plugin "%s" not found, pitch shifting will be disabled', element_type)
                 self.logger.info('LADSPA_PATH is: %s', os.environ.get('LADSPA_PATH', 'not set'))
                 # Return a passthrough element instead
