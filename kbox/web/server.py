@@ -415,6 +415,12 @@ def create_app(
             )
 
     # Authentication endpoints
+    @app.get("/api/auth/operator")
+    async def check_operator_status(request: Request):
+        """Check if user is currently authenticated as operator."""
+        is_operator = check_operator(request)
+        return {"operator": is_operator}
+
     @app.post("/api/auth/operator")
     async def authenticate_operator(
         request: Request,

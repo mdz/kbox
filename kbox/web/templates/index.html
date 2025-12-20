@@ -766,23 +766,24 @@
             }
         }
         
+        // Check operator status on page load
+        async function checkOperatorStatus() {
+            try {
+                const response = await fetch('/api/auth/operator');
+                if (response.ok) {
+                    const data = await response.json();
+                    isOperator = data.operator;
+                }
+            } catch (e) {
+                console.error('Error checking operator status:', e);
+            }
+        }
+        
         // Auto-enable operator mode in test mode
         // @ts-ignore - Jinja2 template syntax
         {% if test_mode %}
         (function() {
             function enableOperatorMode() {
-                const authSection = document.getElementById('auth-section');
-                const playbackButton = document.getElementById('playback-toggle-button');
-                const configButton = document.getElementById('config-toggle-button');
-                if (authSection) {
-                    authSection.style.display = 'none';
-                }
-                if (playbackButton) {
-                    playbackButton.style.display = 'flex';
-                }
-                if (configButton) {
-                    configButton.style.display = 'flex';
-                }
                 isOperator = true;
             }
             if (document.readyState === 'loading') {
@@ -792,7 +793,105 @@
             }
         })();
         // @ts-ignore - Jinja2 template syntax
+        {% else %}
+        // Check operator status on load (non-test mode)
+        checkOperatorStatus();
+        // @ts-ignore - Jinja2 template syntax
         {% endif %}
+        
+        // Store pending action to execute after PIN authentication
+        let pendingOperatorAction = null;
+        
+        // Show operator PIN modal
+        function showOperatorPinModal(action) {
+            pendingOperatorAction = action;
+            const modal = document.getElementById('operator-pin-modal');
+            const pinInput = document.getElementById('operator-pin-input');
+            const messageDiv = document.getElementById('operator-pin-message');
+            if (modal) {
+                modal.classList.remove('hidden');
+                modal.style.display = 'flex';
+                if (pinInput) {
+                    pinInput.value = '';
+                    setTimeout(() => pinInput.focus(), 100);
+                }
+                if (messageDiv) {
+                    messageDiv.innerHTML = '';
+                }
+            }
+        }
+        
+        // Cancel operator PIN entry
+        function cancelOperatorPin() {
+            const modal = document.getElementById('operator-pin-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
+            pendingOperatorAction = null;
+        }
+        
+        // Submit operator PIN
+        async function submitOperatorPin() {
+            const pinInput = document.getElementById('operator-pin-input');
+            const messageDiv = document.getElementById('operator-pin-message');
+            
+            if (!pinInput) return;
+            
+            const pin = pinInput.value.trim();
+            if (!pin) {
+                if (messageDiv) {
+                    messageDiv.innerHTML = '<div class="error">Please enter a PIN</div>';
+                }
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/operator', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pin: pin})
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    isOperator = data.operator;
+                    if (isOperator) {
+                        // Close modal
+                        cancelOperatorPin();
+                        // Execute pending action if any
+                        if (pendingOperatorAction) {
+                            pendingOperatorAction();
+                            pendingOperatorAction = null;
+                        }
+                    }
+                } else {
+                    const error = await response.json();
+                    if (messageDiv) {
+                        messageDiv.innerHTML = '<div class="error">Invalid PIN</div>';
+                    }
+                    pinInput.value = '';
+                    pinInput.focus();
+                }
+            } catch (e) {
+                console.error('Error authenticating:', e);
+                if (messageDiv) {
+                    messageDiv.innerHTML = '<div class="error">Error authenticating</div>';
+                }
+            }
+        }
+        
+        // Handle Enter key in PIN input
+        document.addEventListener('DOMContentLoaded', function() {
+            const pinInput = document.getElementById('operator-pin-input');
+            if (pinInput) {
+                pinInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        submitOperatorPin();
+                    }
+                });
+            }
+        });
         
         // Toggle playback controls visibility (now a full-screen overlay)
         function togglePlaybackControls() {
@@ -802,9 +901,9 @@
             
             if (!screen || !toggleButton) return;
             
-            // Check if user is operator
+            // Check if user is operator, prompt for PIN if not
             if (!isOperator) {
-                alert('Operator authentication required. Please enter PIN in the operator controls section.');
+                showOperatorPinModal(() => togglePlaybackControls());
                 return;
             }
             
@@ -870,9 +969,9 @@
             
             if (!screen || !toggleButton) return;
             
-            // Check if user is operator
+            // Check if user is operator, prompt for PIN if not
             if (!isOperator) {
-                alert('Operator authentication required. Please enter PIN in the operator controls section.');
+                showOperatorPinModal(() => toggleConfigScreen());
                 return;
             }
             
@@ -1243,18 +1342,6 @@
             }
         }
         
-        // Check operator status on load
-        async function checkOperator() {
-            try {
-                const response = await fetch('/api/playback/status');
-                // If we can access operator endpoints, we're authenticated
-                // For now, just check if operator panel should be shown
-                // We'll implement proper session checking later
-            } catch (e) {
-                console.error('Error checking operator status:', e);
-            }
-        }
-        
         // Load queue on page load
         loadQueue();
         
@@ -1264,34 +1351,6 @@
                 search();
             }
         });
-        
-        // Authenticate as operator
-        async function authenticate() {
-            const pin = document.getElementById('pin-input').value;
-            const messageDiv = document.getElementById('auth-message');
-            
-            try {
-                const response = await fetch('/api/auth/operator', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({pin: pin})
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    isOperator = data.operator;
-                    if (isOperator) {
-                        // Buttons are always visible, just enable operator mode
-                        messageDiv.innerHTML = '<div class="success">Operator mode enabled. Use ⏯ for playback controls and ⚙ for configuration.</div>';
-                        document.getElementById('pin-input').value = '';
-                    }
-                } else {
-                    messageDiv.innerHTML = '<div class="error">Invalid PIN</div>';
-                }
-            } catch (e) {
-                messageDiv.innerHTML = '<div class="error">Error authenticating</div>';
-            }
-        }
         
         // Search YouTube
         async function search() {

@@ -45,6 +45,20 @@
     </div>
 </div>
 
+<!-- Operator PIN Modal -->
+<div class="modal-overlay hidden" id="operator-pin-modal" style="display: none;" onclick="if(event.target === this) cancelOperatorPin();">
+    <div class="modal" onclick="event.stopPropagation();">
+        <h2>Operator Access</h2>
+        <p style="margin-bottom: 15px; color: #aaa;">Enter PIN to access operator controls:</p>
+        <input type="password" id="operator-pin-input" placeholder="PIN" autofocus />
+        <div id="operator-pin-message" style="margin-top: 10px;"></div>
+        <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button onclick="submitOperatorPin()" style="flex: 1;">Authenticate</button>
+            <button onclick="cancelOperatorPin()" style="flex: 1; background: #444;">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- Help Modal -->
 <div class="modal-overlay hidden" id="help-modal" style="display: none;" onclick="if(event.target === this) hideHelp();">
     <div class="modal" style="max-width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
