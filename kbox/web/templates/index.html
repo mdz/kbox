@@ -616,11 +616,22 @@
                 thumbnailHTML = `<img src="${songData.thumbnail_url}" alt="${songData.title || ''}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />`;
             }
             
+            // Progress bar (only when playing)
+            const progressPercent = (position !== undefined && position !== null && duration > 0) 
+                ? Math.min(100, (position / duration) * 100) 
+                : 0;
+            const progressBarHTML = (position !== undefined && position !== null) 
+                ? `<div style="margin-top: 8px; height: 4px; background: #333; border-radius: 2px; overflow: hidden;">
+                     <div style="height: 100%; width: ${progressPercent}%; background: #4a9eff; transition: width 0.3s;"></div>
+                   </div>`
+                : '';
+            
             const infoHTML = `
                 <div style="flex: 1;">
                     <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${songData.title || 'Unknown'}</div>
                     ${showUser && userText ? `<div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${userText}</div>` : ''}
                     <div style="color: #888; font-size: 0.85em;" id="${context}-progress">${position !== undefined && position !== null ? '' : 'Duration: '}${durationText}</div>
+                    ${progressBarHTML}
                     ${showStatus && songData.download_status ? `<div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${songData.download_status}</div>` : ''}
                 </div>
             `;
