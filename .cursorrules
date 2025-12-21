@@ -1,0 +1,31 @@
+# Git Behavior - CRITICAL
+
+## Committing Changes
+
+When ready to commit:
+
+1. First, add any NEW files created that are INTENDED TO BE COMMITTED using `git add <specific-file>`
+2. Commit using `git commit -a` (normal workflow, commits all modified tracked files) or `git commit <modified files>` (commit only a subset)
+
+## What NOT to do
+
+- NEVER use `git add -A`, `git add .`, or `git add --all`
+- NEVER add untracked files - they may be the user's local notes, logs, or temporary data
+
+## What Belongs in the Repo vs. What Doesn't
+
+**Commit these** (needed by users of the software):
+- Source code
+- Dependency specs and project configuration
+- User-facing documentation (how to install, use, set up)
+
+**Do NOT commit these** (developer-only artifacts):
+- Personal notes, planning docs, internal architecture docs, TODOs
+- Local convenience/wrapper scripts
+- One-time setup utilities, API key configuration scripts
+
+**Guiding question**: "Would someone cloning this repo to USE the software need this file?"
+- Yes → commit it
+- No (it's for the developer's workflow/thinking) → don't commit
+
+**When uncertain about a file, ASK before committing.**
