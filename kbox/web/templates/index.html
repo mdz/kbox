@@ -863,12 +863,13 @@
                     const data = await response.json();
                     isOperator = data.operator;
                     if (isOperator) {
+                        // Save pending action before closing modal (which clears it)
+                        const action = pendingOperatorAction;
                         // Close modal
                         cancelOperatorPin();
                         // Execute pending action if any
-                        if (pendingOperatorAction) {
-                            pendingOperatorAction();
-                            pendingOperatorAction = null;
+                        if (action) {
+                            action();
                         }
                     }
                 } else {
