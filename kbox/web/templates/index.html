@@ -1556,7 +1556,7 @@
             
             // Apply pitch change immediately via API
             try {
-                const response = await fetch('/api/playback/pitch/my-song', {
+                const response = await fetch('/api/playback/pitch', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({

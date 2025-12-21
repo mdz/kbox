@@ -279,21 +279,18 @@ class PlaybackController:
             
             # Set pitch for this song
             pitch = song.get('pitch_semitones', 0)
+            self.logger.debug('[DEBUG] _play_song: before set_pitch_shift, song=%s pitch=%s', song['id'], pitch)
             try:
                 self.streaming_controller.set_pitch_shift(pitch)
             except Exception as e:
                 self.logger.warning('Could not set pitch shift: %s', e)
             
             # Load file into streaming controller
+            # Pass start position so seek happens before audio plays
+            saved_position = song.get('playback_position_seconds', 0) or 0
+            self.logger.debug('[DEBUG] _play_song: before load_file, start_position=%s', saved_position)
             try:
-                self.streaming_controller.load_file(download_path)
-                
-                # Check if there's a saved playback position to resume from
-                saved_position = song.get('playback_position_seconds', 0)
-                if saved_position and saved_position > 0:
-                    self.logger.info('Resuming playback at position: %s seconds', saved_position)
-                    if not self.streaming_controller.seek(saved_position):
-                        self.logger.warning('Failed to seek to saved position')
+                self.streaming_controller.load_file(download_path, start_position_seconds=saved_position)
             except Exception as e:
                 self.logger.error('Failed to load file into streaming controller: %s', e)
                 self.state = PlaybackState.ERROR
@@ -404,7 +401,9 @@ class PlaybackController:
             self.queue_manager.update_playback_position(self.current_song['id'], int(current_position) if current_position else 0)
             
             # Stop current playback (but do NOT mark as played)
+            self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song['id'], next_song['id'])
             self.streaming_controller.stop_playback()
+            self.logger.debug('[DEBUG] skip: after stop_playback')
             
             # Load and play the next song
             return self._play_song(next_song)

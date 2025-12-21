@@ -29,3 +29,20 @@ When ready to commit:
 - No (it's for the developer's workflow/thinking) → don't commit
 
 **When uncertain about a file, ASK before committing.**
+
+# Debugging - Use Existing Loggers
+
+When adding debug instrumentation:
+
+1. **Use the existing logger** - Classes already have `self.logger`, use it
+2. **Use DEBUG level** - `self.logger.debug('[DEBUG] ...')` for temporary instrumentation
+3. **Don't invent new logging mechanisms** - No custom file writes, HTTP endpoints, or new logging infrastructure
+4. **Remember the runtime environment** - Code may run in Docker, on remote machines, etc. The existing logger already handles this correctly
+
+# Debugging - Revert Failed Fixes
+
+When a fix attempt doesn't work:
+
+1. **Revert the failed change first** - Don't pile hacks on top of failed hacks
+2. **Return to the last known state** - Before trying a new approach
+3. **One change at a time** - So we know exactly what worked or didn't

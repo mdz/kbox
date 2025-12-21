@@ -272,35 +272,66 @@ class StreamingController:
     # Playback Control
     # =========================================================================
     
-    def load_file(self, filepath: str):
+    def load_file(self, filepath: str, start_position_seconds: int = 0):
         """
         Load and play a video file.
         
         Args:
             filepath: Path to video file
+            start_position_seconds: Position to start playback from (default 0)
             
         Raises:
             RuntimeError: If playback fails to start
         """
-        self.logger.info('Loading file: %s', filepath)
+        self.logger.info('Loading file: %s (start_position=%s)', filepath, start_position_seconds)
         
         Gst = _get_gst()
         
+        self.logger.debug('[DEBUG] load_file: entry, current_state=%s', self.state)
+        
         # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
+        self.logger.debug('[DEBUG] load_file: after NULL')
         
         # Set new URI
         self.playbin.set_property('uri', f'file://{filepath}')
+        
+        # If we need to start at a non-zero position, go to PAUSED first,
+        # seek, then go to PLAYING. This prevents audio from position 0
+        # playing briefly before the seek completes.
+        if start_position_seconds > 0:
+            self.logger.debug('[DEBUG] load_file: going to PAUSED for pre-seek')
+            ret = self.playbin.set_state(Gst.State.PAUSED)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError('Failed to pause for seek')
+            
+            # Wait for PAUSED state
+            ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError('Pipeline failed to reach PAUSED state')
+            
+            # Seek while paused
+            position_ns = start_position_seconds * Gst.SECOND
+            self.logger.debug('[DEBUG] load_file: seeking to %s while paused', start_position_seconds)
+            self.playbin.seek_simple(
+                Gst.Format.TIME,
+                Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                position_ns
+            )
         
         # Start playing
         ret = self.playbin.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError('Failed to start playback')
         
+        self.logger.debug('[DEBUG] load_file: after PLAYING request, ret=%s', ret)
+        
         # Wait for state change to complete or error
         ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
         if ret == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError('Pipeline failed to reach PLAYING state')
+        
+        self.logger.debug('[DEBUG] load_file: state reached %s', state)
         
         self.state = 'playing'
         self.current_file = filepath
@@ -311,7 +342,9 @@ class StreamingController:
         self.logger.info('Stopping playback')
         
         Gst = _get_gst()
+        self.logger.debug('[DEBUG] stop_playback: before READY, state=%s', self.state)
         self.playbin.set_state(Gst.State.READY)
+        self.logger.debug('[DEBUG] stop_playback: after READY')
         
         self.state = 'idle'
         self.current_file = None

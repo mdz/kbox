@@ -37,10 +37,6 @@ class ReorderRequest(BaseModel):
 
 class PitchRequest(BaseModel):
     semitones: int
-
-
-class MySongPitchRequest(BaseModel):
-    semitones: int
     user_name: str
 
 
@@ -445,30 +441,12 @@ def create_app(
     @app.post("/api/playback/pitch")
     async def set_pitch(
         request_data: PitchRequest,
-        playback: PlaybackController = Depends(get_playback_controller),
-        is_operator: bool = Depends(check_operator),
-    ):
-        """Set pitch adjustment for current song (operator only)."""
-        if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
-
-        if playback.set_pitch(request_data.semitones):
-            return {"status": "updated", "pitch": request_data.semitones}
-        else:
-            raise HTTPException(
-                status_code=400, detail="No current song or failed to update"
-            )
-
-    @app.post("/api/playback/pitch/my-song")
-    async def set_my_song_pitch(
-        request_data: MySongPitchRequest,
+        request: Request,
         playback: PlaybackController = Depends(get_playback_controller),
     ):
         """
-        Set pitch adjustment for current song if it belongs to the requesting user.
-        No operator authentication required - users can adjust their own song's pitch.
+        Set pitch adjustment for current song.
+        Allowed if: user owns the song OR user is an operator.
         """
         status = playback.get_status()
         current_song = status.get("current_song")
@@ -478,8 +456,11 @@ def create_app(
                 status_code=400, detail="No song is currently playing"
             )
         
-        # Verify the song belongs to the requesting user
-        if current_song.get("user_name") != request_data.user_name:
+        # Check authorization: user's own song OR operator
+        is_own_song = current_song.get("user_name") == request_data.user_name
+        is_op = check_operator(request)
+        
+        if not is_own_song and not is_op:
             raise HTTPException(
                 status_code=403, detail="You can only adjust pitch for your own song"
             )
