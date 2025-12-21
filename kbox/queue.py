@@ -196,9 +196,13 @@ class QueueManager:
         finally:
             conn.close()
     
-    def get_queue(self) -> List[Dict[str, Any]]:
+    def get_queue(self, include_played: bool = True) -> List[Dict[str, Any]]:
         """
         Get the entire queue ordered by position.
+        
+        Args:
+            include_played: If True, include songs that have been played.
+                           If False, only return unplayed songs.
         
         Returns:
             List of queue items as dictionaries
@@ -207,15 +211,25 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
-            cursor.execute('''
-                SELECT id, position, user_name, youtube_video_id, title, 
-                       duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at,
-                       playback_position_seconds, error_message
-                FROM queue_items
-                WHERE played_at IS NULL
-                ORDER BY position
-            ''')
+            if include_played:
+                cursor.execute('''
+                    SELECT id, position, user_name, youtube_video_id, title, 
+                           duration_seconds, thumbnail_url, pitch_semitones,
+                           download_status, download_path, created_at, played_at,
+                           playback_position_seconds, error_message
+                    FROM queue_items
+                    ORDER BY position
+                ''')
+            else:
+                cursor.execute('''
+                    SELECT id, position, user_name, youtube_video_id, title, 
+                           duration_seconds, thumbnail_url, pitch_semitones,
+                           download_status, download_path, created_at, played_at,
+                           playback_position_seconds, error_message
+                    FROM queue_items
+                    WHERE played_at IS NULL
+                    ORDER BY position
+                ''')
             
             items = []
             for row in cursor.fetchall():
@@ -246,6 +260,84 @@ class QueueManager:
                 ORDER BY position
                 LIMIT 1
             ''', (self.STATUS_READY,))
+            
+            result = cursor.fetchone()
+            return dict(result) if result else None
+        finally:
+            conn.close()
+    
+    def get_next_song_after(self, current_song_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the next ready song in the queue after the specified song.
+        
+        Args:
+            current_song_id: ID of the current song
+        
+        Returns:
+            Queue item dictionary if found, None otherwise
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Get position of current song
+            cursor.execute('SELECT position FROM queue_items WHERE id = ?', (current_song_id,))
+            result = cursor.fetchone()
+            if not result:
+                return None
+            
+            current_position = result['position']
+            
+            # Get next ready song after current position
+            cursor.execute('''
+                SELECT id, position, user_name, youtube_video_id, title,
+                       duration_seconds, thumbnail_url, pitch_semitones,
+                       download_status, download_path, created_at, played_at,
+                       playback_position_seconds, error_message
+                FROM queue_items
+                WHERE position > ? AND download_status = ?
+                ORDER BY position
+                LIMIT 1
+            ''', (current_position, self.STATUS_READY))
+            
+            result = cursor.fetchone()
+            return dict(result) if result else None
+        finally:
+            conn.close()
+    
+    def get_previous_song_before(self, current_song_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the previous ready song in the queue before the specified song.
+        
+        Args:
+            current_song_id: ID of the current song
+        
+        Returns:
+            Queue item dictionary if found, None otherwise
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Get position of current song
+            cursor.execute('SELECT position FROM queue_items WHERE id = ?', (current_song_id,))
+            result = cursor.fetchone()
+            if not result:
+                return None
+            
+            current_position = result['position']
+            
+            # Get previous ready song before current position
+            cursor.execute('''
+                SELECT id, position, user_name, youtube_video_id, title,
+                       duration_seconds, thumbnail_url, pitch_semitones,
+                       download_status, download_path, created_at, played_at,
+                       playback_position_seconds, error_message
+                FROM queue_items
+                WHERE position < ? AND download_status = ?
+                ORDER BY position DESC
+                LIMIT 1
+            ''', (current_position, self.STATUS_READY))
             
             result = cursor.fetchone()
             return dict(result) if result else None

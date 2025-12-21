@@ -244,6 +244,19 @@
             font-weight: 600;
         }
         
+        .queue-item.played {
+            opacity: 0.5;
+            background: #2a2a2a;
+        }
+        
+        .queue-item.played .queue-item-user {
+            color: #888;
+        }
+        
+        .queue-item.played .queue-item-title {
+            color: #666;
+        }
+        
         .queue-item-info {
             flex: 1;
         }
@@ -1531,13 +1544,8 @@
                 
                 const queueDiv = document.getElementById('queue-list');
                 
-                // Get current song ID
-                const currentSongId = statusData.current_song ? statusData.current_song.id : null;
-                
-                // If queue is empty but there's a current song, add it to the display
-                if (currentQueue.length === 0 && statusData.current_song) {
-                    currentQueue = [statusData.current_song];
-                }
+                // Get current song ID from API response
+                const currentSongId = queueData.current_song_id;
                 
                 if (currentQueue.length === 0) {
                     queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
@@ -1547,16 +1555,25 @@
                 }
                 
                 queueDiv.innerHTML = '';
+                let currentSongElement = null;
+                
                 currentQueue.forEach(item => {
                     const div = document.createElement('div');
-                    const isPlaying = item.id === currentSongId;
-                    div.className = `queue-item ${isPlaying ? 'playing' : ''}`;
+                    const isCurrent = item.is_current;
+                    const isPlayed = item.is_played && !isCurrent;
+                    
+                    // Build class list based on state
+                    let classes = ['queue-item'];
+                    if (isCurrent) classes.push('playing');
+                    if (isPlayed) classes.push('played');
+                    div.className = classes.join(' ');
+                    
                     const statusClass = `status-${item.download_status}`;
                     div.innerHTML = `
                         <div class="queue-item-info">
                             <div class="queue-item-user">${item.user_name}</div>
                             <div class="queue-item-title">${item.title}</div>
-                            </div>
+                        </div>
                         <span class="queue-item-status ${statusClass}">${item.download_status}</span>
                     `;
                     
@@ -1564,7 +1581,17 @@
                     div.onclick = () => showEditQueueItemModal(item);
                     
                     queueDiv.appendChild(div);
+                    
+                    // Track current song element for scrolling
+                    if (isCurrent) {
+                        currentSongElement = div;
+                    }
                 });
+                
+                // Auto-scroll to current song
+                if (currentSongElement) {
+                    currentSongElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
                 
                 // Update user song UI (notification and controls)
                 updateMySongUI(currentSongId, statusData, currentQueue);
@@ -1635,8 +1662,8 @@
             // Get all ready songs that haven't been played, excluding the currently playing one
             const readySongs = queue.filter(item => 
                 item.download_status === 'ready' && 
-                !item.played_at &&
-                item.id !== currentSongId
+                !item.is_played &&
+                !item.is_current
             );
             
             // Sort by position to maintain queue order

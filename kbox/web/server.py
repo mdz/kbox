@@ -135,23 +135,24 @@ def create_app(
         queue_mgr: QueueManager = Depends(get_queue_manager),
         playback: PlaybackController = Depends(get_playback_controller),
     ):
-        """Get current queue, including currently playing song if any."""
-        queue = queue_mgr.get_queue()
+        """Get current queue with current/played flags for UI rendering."""
+        # Get all queue items (including played ones for navigation)
+        queue = queue_mgr.get_queue(include_played=True)
 
-        # Include currently playing song even if it's been marked as played
+        # Get current song from playback status
         status = playback.get_status()
-        if status.get("current_song"):
-            current_song_id = status["current_song"]["id"]
-            # Check if current song is already in the queue
-            if not any(item["id"] == current_song_id for item in queue):
-                # Get the current song from database and add it to queue
-                current_song = queue_mgr.get_item(current_song_id)
-                if current_song:
-                    queue.append(current_song)
-                    # Sort by position to maintain order
-                    queue.sort(key=lambda x: x.get("position", 0))
+        current_song = status.get("current_song")
+        current_song_id = current_song["id"] if current_song else None
 
-        return {"queue": queue}
+        # Add flags for UI rendering
+        for item in queue:
+            item["is_current"] = (item["id"] == current_song_id)
+            item["is_played"] = (item.get("played_at") is not None)
+
+        return {
+            "queue": queue,
+            "current_song_id": current_song_id
+        }
 
     @app.get("/api/queue/settings/{youtube_video_id}")
     async def get_song_settings(
