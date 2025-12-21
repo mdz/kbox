@@ -641,7 +641,6 @@
             `;
             
             const pitchValue = songData.pitch_semitones || 0;
-            const liveText = live ? '<div style="text-align: center; margin-top: 10px; font-size: 0.85em; color: #888;">Changes take effect immediately</div>' : '';
             
             // Build song info section (only if we have info to show)
             const hasSongInfo = (thumbnailHTML || songData.title) && (showThumbnail || songData.title);
@@ -652,7 +651,6 @@
                 <div style="margin-bottom: 15px;">
                     <label class="pitch-label" style="${live ? 'text-align: center; display: block; margin-bottom: 10px; color: #fff; font-weight: 500; font-size: 1.1em;' : ''}">${live ? 'Adjust Pitch (Live)' : 'Pitch Adjustment (semitones):'}</label>
                     <div id="${context}-pitch-control-container"></div>
-                    ${liveText}
                 </div>
             ` : '';
             
@@ -1518,10 +1516,13 @@
                     div.className = classes.join(' ');
                     
                     const statusClass = `status-${item.download_status}`;
+                    const duration = item.duration_seconds || 0;
+                    const durationStr = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
+                    
                     div.innerHTML = `
                         <div class="queue-item-info">
-                            <div class="queue-item-user">${item.user_name}</div>
-                            <div class="queue-item-title">${item.title}</div>
+                            <div class="queue-item-user">${item.user_name} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
+                            ${isOperator ? `<div class="queue-item-title">${item.title}</div>` : ''}
                         </div>
                         <span class="queue-item-status ${statusClass}">${item.download_status}</span>
                     `;
