@@ -1,8 +1,8 @@
 """
-Platform-specific code for macOS.
+Platform-specific code for macOS and Linux.
 
-This module isolates all macOS-specific functionality to keep the main codebase
-platform-agnostic.
+This module isolates platform-specific functionality to keep the main codebase
+platform-agnostic. Includes GStreamer sink creation for different platforms.
 """
 
 import logging
@@ -156,3 +156,88 @@ f
             raise
 
     return server_thread, wait_for_shutdown
+
+
+def create_video_sink(test_mode: bool = False):
+    """
+    Create appropriate video sink for the current platform.
+    
+    Args:
+        test_mode: If True, create a fakesink for headless testing
+        
+    Returns:
+        GStreamer video sink element
+        
+    Raises:
+        RuntimeError: If unable to create a video sink
+    """
+    try:
+        from gi.repository import Gst
+    except ImportError:
+        raise RuntimeError("GStreamer Python bindings not available")
+    
+    if test_mode:
+        sink = Gst.ElementFactory.make('fakesink', 'video_sink')
+        if sink is None:
+            raise RuntimeError("Failed to create fakesink for test mode")
+        return sink
+    
+    if sys.platform == 'linux':
+        # Use kmssink for direct kernel mode setting (Raspberry Pi)
+        sink = Gst.ElementFactory.make('kmssink', 'video_sink')
+        if sink is None:
+            logger.warning("kmssink not available, falling back to autovideosink")
+            sink = Gst.ElementFactory.make('autovideosink', 'video_sink')
+        if sink is None:
+            raise RuntimeError("No video sink available on Linux")
+        return sink
+    else:  # macOS
+        # Try autovideosink first (auto-detects best sink)
+        sink = Gst.ElementFactory.make('autovideosink', 'video_sink')
+        if sink is None:
+            # Fallback to osxvideosink
+            sink = Gst.ElementFactory.make('osxvideosink', 'video_sink')
+        if sink is None:
+            raise RuntimeError("No video sink available on macOS")
+        return sink
+
+
+def create_audio_sink(test_mode: bool = False, device: Optional[str] = None):
+    """
+    Create appropriate audio sink for the current platform.
+    
+    Args:
+        test_mode: If True, create a fakesink for headless testing
+        device: ALSA device name (Linux only), e.g., 'plughw:CARD=USB,DEV=0'
+        
+    Returns:
+        GStreamer audio sink element
+        
+    Raises:
+        RuntimeError: If unable to create an audio sink
+    """
+    try:
+        from gi.repository import Gst
+    except ImportError:
+        raise RuntimeError("GStreamer Python bindings not available")
+    
+    if test_mode:
+        sink = Gst.ElementFactory.make('fakesink', 'audio_sink')
+        if sink is None:
+            raise RuntimeError("Failed to create fakesink for test mode")
+        return sink
+    
+    if sys.platform == 'linux':
+        # Use alsasink for ALSA (Raspberry Pi)
+        sink = Gst.ElementFactory.make('alsasink', 'audio_sink')
+        if sink is None:
+            raise RuntimeError("alsasink not available on Linux")
+        if device:
+            sink.set_property('device', device)
+        return sink
+    else:  # macOS
+        # Use autoaudiosink (auto-detects best sink)
+        sink = Gst.ElementFactory.make('autoaudiosink', 'audio_sink')
+        if sink is None:
+            raise RuntimeError("No audio sink available on macOS")
+        return sink

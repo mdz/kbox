@@ -1,0 +1,9 @@
+- use camera to take avator phdoto for user
+- interstitial to summon the next singer before starting to play their song
+- push notification to summon
+- idle screen
+- end of queue screen
+- on-screen popup when someone adds a song
+- subtle on-screen popup cueing the next singer
+- remember pitch shift setting for user
+- seek controls

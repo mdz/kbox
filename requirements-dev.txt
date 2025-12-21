@@ -1,0 +1,5 @@
+# Development dependencies for testing
+-r requirements.txt
+pytest
+
+
