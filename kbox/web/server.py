@@ -153,6 +153,16 @@ def create_app(
 
         return {"queue": queue}
 
+    @app.get("/api/queue/settings/{youtube_video_id}")
+    async def get_song_settings(
+        youtube_video_id: str,
+        user_name: str,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+    ):
+        """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
+        settings = queue_mgr.get_last_song_settings(youtube_video_id, user_name)
+        return {"settings": settings}
+
     @app.post("/api/queue")
     async def add_song(
         request_data: AddSongRequest,
@@ -161,17 +171,14 @@ def create_app(
     ):
         """Add song to queue."""
         try:
-            # If pitch_semitones is 0, let add_song check for saved setting
-            # Otherwise, use the explicitly provided value
-            pitch_to_use = None if request_data.pitch_semitones == 0 else request_data.pitch_semitones
-            
+            # Use the pitch value provided by the frontend (which will have checked history if needed)
             item_id = queue_mgr.add_song(
                 user_name=request_data.user_name,
                 youtube_video_id=request_data.youtube_video_id,
                 title=request_data.title,
                 duration_seconds=request_data.duration_seconds,
                 thumbnail_url=request_data.thumbnail_url,
-                pitch_semitones=pitch_to_use,
+                pitch_semitones=request_data.pitch_semitones,
             )
 
             # Trigger download (PlaybackController will handle this)

@@ -49,7 +49,7 @@ class QueueManager:
             title: Song title
             duration_seconds: Duration in seconds (optional)
             thumbnail_url: Thumbnail URL (optional)
-            pitch_semitones: Pitch adjustment in semitones. If None, will use saved setting if available, otherwise 0.
+            pitch_semitones: Pitch adjustment in semitones. Defaults to 0 if None.
         
         Returns:
             ID of the created queue item
@@ -58,13 +58,9 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
-            # If pitch not explicitly provided, check for saved setting
+            # Use provided pitch or default to 0
             if pitch_semitones is None:
-                settings = self.get_last_song_settings(youtube_video_id)
-                saved_pitch = settings.get('pitch_semitones')
-                pitch_semitones = saved_pitch if saved_pitch is not None else 0
-                if saved_pitch is not None:
-                    self.logger.debug('Using saved pitch setting for %s: %s semitones', youtube_video_id, saved_pitch)
+                pitch_semitones = 0
             
             # Get the highest position
             cursor.execute('SELECT MAX(position) as max_pos FROM queue_items')
@@ -489,30 +485,31 @@ class QueueManager:
         finally:
             conn.close()
     
-    def get_last_song_settings(self, youtube_video_id: str) -> Dict[str, Any]:
+    def get_last_song_settings(self, youtube_video_id: str, user_name: str) -> Dict[str, Any]:
         """
-        Get all last used settings for a song from playback history.
+        Get all last used settings for a song from playback history for a specific user.
         
         Args:
             youtube_video_id: YouTube video ID
+            user_name: Name of the user
         
         Returns:
-            Dictionary of settings from the most recent playback, or empty dict if not found.
+            Dictionary of settings from the most recent playback by this user, or empty dict if not found.
             Currently includes: pitch_semitones (and can be extended for other settings)
         """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
             
-            # Query playback history for the most recent entry with this video ID
+            # Query playback history for the most recent entry with this video ID and user
             # Get all settings-related columns
             cursor.execute('''
                 SELECT pitch_semitones
                 FROM playback_history
-                WHERE youtube_video_id = ?
+                WHERE youtube_video_id = ? AND user_name = ?
                 ORDER BY played_at DESC
                 LIMIT 1
-            ''', (youtube_video_id,))
+            ''', (youtube_video_id, user_name))
             
             result = cursor.fetchone()
             if result:

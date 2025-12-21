@@ -1406,7 +1406,7 @@
         let currentVideoToAdd = null;
         
         // Show add song confirmation modal
-        function showAddSongModal(video) {
+        async function showAddSongModal(video) {
             if (!userName) {
                 alert('Please enter your name first');
                 document.getElementById('name-modal').classList.remove('hidden');
@@ -1415,13 +1415,26 @@
             
             currentVideoToAdd = video;
             
-            // Use reusable song settings component
+            // Fetch saved settings for this video and user (pitch preset, etc.)
+            let savedPitch = 0;
+            try {
+                const settingsResponse = await fetch(`/api/queue/settings/${video.id}?user_name=${encodeURIComponent(userName)}`);
+                if (settingsResponse.ok) {
+                    const settingsData = await settingsResponse.json();
+                    savedPitch = settingsData.settings.pitch_semitones || 0;
+                }
+            } catch (e) {
+                // If fetch fails, just use default 0
+                console.debug('Could not fetch saved settings:', e);
+            }
+            
+            // Use reusable song settings component with saved pitch
             renderSongSettings('add-song-modal-content', {
                 title: video.title,
                 thumbnail_url: video.thumbnail,
                 channel: video.channel,
                 duration_seconds: video.duration_seconds,
-                pitch_semitones: 0
+                pitch_semitones: savedPitch
             }, {
                 context: 'add-song',
                 live: false,
