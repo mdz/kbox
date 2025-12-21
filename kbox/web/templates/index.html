@@ -606,9 +606,13 @@
                 durationText = 'Unknown';
             }
             
-            // Get user/channel name
-            const userText = songData.user_name ? `Requested by: ${songData.user_name}` : 
-                           songData.channel ? songData.channel : '';
+            // Get user/channel name (highlight if it's the current user)
+            const isCurrentUser = songData.user_name === userName;
+            const userText = songData.user_name 
+                ? (isCurrentUser 
+                    ? `🎤 <strong style="color: #4aff6e;">Your song!</strong>` 
+                    : `Requested by: ${songData.user_name}`)
+                : (songData.channel ? songData.channel : '');
             
             // Build song info HTML
             let thumbnailHTML = '';
@@ -1489,6 +1493,9 @@
                 // Render Now Playing section
                 renderNowPlaying(statusData);
                 
+                // Render Up Next section
+                renderUpNext(statusData, currentQueue);
+                
                 // Render queue
                 const queueDiv = document.getElementById('queue-list');
                 
@@ -1561,6 +1568,66 @@
             });
         }
         
+        // Render Up Next section
+        function renderUpNext(statusData, queue) {
+            const section = document.getElementById('up-next-section');
+            const content = document.getElementById('up-next-content');
+            if (!section || !content) return;
+            
+            section.style.display = 'block';
+            
+            const currentSong = statusData.current_song;
+            
+            // Find upcoming songs (non-played, non-current)
+            const upcomingSongs = queue.filter(item => !item.is_current && !item.is_played);
+            const nextSong = upcomingSongs[0];
+            
+            // Helper to format time
+            function formatTime(secs) {
+                const m = Math.floor(secs / 60);
+                const s = secs % 60;
+                return `${m}:${s.toString().padStart(2, '0')}`;
+            }
+            
+            if (!nextSong) {
+                content.innerHTML = `<span style="font-size: 1.1em; color: #666;">Up Next: No one in queue</span>`;
+                return;
+            }
+            
+            // Calculate time remaining in current song
+            const position = statusData.position_seconds || 0;
+            const currentDuration = currentSong ? (currentSong.duration_seconds || 0) : 0;
+            const currentRemaining = Math.max(0, currentDuration - position);
+            
+            const isNextYou = nextSong.user_name === userName;
+            const nameStyle = isNextYou ? 'color: #4aff6e; font-size: 1.2em;' : 'color: #4a9eff;';
+            const youLabel = isNextYou ? '🎤 ' : '';
+            
+            // Build main "Up Next" message
+            let html = '';
+            if (!currentSong) {
+                html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong></span>`;
+            } else {
+                const timeStr = formatTime(currentRemaining);
+                html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong> in ${timeStr}</span>`;
+            }
+            
+            // If next is not the current user, find when they ARE up
+            if (!isNextYou && currentSong) {
+                const userSongIndex = upcomingSongs.findIndex(item => item.user_name === userName);
+                if (userSongIndex > 0) {
+                    // Sum durations of songs before user's turn
+                    let timeUntilYou = currentRemaining;
+                    for (let i = 0; i < userSongIndex; i++) {
+                        timeUntilYou += upcomingSongs[i].duration_seconds || 0;
+                    }
+                    html += `<br><span style="font-size: 0.95em; color: #4aff6e;">🎤 You're up in ${formatTime(timeUntilYou)}</span>`;
+                }
+            }
+            
+            content.innerHTML = html;
+        }
+
         // Adjust pitch for now-playing song (immediate effect)
         async function adjustNowPlayingPitch(delta) {
             // Get current pitch from input
@@ -1754,3 +1821,4 @@
     </script>
 </body>
 </html>
+
