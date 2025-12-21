@@ -547,9 +547,14 @@ class PlaybackController:
             Dictionary with playback state and current song info
         """
         with self.lock:
+            position = None
+            if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                position = self.streaming_controller.get_position()
+            
             status = {
                 'state': self.state.value,
                 'current_song': self.current_song,
+                'position_seconds': position,
             }
             return status
     
