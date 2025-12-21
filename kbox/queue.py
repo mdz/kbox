@@ -346,7 +346,7 @@ class QueueManager:
     
     def clear_queue(self) -> int:
         """
-        Clear all items from the queue.
+        Clear all items from the queue (both played and unplayed).
         
         Returns:
             Number of items removed
@@ -355,10 +355,10 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
-            cursor.execute('SELECT COUNT(*) as count FROM queue_items WHERE played_at IS NULL')
+            cursor.execute('SELECT COUNT(*) as count FROM queue_items')
             count = cursor.fetchone()['count']
             
-            cursor.execute('DELETE FROM queue_items WHERE played_at IS NULL')
+            cursor.execute('DELETE FROM queue_items')
             conn.commit()
             
             self.logger.info('Cleared queue (%s items removed)', count)

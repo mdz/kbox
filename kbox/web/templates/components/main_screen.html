@@ -1,4 +1,4 @@
-<!-- Main Content (hidden when user's song is playing) -->
+<!-- Main Content -->
 <div class="main-content" id="main-content">
     <!-- Search Section -->
     <div class="section">
@@ -7,25 +7,17 @@
         <div id="search-results" class="search-results"></div>
     </div>
     
+    <!-- Now Playing Section -->
+    <div class="section now-playing" id="now-playing-section">
+        <h2>Now Playing</h2>
+        <div id="now-playing-content">
+            <!-- Rendered by JavaScript -->
+        </div>
+    </div>
+    
     <!-- Queue Section -->
     <div class="section">
         <h2>Queue</h2>
         <div id="queue-list"></div>
     </div>
-    
-    <!-- Your Song Notification (shown in main content when coming up) -->
-    <div class="section my-song-notification hidden" id="my-song-notification">
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-            <span style="font-size: 24px;">🎤</span>
-            <div style="flex: 1;">
-                <h2 style="margin: 0; color: #4a9eff;">Your Song is Coming Up!</h2>
-                <div style="font-size: 0.9em; color: #aaa; margin-top: 4px;" id="my-song-notification-text"></div>
-            </div>
-        </div>
-    </div>
-</div> <!-- End main-content -->
-
-
-
-
-
+</div>

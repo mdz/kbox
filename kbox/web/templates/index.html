@@ -257,6 +257,17 @@
             color: #666;
         }
         
+        .now-playing {
+            background: #1a2a3a;
+            border: 2px solid #4a9eff;
+            border-radius: 8px;
+        }
+        
+        .now-playing h2 {
+            color: #4a9eff;
+            margin-bottom: 10px;
+        }
+        
         .queue-item-info {
             flex: 1;
         }
@@ -473,13 +484,6 @@
             display: none;
         }
         
-        .my-song-screen {
-            display: none;
-        }
-        
-        .my-song-screen.active {
-            display: block;
-        }
     </style>
 </head>
 <body>
@@ -488,8 +492,6 @@
     {% include 'components/modals.html' %}
     
     {% include 'components/main_screen.html' %}
-    
-    {% include 'components/your_turn_screen.html' %}
     
     {% include 'components/operator_controls.html' %}
     
@@ -582,6 +584,7 @@
                 showStatus = false,
                 showThumbnail = true,
                 showUser = true,
+                showPitchControls = true,
                 additionalControls = '' // For future extensions like volume
             } = options;
             
@@ -617,39 +620,42 @@
             const hasSongInfo = (thumbnailHTML || songData.title) && (showThumbnail || songData.title);
             const songInfoSection = hasSongInfo ? `<div style="display: flex; gap: 15px; margin-bottom: 20px;">${thumbnailHTML}${infoHTML}</div>` : '';
             
-            // Build the complete HTML
-            const html = `
-                ${songInfoSection}
+            // Build pitch control section (only if enabled)
+            const pitchSection = showPitchControls ? `
                 <div style="margin-bottom: 15px;">
                     <label class="pitch-label" style="${live ? 'text-align: center; display: block; margin-bottom: 10px; color: #fff; font-weight: 500; font-size: 1.1em;' : ''}">${live ? 'Adjust Pitch (Live)' : 'Pitch Adjustment (semitones):'}</label>
                     <div id="${context}-pitch-control-container"></div>
                     ${liveText}
                 </div>
+            ` : '';
+            
+            // Build the complete HTML
+            const html = `
+                ${songInfoSection}
+                ${pitchSection}
                 ${additionalControls}
             `;
             
             container.innerHTML = html;
             
-            // Initialize pitch control
-            const pitchControlContainer = document.getElementById(`${context}-pitch-control-container`);
-            if (pitchControlContainer) {
-                pitchControlContainer.innerHTML = createPitchControlHTML(context, pitchValue, fontSize);
-                updatePitchButtons(context, pitchValue);
+            // Initialize pitch control (only if showing)
+            if (showPitchControls) {
+                const pitchControlContainer = document.getElementById(`${context}-pitch-control-container`);
+                if (pitchControlContainer) {
+                    pitchControlContainer.innerHTML = createPitchControlHTML(context, pitchValue, fontSize);
+                    updatePitchButtons(context, pitchValue);
+                }
             }
         }
         
         // Adjust pitch value with +/- buttons (reusable for all contexts)
         function adjustPitch(context, delta) {
-            // Handle special cases with immediate effect (my-song-screen and operator)
-            if (context === 'my-song-screen') {
-                adjustMySongPitch(delta);
+            // Handle special cases with immediate effect (now-playing and operator)
+            if (context === 'now-playing') {
+                adjustNowPlayingPitch(delta);
                 return;
             }
             
-            if (context === 'operator') {
-                adjustOperatorPitch(delta);
-                return;
-            }
             
             // For other contexts (add-song, edit-queue-item), just update the UI
             const inputId = context === 'add-song' ? 'add-song-pitch-input' : 
@@ -673,55 +679,6 @@
             // Update button states
             if (context === 'edit-queue-item') {
                 updatePitchButtons('edit-queue-item', newValue);
-            }
-        }
-        
-        // Adjust pitch for operator (immediate effect)
-        async function adjustOperatorPitch(delta) {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
-            // Get current pitch from input
-            const input = document.getElementById('operator-pitch-input');
-            if (!input) return;
-            
-            let currentValue = parseInt(input.value) || 0;
-            let newValue = currentValue + delta;
-            
-            // Clamp to -12 to +12 range
-            newValue = Math.max(-12, Math.min(12, newValue));
-            
-            // Update display immediately for responsive UI
-            updatePitchDisplay('operator-pitch-display', newValue);
-            input.value = newValue;
-            updatePitchButtons('operator', newValue);
-            
-            // Apply pitch change immediately via API
-            try {
-                const response = await fetch('/api/playback/pitch', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({semitones: newValue})
-                });
-                
-                if (!response.ok) {
-                    const error = await response.json();
-                    console.error('Error setting pitch:', error);
-                    // Revert display on error
-                    updatePitchDisplay('operator-pitch-display', currentValue);
-                    input.value = currentValue;
-                    updatePitchButtons('operator', currentValue);
-                    alert('Error adjusting pitch: ' + (error.detail || 'Unknown error'));
-                }
-            } catch (e) {
-                console.error('Error setting pitch:', e);
-                // Revert display on error
-                updatePitchDisplay('operator-pitch-display', currentValue);
-                input.value = currentValue;
-                updatePitchButtons('operator', currentValue);
-                alert('Error adjusting pitch');
             }
         }
         
@@ -940,42 +897,6 @@
                 
                 // Refresh queue to ensure current state is displayed
                 loadQueue();
-                
-                // Always refresh operator song settings when opening
-                const settingsContainer = document.getElementById('operator-song-settings-container');
-                if (settingsContainer) {
-                    // Get current song info from playback status
-                    fetch('/api/playback/status')
-                        .then(response => response.json())
-                        .then(statusData => {
-                            const currentSong = statusData.current_song;
-                            if (currentSong) {
-                                // Use reusable song settings component
-                                renderSongSettings('operator-song-settings-container', {
-                                    title: currentSong.title,
-                                    thumbnail_url: currentSong.thumbnail_url,
-                                    user_name: currentSong.user_name,
-                                    duration_seconds: currentSong.duration_seconds,
-                                    pitch_semitones: currentSong.pitch_semitones || 0
-                                }, {
-                                    context: 'operator',
-                                    live: true,
-                                    fontSize: 24,
-                                    showStatus: false,
-                                    showThumbnail: true,
-                                    showUser: true,
-                                    additionalControls: ''
-                                });
-                            } else {
-                                // No song playing - show message
-                                settingsContainer.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">No song currently playing</div>';
-                            }
-                        })
-                        .catch(e => {
-                            console.error('Error getting playback status:', e);
-                            settingsContainer.innerHTML = '<div style="text-align: center; color: #888; padding: 20px;">Unable to load song info</div>';
-                        });
-                }
             } else {
                 // Close controls screen
                 screen.classList.add('hidden');
@@ -1542,20 +1463,18 @@
                 // Update play/pause toggle button
                 updatePlayPauseButton(statusData.state);
                 
+                // Render Now Playing section
+                renderNowPlaying(statusData);
+                
+                // Render queue
                 const queueDiv = document.getElementById('queue-list');
                 
-                // Get current song ID from API response
-                const currentSongId = queueData.current_song_id;
-                
                 if (currentQueue.length === 0) {
-                    queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty</div>';
-                    // Hide user song notifications when queue is empty
-                    updateMySongUI(null, statusData, currentQueue);
+                    queueDiv.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">Queue is empty. Use Search to add songs!</div>';
                     return;
                 }
                 
                 queueDiv.innerHTML = '';
-                let currentSongElement = null;
                 
                 currentQueue.forEach(item => {
                     const div = document.createElement('div');
@@ -1581,138 +1500,47 @@
                     div.onclick = () => showEditQueueItemModal(item);
                     
                     queueDiv.appendChild(div);
-                    
-                    // Track current song element for scrolling
-                    if (isCurrent) {
-                        currentSongElement = div;
-                    }
                 });
-                
-                // Auto-scroll to current song
-                if (currentSongElement) {
-                    currentSongElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-                
-                // Update user song UI (notification and controls)
-                updateMySongUI(currentSongId, statusData, currentQueue);
             } catch (e) {
                 console.error('Error loading queue:', e);
             }
         }
         
-        // Update UI for user's song (notification and live controls)
-        function updateMySongUI(currentSongId, statusData, queue) {
-            if (!userName) {
-                // Hide my-song-screen if no user name
-                const mySongScreen = document.getElementById('my-song-screen');
-                const mainContent = document.getElementById('main-content');
-                if (mySongScreen) mySongScreen.classList.remove('active');
-                if (mainContent) mainContent.classList.remove('hidden');
-                return;
-            }
+        // Render Now Playing section
+        function renderNowPlaying(statusData) {
+            const container = document.getElementById('now-playing-content');
+            if (!container) return;
             
-            const notificationDiv = document.getElementById('my-song-notification');
-            const mySongScreen = document.getElementById('my-song-screen');
-            const mainContent = document.getElementById('main-content');
-            
-            // Check if user's song is currently playing
             const currentSong = statusData.current_song;
-            const isMySongPlaying = currentSong && currentSong.user_name === userName;
             
-            if (isMySongPlaying) {
-                // Hide main content (search + queue), show distinct my-song screen
-                if (mainContent) {
-                    mainContent.classList.add('hidden');
-                }
-                if (notificationDiv) {
-                    notificationDiv.classList.add('hidden');
-                }
-                if (mySongScreen) {
-                    mySongScreen.classList.add('active');
-                    
-                    // Use reusable song settings component for "your turn" screen
-                    renderSongSettings('my-song-screen-settings-container', {
-                        title: currentSong.title,
-                        thumbnail_url: currentSong.thumbnail_url,
-                        user_name: currentSong.user_name,
-                        duration_seconds: currentSong.duration_seconds,
-                        pitch_semitones: currentSong.pitch_semitones || 0
-                    }, {
-                        context: 'my-song-screen',
-                        live: true,
-                        fontSize: 32,
-                        showStatus: false,
-                        showThumbnail: true,
-                        showUser: true,
-                        additionalControls: ''
-                    });
-                }
+            if (!currentSong) {
+                container.innerHTML = '<div style="text-align: center; color: #666; padding: 15px;">Nothing playing</div>';
                 return;
             }
             
-            // Not playing user's song - show main content, hide my-song screen
-            if (mainContent) {
-                mainContent.classList.remove('hidden');
-            }
-            if (mySongScreen) {
-                mySongScreen.classList.remove('active');
-            }
+            // Check if user can control pitch (their song or operator)
+            const canControlPitch = (currentSong.user_name === userName) || isOperator;
             
-            // Check if user's song is coming up soon (within next 2 songs)
-            // Get all ready songs that haven't been played, excluding the currently playing one
-            const readySongs = queue.filter(item => 
-                item.download_status === 'ready' && 
-                !item.is_played &&
-                !item.is_current
-            );
-            
-            // Sort by position to maintain queue order
-            readySongs.sort((a, b) => (a.position || 0) - (b.position || 0));
-            
-            // Find user's songs in the ready queue
-            const mySongs = readySongs.filter(item => item.user_name === userName);
-            
-            if (mySongs.length > 0) {
-                // Find the position of the first user song in the ready queue
-                const firstMySong = mySongs[0];
-                const firstMySongIndex = readySongs.findIndex(item => item.id === firstMySong.id);
-                
-                // Show notification if user's song is within next 2 songs (index 0 = next, index 1 = after next)
-                if (firstMySongIndex >= 0 && firstMySongIndex < 2) {
-                    const songsAhead = firstMySongIndex;
-                    let notificationText = '';
-                    if (songsAhead === 0) {
-                        notificationText = `"${firstMySong.title}" is next!`;
-                    } else if (songsAhead === 1) {
-                        notificationText = `"${firstMySong.title}" is coming up in 1 song!`;
-                    }
-                    
-                    if (notificationDiv && notificationText) {
-                        document.getElementById('my-song-notification-text').textContent = notificationText;
-                        notificationDiv.classList.remove('hidden');
-                    }
-                } else {
-                    if (notificationDiv) {
-                        notificationDiv.classList.add('hidden');
-                    }
-                }
-            } else {
-                if (notificationDiv) {
-                    notificationDiv.classList.add('hidden');
-                }
-            }
-            
+            renderSongSettings('now-playing-content', {
+                title: currentSong.title,
+                thumbnail_url: currentSong.thumbnail_url,
+                user_name: currentSong.user_name,
+                duration_seconds: currentSong.duration_seconds,
+                pitch_semitones: currentSong.pitch_semitones || 0
+            }, {
+                context: 'now-playing',
+                live: canControlPitch,
+                showStatus: false,
+                showThumbnail: true,
+                showUser: true,
+                showPitchControls: canControlPitch
+            });
         }
         
-        // Adjust pitch for user's own song (immediate effect) - uses 'my-song-screen' prefix
-        async function adjustMySongPitch(delta) {
-            if (!userName) {
-                alert('Please set your name first');
-                return;
-            }
-            
+        // Adjust pitch for now-playing song (immediate effect)
+        async function adjustNowPlayingPitch(delta) {
             // Get current pitch from input
-            const input = document.getElementById('my-song-screen-pitch-input');
+            const input = document.getElementById('now-playing-pitch-input');
             if (!input) return;
             
             let currentValue = parseInt(input.value) || 0;
@@ -1722,9 +1550,9 @@
             newValue = Math.max(-12, Math.min(12, newValue));
             
             // Update display immediately for responsive UI
-            updatePitchDisplay('my-song-screen-pitch-display', newValue, 32);
+            updatePitchDisplay('now-playing-pitch-display', newValue);
             input.value = newValue;
-            updatePitchButtons('my-song-screen', newValue);
+            updatePitchButtons('now-playing', newValue);
             
             // Apply pitch change immediately via API
             try {
@@ -1741,17 +1569,17 @@
                     const error = await response.json();
                     console.error('Error setting pitch:', error);
                     // Revert display on error
-                    updatePitchDisplay('my-song-screen-pitch-display', currentValue, 32);
+                    updatePitchDisplay('now-playing-pitch-display', currentValue);
                     input.value = currentValue;
-                    updatePitchButtons('my-song-screen', currentValue);
+                    updatePitchButtons('now-playing', currentValue);
                     alert('Error adjusting pitch: ' + (error.detail || 'Unknown error'));
                 }
             } catch (e) {
                 console.error('Error setting pitch:', e);
                 // Revert display on error
-                updatePitchDisplay('my-song-screen-pitch-display', currentValue, 32);
+                updatePitchDisplay('now-playing-pitch-display', currentValue);
                 input.value = currentValue;
-                updatePitchButtons('my-song-screen', currentValue);
+                updatePitchButtons('now-playing', currentValue);
                 alert('Error adjusting pitch');
             }
         }
@@ -1770,15 +1598,15 @@
         
         // Show/hide buffering indicator
         function showBufferingIndicator(show) {
-            const settingsContainer = document.getElementById('operator-song-settings-container');
-            if (!settingsContainer) return;
+            const container = document.getElementById('now-playing-content');
+            if (!container) return;
             
             if (show) {
                 // Show buffering message
-                settingsContainer.innerHTML = '<div style="text-align: center; color: #4a9eff; padding: 20px; font-size: 18px;">⏳ Starting playback...</div>';
+                container.innerHTML = '<div style="text-align: center; color: #4a9eff; padding: 20px; font-size: 18px;">⏳ Starting playback...</div>';
             } else {
                 // Clear buffering message - loadQueue will refresh the content
-                settingsContainer.innerHTML = '';
+                container.innerHTML = '';
             }
         }
         
@@ -1879,14 +1707,6 @@
             }
         }
         
-        // Set pitch (operator only) - kept for backwards compatibility but no longer used
-        // Operator pitch is now live via adjustOperatorPitch
-        async function setPitch() {
-            // This function is deprecated - operator pitch is now live
-            // Keeping for backwards compatibility but it should not be called
-            console.warn('setPitch() is deprecated - operator pitch is now live');
-        }
-        
         // Clear queue
         async function clearQueue() {
             if (!isOperator) {
@@ -1899,7 +1719,7 @@
             try {
                 const response = await fetch('/api/queue/clear', {method: 'POST'});
                 if (response.ok) {
-        loadQueue();
+                    loadQueue();
                 } else {
                     alert('Error clearing queue');
                 }
