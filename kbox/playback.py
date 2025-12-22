@@ -358,8 +358,8 @@ class PlaybackController:
                 playback_position_end=current_position
             )
             
-            # Save playback position so user can resume later if they navigate back
-            self.queue_manager.update_playback_position(self.current_song['id'], int(current_position) if current_position else 0)
+            # Clear playback position - songs always start fresh when navigated away from
+            self.queue_manager.update_playback_position(self.current_song['id'], 0)
             
             # Stop current playback (but do NOT mark as played)
             self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song['id'], next_song['id'])
@@ -393,14 +393,12 @@ class PlaybackController:
                 self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
                 return False
             
-            # Save current playback position if there's a current song
+            # Clear current song's position and stop playback
             if self.current_song:
-                current_position = self.streaming_controller.get_position()
-                if current_position is not None:
-                    self.queue_manager.update_playback_position(self.current_song['id'], int(current_position))
+                self.queue_manager.update_playback_position(self.current_song['id'], 0)
                 self.streaming_controller.stop_playback()
             
-            # Override resume position if provided
+            # Override resume position if provided (for crash recovery)
             if resume_position and resume_position > 0:
                 song = dict(song)  # Copy to avoid modifying cached item
                 song['playback_position_seconds'] = resume_position
@@ -431,10 +429,8 @@ class PlaybackController:
                 self.logger.info('No previous song available')
                 return False
             
-            # Save current playback position
-            current_position = self.streaming_controller.get_position()
-            if current_position is not None:
-                self.queue_manager.update_playback_position(self.current_song['id'], int(current_position))
+            # Clear playback position - songs always start fresh when navigated away from
+            self.queue_manager.update_playback_position(self.current_song['id'], 0)
             
             # Stop current playback (but do NOT mark as played or record history)
             self.streaming_controller.stop_playback()

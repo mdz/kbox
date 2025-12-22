@@ -211,14 +211,27 @@ def create_app(
     @app.delete("/api/queue/{item_id}")
     async def remove_song(
         item_id: int,
+        user_name: Optional[str] = None,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         is_operator: bool = Depends(check_operator),
     ):
-        """Remove song from queue (operator only)."""
+        """
+        Remove song from queue.
+        
+        Operators can remove any song. Users can remove their own songs
+        by providing their user_name as a query parameter.
+        """
+        # Get the item to check ownership
+        item = queue_mgr.get_item(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+
+        # Check permissions: operator can remove any, users can only remove their own
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            if not user_name or user_name != item["user_name"]:
+                raise HTTPException(
+                    status_code=403, detail="You can only remove songs you added"
+                )
 
         if not queue_mgr.remove_song(item_id):
             raise HTTPException(status_code=404, detail="Queue item not found")
@@ -317,6 +330,55 @@ def create_app(
         if not queue_mgr.reorder_song(item_id, max_position):
             raise HTTPException(status_code=404, detail="Queue item not found")
         return {"status": "moved_to_end"}
+
+    @app.post("/api/queue/{item_id}/bump-down")
+    async def bump_down(
+        item_id: int,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+        is_operator: bool = Depends(check_operator),
+        playback: PlaybackController = Depends(get_playback_controller),
+    ):
+        """Move song down 1 position (for no-shows). Operator only.
+        
+        If the song is currently playing, this also skips to the next song.
+        """
+        if not is_operator:
+            raise HTTPException(
+                status_code=403, detail="Operator authentication required"
+            )
+
+        # Get current item and queue
+        item = queue_mgr.get_item(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+
+        current_position = item.get("position", 0)
+        queue = queue_mgr.get_queue()
+        max_position = max((q.get("position", 0) for q in queue), default=0)
+
+        # Move down 1 position, but not past the end
+        new_position = min(current_position + 1, max_position)
+
+        if new_position == current_position:
+            # Already at the end
+            return {"status": "already_at_end", "position": current_position}
+
+        # Check if this is the currently playing song
+        is_currently_playing = (
+            playback and 
+            playback.current_song and 
+            playback.current_song.get('id') == item_id
+        )
+
+        if not queue_mgr.reorder_song(item_id, new_position):
+            raise HTTPException(status_code=404, detail="Failed to move song")
+        
+        # If this was the currently playing song, go to previous (which is now the song that moved up)
+        if is_currently_playing:
+            playback.previous()
+            return {"status": "bumped_down_and_skipped", "old_position": current_position, "new_position": new_position}
+        
+        return {"status": "bumped_down", "old_position": current_position, "new_position": new_position}
 
     @app.post("/api/queue/clear")
     async def clear_queue(

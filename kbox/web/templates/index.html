@@ -1152,8 +1152,12 @@
             
             // Show/hide operator options based on operator status
             const operatorOptions = document.getElementById('edit-queue-item-operator-options');
+            const userOptions = document.getElementById('edit-queue-item-user-options');
+            const isOwnSong = userName && item.user_name === userName;
+            
             if (isOperator) {
                 operatorOptions.style.display = 'block';
+                userOptions.style.display = 'none'; // Operators use the full operator controls
                 
                 // Enable/disable "Play Now" button based on download status
                 const playNowButton = document.getElementById('play-now-button');
@@ -1169,6 +1173,8 @@
                 }
             } else {
                 operatorOptions.style.display = 'none';
+                // Show user options (remove own song) only for their own songs
+                userOptions.style.display = isOwnSong ? 'block' : 'none';
             }
             
             // Show modal
@@ -1288,6 +1294,44 @@
             
             try {
                 const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {method: 'DELETE'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error removing song');
+            }
+        }
+        
+        // Bump down in queue (move 3 positions down) - operator only
+        async function bumpDownQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/bump-down`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error bumping song down');
+            }
+        }
+        
+        // Remove own song from queue - for regular users
+        async function removeOwnQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            if (!confirm(`Remove "${currentQueueItemToEdit.title}" from queue?`)) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}?user_name=${encodeURIComponent(userName)}`, {method: 'DELETE'});
                 if (response.ok) {
                     cancelEditQueueItem();
                     loadQueue();
