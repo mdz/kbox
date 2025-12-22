@@ -69,7 +69,7 @@ def playback_controller(mock_queue_manager, mock_streaming_controller, mock_conf
 def test_initial_state(playback_controller):
     """Test initial playback state."""
     assert playback_controller.state == PlaybackState.IDLE
-    assert playback_controller.current_song is None
+    assert playback_controller.current_song_id is None
 
 
 def test_play_no_ready_songs(playback_controller, mock_queue_manager):
@@ -102,7 +102,7 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager,
     
     assert result is True
     assert playback_controller.state == PlaybackState.PLAYING
-    assert playback_controller.current_song == mock_song
+    assert playback_controller.current_song_id == 1
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4')
     # Song should NOT be marked as played when it starts - only when it finishes
@@ -158,15 +158,20 @@ def test_resume(playback_controller, mock_streaming_controller):
 
 def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test skipping to next song."""
-    playback_controller.current_song = {
+    current_song = {
         'id': 1,
         'title': 'Current Song',
         'user_name': 'Alice',
         'youtube_video_id': 'abc123',
+        'duration_seconds': 180,
         'pitch_semitones': 0,
         'playback_position_seconds': 0
     }
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
+    
+    # Mock get_item to return current song data
+    mock_queue_manager.get_item.return_value = current_song
     
     mock_next_song = {
         'id': 2,
@@ -201,13 +206,17 @@ def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streami
         'title': 'Current Song',
         'user_name': 'Alice',
         'youtube_video_id': 'abc123',
+        'duration_seconds': 180,
         'pitch_semitones': 0,
         'playback_position_seconds': 0,
         'download_status': QueueManager.STATUS_READY,
         'played_at': None
     }
-    playback_controller.current_song = current_song
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
+    
+    # Mock get_item to return current song data
+    mock_queue_manager.get_item.return_value = current_song
     # Mock get_next_song_after to return None (no next song)
     mock_queue_manager.get_next_song_after.return_value = None
     
@@ -222,20 +231,19 @@ def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streami
 
 def test_set_pitch(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test setting pitch for current song."""
-    playback_controller.current_song = {'id': 1, 'pitch_semitones': 0}
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
     
     result = playback_controller.set_pitch(3)
     
     assert result is True
-    assert playback_controller.current_song['pitch_semitones'] == 3
     mock_queue_manager.update_pitch.assert_called_once_with(1, 3)
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(3)
 
 
 def test_set_pitch_no_current_song(playback_controller):
     """Test setting pitch when no current song."""
-    playback_controller.current_song = None
+    playback_controller.current_song_id = None
     
     result = playback_controller.set_pitch(3)
     
@@ -244,15 +252,20 @@ def test_set_pitch_no_current_song(playback_controller):
 
 def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test handling end of song."""
-    playback_controller.current_song = {
+    current_song = {
         'id': 1,
         'title': 'Song 1',
         'user_name': 'Alice',
         'youtube_video_id': 'abc123',
+        'duration_seconds': 180,
         'pitch_semitones': 0,
         'playback_position_seconds': 0
     }
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
+    
+    # Mock get_item to return current song data
+    mock_queue_manager.get_item.return_value = current_song
     
     mock_next_song = {
         'id': 2,
@@ -264,13 +277,15 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
         'played_at': None,
         'playback_position_seconds': 0
     }
-    # Mock get_queue to return the next song
-    mock_queue_manager.get_queue.return_value = [mock_next_song]
+    # Mock get_next_song_after to return the next song
+    mock_queue_manager.get_next_song_after.return_value = mock_next_song
     
     playback_controller.on_song_end()
     
     # Should mark current song as played
     mock_queue_manager.mark_played.assert_called_once_with(1)
+    # Should call get_next_song_after with the finished song's ID
+    mock_queue_manager.get_next_song_after.assert_called_once_with(1)
     # Should reset pitch
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
     # Should display transition interstitial image
@@ -283,32 +298,44 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
 
 def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test end of song when no next song."""
-    playback_controller.current_song = {
+    current_song = {
         'id': 1,
         'title': 'Song 1',
         'user_name': 'Alice',
         'youtube_video_id': 'abc123',
+        'duration_seconds': 180,
         'pitch_semitones': 0,
         'playback_position_seconds': 0
     }
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
-    mock_queue_manager.get_queue.return_value = []
+    
+    # Mock get_item to return current song data
+    mock_queue_manager.get_item.return_value = current_song
+    # Mock get_next_song_after to return None (no next song)
+    mock_queue_manager.get_next_song_after.return_value = None
     
     playback_controller.on_song_end()
     
     # Should mark current song as played
     mock_queue_manager.mark_played.assert_called_once_with(1)
-    assert playback_controller.current_song is None
+    # Should call get_next_song_after with the finished song's ID
+    mock_queue_manager.get_next_song_after.assert_called_once_with(1)
+    assert playback_controller.current_song_id is None
     assert playback_controller.state == PlaybackState.IDLE
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(0)
     # Should display end-of-queue interstitial image
     mock_streaming_controller.display_image.assert_called_once()
 
 
-def test_get_status(playback_controller):
+def test_get_status(playback_controller, mock_queue_manager):
     """Test getting playback status."""
-    playback_controller.current_song = {'id': 1, 'title': 'Test Song'}
+    song = {'id': 1, 'title': 'Test Song'}
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
+    
+    # Mock get_item to return song data
+    mock_queue_manager.get_item.return_value = song
     
     status = playback_controller.get_status()
     
@@ -324,7 +351,7 @@ def test_jump_to_song_while_playing(playback_controller, mock_queue_manager,
     instead of stop_playback(), which destroyed the pipeline.
     """
     # Set up current song playing
-    playback_controller.current_song = {'id': 1, 'title': 'Current Song'}
+    playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
     
     mock_song = {
@@ -346,5 +373,262 @@ def test_jump_to_song_while_playing(playback_controller, mock_queue_manager,
     mock_streaming_controller.stop_playback.assert_called_once()
     mock_streaming_controller.stop.assert_not_called()
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/new.mp4')
+
+
+def test_play_now_moves_song_to_current_position(playback_controller, mock_queue_manager,
+                                                  mock_streaming_controller):
+    """Test play_now moves song ahead of currently playing song and plays it."""
+    # Set up current song playing at position 5
+    current_song = {
+        'id': 1,
+        'title': 'Current Song',
+        'position': 5,
+        'user_name': 'Alice',
+        'download_path': '/path/to/current.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 0
+    }
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    
+    # Song to play now is at position 10
+    target_song = {
+        'id': 3,
+        'title': 'Play Now Song',
+        'position': 10,
+        'user_name': 'Bob',
+        'download_path': '/path/to/playnow.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 0
+    }
+    
+    # After reordering, song is at position 5
+    target_song_after_reorder = target_song.copy()
+    target_song_after_reorder['position'] = 5
+    
+    # Mock get_item to return current song first (for position query),
+    # then target song, then target song after reordering
+    mock_queue_manager.get_item.side_effect = [target_song, current_song, target_song_after_reorder]
+    mock_queue_manager.reorder_song.return_value = True
+    
+    result = playback_controller.play_now(3)
+    
+    assert result is True
+    # Should move song to position 5 (current song's position)
+    mock_queue_manager.reorder_song.assert_called_once_with(3, 5)
+    # Should stop current playback
+    mock_streaming_controller.stop_playback.assert_called_once()
+    # Should load and play the new song
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/playnow.mp4')
+    assert playback_controller.current_song_id == 3
+
+
+def test_play_now_when_idle(playback_controller, mock_queue_manager,
+                            mock_streaming_controller):
+    """Test play_now plays song at current position when nothing is playing."""
+    # No current song
+    playback_controller.current_song_id = None
+    playback_controller.state = PlaybackState.IDLE
+    
+    # Song to play now is at position 10
+    target_song = {
+        'id': 3,
+        'title': 'Play Now Song',
+        'position': 10,
+        'user_name': 'Bob',
+        'download_path': '/path/to/playnow.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 0
+    }
+    
+    # Mock get_item to return the song
+    mock_queue_manager.get_item.return_value = target_song
+    
+    result = playback_controller.play_now(3)
+    
+    assert result is True
+    # Should NOT reorder when idle - just play at current position
+    mock_queue_manager.reorder_song.assert_not_called()
+    # Should not stop playback (nothing playing)
+    mock_streaming_controller.stop_playback.assert_not_called()
+    # Should load and play the song at its current position (10)
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/playnow.mp4')
+    assert playback_controller.current_song_id == 3
+
+
+def test_play_now_song_not_ready(playback_controller, mock_queue_manager):
+    """Test play_now fails when song is not ready."""
+    target_song = {
+        'id': 3,
+        'title': 'Not Ready Song',
+        'position': 10,
+        'download_status': QueueManager.STATUS_PENDING,
+    }
+    mock_queue_manager.get_item.return_value = target_song
+    
+    result = playback_controller.play_now(3)
+    
+    assert result is False
+    # Should not attempt to reorder
+    mock_queue_manager.reorder_song.assert_not_called()
+
+
+def test_move_to_next_with_stale_position_cache(playback_controller, mock_queue_manager,
+                                                 mock_streaming_controller):
+    """Test that move_to_next uses fresh position data, not stale cache.
+    
+    Regression test: After queue reordering operations, the cached position
+    in self.current_song['position'] becomes stale. move_to_next should query
+    fresh position from database, not use the cached value.
+    """
+    # Currently playing song
+    playback_controller.current_song_id = 10
+    playback_controller.state = PlaybackState.PLAYING
+    
+    # In the database, current song is at position 5 (fresh data)
+    current_song_fresh = {
+        'id': 10,
+        'position': 5,
+        'title': 'Currently Playing',
+        'user_name': 'Alice',
+        'download_path': '/path/to/current.mp4',
+        'download_status': QueueManager.STATUS_READY,
+        'pitch_semitones': 0
+    }
+    
+    # Song to move to "play next" 
+    song_to_move = {
+        'id': 20,
+        'position': 8,
+        'title': 'Move This Next',
+        'download_status': QueueManager.STATUS_READY
+    }
+    
+    # Mock: get_item returns fresh data with correct position
+    def get_item_side_effect(item_id):
+        if item_id == 10:
+            return current_song_fresh  # Fresh position = 5
+        elif item_id == 20:
+            return song_to_move
+        return None
+    
+    mock_queue_manager.get_item.side_effect = get_item_side_effect
+    mock_queue_manager.reorder_song.return_value = True
+    
+    # Call move_to_next
+    result = playback_controller.move_to_next(20)
+    
+    assert result is True
+    
+    # BUG: With stale cache, it calculates: 3 + 1 = 4 (WRONG!)
+    # CORRECT: Should query fresh position: 5 + 1 = 6
+    # This assertion will FAIL, demonstrating the bug
+    mock_queue_manager.reorder_song.assert_called_once_with(20, 6)
+
+
+def test_on_song_end_plays_next_in_queue_order(playback_controller, mock_queue_manager, 
+                                                mock_streaming_controller):
+    """Test that on_song_end plays the next song by position, not first unplayed.
+    
+    This is a regression test for the bug where after a song ends, the system
+    plays the first unplayed ready song instead of the next song by position.
+    """
+    import time
+    
+    # Song at position 2 is currently playing
+    current_song = {
+        'id': 10,
+        'position': 2,
+        'title': 'Song at Position 2',
+        'user_name': 'TestUser',
+        'youtube_video_id': 'vid10',
+        'duration_seconds': 180,
+        'pitch_semitones': 0,
+        'playback_position_seconds': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'download_path': '/path/to/song10.mp4'
+    }
+    playback_controller.current_song_id = 10
+    playback_controller.state = PlaybackState.PLAYING
+    
+    # Mock get_item to return current song data
+    mock_queue_manager.get_item.return_value = current_song
+    
+    # Queue has songs in this order (positions matter!):
+    # Position 1: Song ID 5 (already played, not in unplayed list)
+    # Position 2: Song ID 10 (currently playing)
+    # Position 3: Song ID 15 (SHOULD play next)
+    # Position 4: Song ID 20
+    # Position 5: Song ID 25
+    
+    song_at_position_3 = {
+        'id': 15,
+        'position': 3,
+        'title': 'Song at Position 3',
+        'user_name': 'TestUser',
+        'youtube_video_id': 'vid15',
+        'download_path': '/path/to/song15.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 0
+    }
+    
+    song_at_position_4 = {
+        'id': 20,
+        'position': 4,
+        'title': 'Song at Position 4',
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None
+    }
+    
+    song_at_position_5 = {
+        'id': 25,
+        'position': 5,
+        'title': 'Song at Position 5',
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None
+    }
+    
+    # Mock get_queue to return unplayed songs (excludes the one that just finished)
+    mock_queue_manager.get_queue.return_value = [
+        song_at_position_3,
+        song_at_position_4,
+        song_at_position_5
+    ]
+    
+    # Mock get_next_song_after to return the song at position 3
+    mock_queue_manager.get_next_song_after.return_value = song_at_position_3
+    
+    mock_queue_manager.mark_played.return_value = True
+    mock_queue_manager.record_playback_history.return_value = 1
+    mock_streaming_controller.get_position.return_value = 150
+    
+    # Simulate song ending
+    playback_controller.on_song_end()
+    
+    # Should have marked current song as played
+    mock_queue_manager.mark_played.assert_called_once_with(10)
+    
+    # Wait for transition timer (set to 0 in fixture)
+    time.sleep(0.2)
+    
+    # The bug: without the fix, it plays the first song in the unplayed list (id=15 at position 3)
+    # which is correct! But if positions were shuffled, it would play the wrong one.
+    # 
+    # Better test: if song at position 5 (id=25) was first in the list returned by get_queue
+    # due to some bug, it should still play song at position 3 (id=15) because that's NEXT.
+    
+    # The key assertion: should call get_next_song_after with the ID of the song that just ended
+    mock_queue_manager.get_next_song_after.assert_called_once_with(10)
+    
+    # Should have started playing the next song
+    assert playback_controller._next_song_pending == song_at_position_3
 
 

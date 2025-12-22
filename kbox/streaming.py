@@ -577,6 +577,10 @@ class StreamingController:
             )
             if success:
                 self.logger.info('Seeked to position: %s seconds', position_seconds)
+                # Track last seek position and time to handle stale position queries
+                import time
+                self._last_seek_position = position_seconds
+                self._last_seek_time = time.time()
             else:
                 self.logger.warning('Seek failed')
             return success

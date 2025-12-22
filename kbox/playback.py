@@ -41,7 +41,7 @@ class PlaybackController:
         
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.IDLE
-        self.current_song: Optional[Dict[str, Any]] = None
+        self.current_song_id: Optional[int] = None
         self.lock = threading.Lock()
         
         # Transition/interstitial state
@@ -70,7 +70,7 @@ class PlaybackController:
             import time
             while self._monitoring_notifications:
                 try:
-                    if self.state == PlaybackState.PLAYING and self.current_song:
+                    if self.state == PlaybackState.PLAYING and self.current_song_id:
                         position = self.streaming_controller.get_position()
                         if position is not None:
                             # Check if we should show "up next" notification
@@ -95,10 +95,15 @@ class PlaybackController:
         if self._up_next_shown:
             return  # Already shown for this song
         
-        if not self.current_song:
+        if not self.current_song_id:
             return
         
-        duration = self.current_song.get('duration_seconds')
+        # Get current song data to check duration
+        current_song = self.queue_manager.get_item(self.current_song_id)
+        if not current_song:
+            return
+        
+        duration = current_song.get('duration_seconds')
         if not duration or duration <= 0:
             return
         
@@ -106,7 +111,7 @@ class PlaybackController:
         time_remaining = duration - current_position
         if time_remaining <= 15:
             # Get next song
-            next_song = self.queue_manager.get_next_song_after(self.current_song['id'])
+            next_song = self.queue_manager.get_next_song_after(self.current_song_id)
             if next_song:
                 notification_text = f"Up next: {next_song['user_name']}"
                 self.streaming_controller.show_notification(notification_text, duration_seconds=10.0)
@@ -207,8 +212,12 @@ class PlaybackController:
                 self._handle_error(song['id'], f'Playback failed: {str(e)}')
                 return False
             
-            # Mark as current song
-            self.current_song = song
+            # Mark song ID as currently playing
+            # NOTE: This is one of only 3 places current_song_id is mutated:
+            #   1. _play_song() - sets it when starting playback
+            #   2. _stop_internal() - clears it when stopping playback
+            #   3. on_song_end() - clears it when song finishes naturally
+            self.current_song_id = song['id']
             self.state = PlaybackState.PLAYING
             
             self.logger.info('Playback started: %s', song['title'])
@@ -241,6 +250,18 @@ class PlaybackController:
                 self.logger.error('Error pausing playback: %s', e, exc_info=True)
                 return False
     
+    def _stop_internal(self):
+        """
+        Stop playback and clear current song.
+        
+        Helper method for stopping playback. Assumes lock is already held.
+        This is the ONLY place (besides _play_song) where current_song_id should be mutated.
+        """
+        self.streaming_controller.stop_playback()
+        self.current_song_id = None
+        self.state = PlaybackState.IDLE
+        self.show_idle_screen()
+    
     def stop_playback(self) -> bool:
         """
         Stop current playback and return to idle state.
@@ -257,18 +278,13 @@ class PlaybackController:
                 self._transition_timer = None
             self._next_song_pending = None
             
-            if not self.current_song and self.state == PlaybackState.IDLE:
+            if not self.current_song_id and self.state == PlaybackState.IDLE:
                 self.logger.debug('Already idle, nothing to stop')
                 return False
             
             self.logger.info('Stopping playback')
             try:
-                self.streaming_controller.stop_playback()
-                self.current_song = None
-                self.state = PlaybackState.IDLE
-                
-                # Show idle screen
-                self.show_idle_screen()
+                self._stop_internal()
                 return True
             except Exception as e:
                 self.logger.error('Error stopping playback: %s', e, exc_info=True)
@@ -287,12 +303,18 @@ class PlaybackController:
         with self.lock:
             self.logger.info('Skipping current song')
             
-            if not self.current_song:
+            if not self.current_song_id:
                 self.logger.info('No current song, trying to start playback')
                 return self._load_and_play_next()
             
+            # Get current song data for history
+            current_song = self.queue_manager.get_item(self.current_song_id)
+            if not current_song:
+                self.logger.error('Current song ID %s not found', self.current_song_id)
+                return False
+            
             # Get next song after current
-            next_song = self.queue_manager.get_next_song_after(self.current_song['id'])
+            next_song = self.queue_manager.get_next_song_after(self.current_song_id)
             
             if not next_song:
                 self.logger.info('No next song available to skip to')
@@ -302,18 +324,18 @@ class PlaybackController:
             current_position = self.streaming_controller.get_position() or 0
             
             self.queue_manager.record_playback_history(
-                queue_item_id=self.current_song['id'],
-                user_name=self.current_song['user_name'],
-                youtube_video_id=self.current_song['youtube_video_id'],
-                title=self.current_song['title'],
-                duration_seconds=self.current_song.get('duration_seconds'),
-                pitch_semitones=self.current_song.get('pitch_semitones', 0),
+                queue_item_id=current_song['id'],
+                user_name=current_song['user_name'],
+                youtube_video_id=current_song['youtube_video_id'],
+                title=current_song['title'],
+                duration_seconds=current_song.get('duration_seconds'),
+                pitch_semitones=current_song.get('pitch_semitones', 0),
                 playback_position_start=0,
                 playback_position_end=current_position
             )
             
             # Stop current playback (but do NOT mark as played)
-            self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song['id'], next_song['id'])
+            self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
             self.streaming_controller.stop_playback()
             self.logger.debug('[DEBUG] skip: after stop_playback')
             
@@ -345,11 +367,90 @@ class PlaybackController:
                 return False
             
             # Stop current playback
-            if self.current_song:
+            if self.current_song_id:
                 self.streaming_controller.stop_playback()
             
             # Load and play the target song (always from beginning)
             return self._play_song(song)
+    
+    def play_now(self, item_id: int) -> bool:
+        """
+        Play a song immediately.
+        
+        If a song is currently playing, moves this song ahead of it and plays immediately.
+        If playback is stopped, just plays the song at its current position.
+        
+        Args:
+            item_id: ID of the queue item to play now
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        with self.lock:
+            self.logger.info('Playing song ID %s now', item_id)
+            
+            # Get the song from queue
+            song = self.queue_manager.get_item(item_id)
+            if not song:
+                self.logger.warning('Song %s not found in queue', item_id)
+                return False
+            
+            # Check if song is ready
+            if song['download_status'] != QueueManager.STATUS_READY:
+                self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
+                return False
+            
+            # If something is currently playing, move this song ahead of it
+            if self.current_song_id:
+                # Query fresh position from database
+                current_song = self.queue_manager.get_item(self.current_song_id)
+                if not current_song:
+                    self.logger.error('Current song ID %s not found', self.current_song_id)
+                    return False
+                
+                target_position = current_song.get('position', 1)
+                
+                self.logger.info('Moving song %s to position %s (ahead of current)', item_id, target_position)
+                
+                # Move the song to the current position
+                if not self.queue_manager.reorder_song(item_id, target_position):
+                    self.logger.error('Failed to reorder song %s to position %s', item_id, target_position)
+                    return False
+                
+                # Stop current playback
+                self.streaming_controller.stop_playback()
+                
+                # Refresh song data after reordering (position has changed)
+                song = self.queue_manager.get_item(item_id)
+                if not song:
+                    self.logger.error('Song %s not found after reordering', item_id)
+                    return False
+            else:
+                # Nothing playing - just play the song at its current position
+                self.logger.info('No song playing, playing song %s at position %s', item_id, song.get('position'))
+            
+            # Load and play the song (always from beginning)
+            return self._play_song(song)
+    
+    def _switch_to_song(self, song: Dict[str, Any]) -> bool:
+        """
+        Stop current playback and switch to a different song.
+        
+        Helper method for navigation operations (previous, bump_down, etc).
+        Assumes lock is already held.
+        
+        Args:
+            song: Queue item to play
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        # Stop current playback (but do NOT mark as played or record history)
+        if self.current_song_id:
+            self.streaming_controller.stop_playback()
+        
+        # Load and play the song (from beginning)
+        return self._play_song(song)
     
     def previous(self) -> bool:
         """
@@ -363,22 +464,198 @@ class PlaybackController:
         with self.lock:
             self.logger.info('Going to previous song')
             
-            if not self.current_song:
+            if not self.current_song_id:
                 self.logger.info('No current song, cannot go to previous')
                 return False
             
             # Get previous song before current
-            prev_song = self.queue_manager.get_previous_song_before(self.current_song['id'])
+            prev_song = self.queue_manager.get_previous_song_before(self.current_song_id)
             
             if not prev_song:
                 self.logger.info('No previous song available')
                 return False
             
-            # Stop current playback (but do NOT mark as played or record history)
-            self.streaming_controller.stop_playback()
+            # Switch to the previous song
+            return self._switch_to_song(prev_song)
+    
+    def bump_down(self, item_id: int) -> Dict[str, Any]:
+        """
+        Bump a song down one position in the queue.
+        
+        If the song is currently playing, skip to the next song.
+        When that song completes, the bumped song will play.
+        
+        Args:
+            item_id: ID of the queue item to bump down
+        
+        Returns:
+            Dictionary with status information:
+            - status: 'bumped_down', 'bumped_down_and_skipped', or 'already_at_end'
+            - old_position: Original position
+            - new_position: New position
+        """
+        with self.lock:
+            self.logger.info('Bumping down song %s', item_id)
             
-            # Load and play the previous song (from beginning)
-            return self._play_song(prev_song)
+            # Get current item
+            item = self.queue_manager.get_item(item_id)
+            if not item:
+                self.logger.warning('Song %s not found', item_id)
+                return {'status': 'not_found'}
+            
+            current_position = item.get('position', 0)
+            
+            # Get max position
+            queue = self.queue_manager.get_queue()
+            max_position = max((q.get('position', 0) for q in queue), default=0)
+            
+            # Calculate new position (down 1, but not past the end)
+            new_position = min(current_position + 1, max_position)
+            
+            if new_position == current_position:
+                # Already at the end
+                self.logger.info('Song %s already at end of queue', item_id)
+                return {
+                    'status': 'already_at_end',
+                    'position': current_position
+                }
+            
+            # Check if this is the currently playing song
+            is_currently_playing = (
+                self.current_song_id is not None and 
+                self.current_song_id == item_id
+            )
+            
+            # Reorder the song
+            if not self.queue_manager.reorder_song(item_id, new_position):
+                self.logger.error('Failed to reorder song %s', item_id)
+                return {'status': 'error'}
+            
+            # If currently playing, play the song that moved up to take its place
+            if is_currently_playing:
+                self.logger.info('Bumped song was playing, playing song that moved up')
+                
+                # Find the song now at the old position (the one that moved up)
+                # After reordering, the song that was at position+1 is now at position
+                song_at_old_position = None
+                updated_queue = self.queue_manager.get_queue()
+                for song in updated_queue:
+                    if song.get('position') == current_position:
+                        song_at_old_position = song
+                        break
+                
+                if song_at_old_position and song_at_old_position.get('download_status') == QueueManager.STATUS_READY:
+                    # Play the song that moved up
+                    self._switch_to_song(song_at_old_position)
+                    return {
+                        'status': 'bumped_down_and_skipped',
+                        'old_position': current_position,
+                        'new_position': new_position
+                    }
+                else:
+                    # No ready song at that position, stop playback
+                    self.logger.info('No ready song to play after bump down, going idle')
+                    self._stop_internal()
+                    return {
+                        'status': 'bumped_down_and_stopped',
+                        'old_position': current_position,
+                        'new_position': new_position
+                    }
+            
+            return {
+                'status': 'bumped_down',
+                'old_position': current_position,
+                'new_position': new_position
+            }
+    
+    def move_to_next(self, item_id: int) -> bool:
+        """
+        Move a song to play next in the queue.
+        
+        If a song is currently playing, moves the song to position+1 after it.
+        Otherwise, moves to position 1 (front of queue).
+        
+        If the currently playing song is moved, its position is updated.
+        
+        Args:
+            item_id: ID of the queue item to move
+        
+        Returns:
+            True if successful, False if item not found
+        """
+        with self.lock:
+            self.logger.info('Moving song %s to play next', item_id)
+            
+            # Determine target position based on current playback
+            if self.current_song_id:
+                # Query fresh position from database
+                current_song = self.queue_manager.get_item(self.current_song_id)
+                if not current_song:
+                    self.logger.error('Current song ID %s not found', self.current_song_id)
+                    return False
+                target_position = current_song.get('position', 1) + 1
+            else:
+                target_position = 1
+            
+            # Check if this is the currently playing song
+            is_currently_playing = (
+                self.current_song_id is not None and 
+                self.current_song_id == item_id
+            )
+            
+            # Reorder the song
+            if not self.queue_manager.reorder_song(item_id, target_position):
+                self.logger.error('Failed to move song %s to next', item_id)
+                return False
+            
+            # Note: No need to update current_song_id - the ID doesn't change,
+            # only the position in the database changes
+            if is_currently_playing:
+                self.logger.info('Currently playing song moved to position %s', target_position)
+            
+            return True
+    
+    def move_to_end(self, item_id: int) -> bool:
+        """
+        Move a song to the end of the queue.
+        
+        If the song is currently playing, playback continues but the
+        current_song position is updated to reflect its new location.
+        
+        Args:
+            item_id: ID of the queue item to move
+        
+        Returns:
+            True if successful, False if item not found
+        """
+        with self.lock:
+            self.logger.info('Moving song %s to end of queue', item_id)
+            
+            # Get max position
+            queue = self.queue_manager.get_queue()
+            if not queue:
+                self.logger.warning('Cannot move to end - queue is empty')
+                return False
+            
+            max_position = max((item.get('position', 0) for item in queue), default=0)
+            
+            # Check if this is the currently playing song
+            is_currently_playing = (
+                self.current_song_id is not None and 
+                self.current_song_id == item_id
+            )
+            
+            # Reorder the song
+            if not self.queue_manager.reorder_song(item_id, max_position):
+                self.logger.error('Failed to move song %s to end', item_id)
+                return False
+            
+            # Note: No need to update current_song_id - the ID doesn't change,
+            # only the position in the database changes
+            if is_currently_playing:
+                self.logger.info('Currently playing song moved to position %s', max_position)
+            
+            return True
     
     def _handle_error(self, item_id: int, error_message: str):
         """
@@ -400,60 +677,79 @@ class PlaybackController:
     def on_song_end(self):
         """Called when current song ends (EOS)."""
         with self.lock:
-            if self.current_song:
-                self.logger.info('Song ended: %s', self.current_song['title'])
+            finished_song_id = None
+            
+            if self.current_song_id:
+                finished_song_id = self.current_song_id
                 
-                # Get final playback position for history
-                final_position = self.streaming_controller.get_position() or 0
-                
-                # Record in playback history
-                self.queue_manager.record_playback_history(
-                    queue_item_id=self.current_song['id'],
-                    user_name=self.current_song['user_name'],
-                    youtube_video_id=self.current_song['youtube_video_id'],
-                    title=self.current_song['title'],
-                    duration_seconds=self.current_song.get('duration_seconds'),
-                    pitch_semitones=self.current_song.get('pitch_semitones', 0),
-                    playback_position_start=0,
-                    playback_position_end=final_position
-                )
-                
-                # Mark as played
-                self.queue_manager.mark_played(self.current_song['id'])
+                # Get song data for history recording
+                finished_song = self.queue_manager.get_item(finished_song_id)
+                if finished_song:
+                    self.logger.info('Song ended: %s', finished_song['title'])
+                    
+                    # Get final playback position for history
+                    final_position = self.streaming_controller.get_position() or 0
+                    
+                    # Record in playback history
+                    self.queue_manager.record_playback_history(
+                        queue_item_id=finished_song_id,
+                        user_name=finished_song['user_name'],
+                        youtube_video_id=finished_song['youtube_video_id'],
+                        title=finished_song['title'],
+                        duration_seconds=finished_song.get('duration_seconds'),
+                        pitch_semitones=finished_song.get('pitch_semitones', 0),
+                        playback_position_start=0,
+                        playback_position_end=final_position
+                    )
+                    
+                    # Mark as played
+                    self.queue_manager.mark_played(finished_song_id)
+                else:
+                    self.logger.warning('Finished song ID %s not found', finished_song_id)
             else:
                 self.logger.info('Song ended: unknown')
             
             # Reset pitch
             self.streaming_controller.set_pitch_shift(0)
             
-            # Clear current song
-            self.current_song = None
+            # Clear current song ID (natural end of song, transitioning to next or idle)
+            # NOTE: This is one of only 3 places current_song_id is mutated:
+            #   1. _play_song() - sets it when starting playback
+            #   2. _stop_internal() - clears it when stopping playback
+            #   3. on_song_end() - clears it when song finishes naturally
+            self.current_song_id = None
             
-            # Check for next song and show transition
-            self._show_transition_or_end()
+            # Check for next song and show transition, using the ID of the song that just finished
+            self._show_transition_or_end(finished_song_id=finished_song_id)
     
-    def _show_transition_or_end(self):
+    def _show_transition_or_end(self, finished_song_id: Optional[int] = None):
         """
         Show transition screen for next song, or end-of-queue screen.
         
         Called after a song ends. Shows appropriate interstitial and schedules
         the next song to start after the transition duration.
         
+        Args:
+            finished_song_id: ID of the song that just finished (used to find next song by position)
+        
         Note: Called with lock held.
         """
-        # Get next ready song
-        queue = self.queue_manager.get_queue(include_played=False)
-        ready_songs = [item for item in queue 
-                      if item['download_status'] == QueueManager.STATUS_READY]
+        # Get next ready song after the one that finished
+        if finished_song_id:
+            # Find the next song after the one that finished, by queue position
+            next_song = self.queue_manager.get_next_song_after(finished_song_id)
+        else:
+            # No finished song (e.g., starting fresh), get first ready song
+            next_song = self.queue_manager.get_next_song()
         
-        if not ready_songs:
+        if not next_song:
             # No more songs - show end-of-queue screen
             self.logger.info('No more songs, showing end-of-queue screen')
             self.state = PlaybackState.IDLE
             self._show_end_of_queue_screen()
             return
         
-        next_song = ready_songs[0]
+        # Store next song for transition
         self._next_song_pending = next_song
         
         # Get transition duration from config (default 5 seconds)
@@ -608,9 +904,14 @@ class PlaybackController:
             if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
                 position = self.streaming_controller.get_position()
             
+            # Query current song data from database (always fresh)
+            current_song = None
+            if self.current_song_id:
+                current_song = self.queue_manager.get_item(self.current_song_id)
+            
             status = {
                 'state': self.state.value,
-                'current_song': self.current_song,
+                'current_song': current_song,
                 'position_seconds': position,
             }
             return status
@@ -626,15 +927,12 @@ class PlaybackController:
             True if set, False if no current song
         """
         with self.lock:
-            if not self.current_song:
+            if not self.current_song_id:
                 self.logger.warning('No current song to adjust pitch')
                 return False
             
-            # Update in queue
-            self.queue_manager.update_pitch(self.current_song['id'], semitones)
-            
-            # Update current song dict
-            self.current_song['pitch_semitones'] = semitones
+            # Update in queue database
+            self.queue_manager.update_pitch(self.current_song_id, semitones)
             
             # Apply to streaming controller
             self.streaming_controller.set_pitch_shift(semitones)
@@ -650,7 +948,7 @@ class PlaybackController:
             True if successful, False if no current song or seek failed
         """
         with self.lock:
-            if not self.current_song:
+            if not self.current_song_id:
                 self.logger.warning('No current song to restart')
                 return False
             
@@ -672,7 +970,7 @@ class PlaybackController:
             True if successful, False otherwise
         """
         with self.lock:
-            if not self.current_song:
+            if not self.current_song_id:
                 self.logger.warning('No current song to seek')
                 return False
             
@@ -687,9 +985,11 @@ class PlaybackController:
             new_position = max(0, current_position + delta_seconds)
             
             # Clamp to song duration if available
-            duration = self.current_song.get('duration_seconds')
-            if duration and new_position > duration:
-                new_position = max(0, duration - 1)  # Seek to near the end
+            current_song = self.queue_manager.get_item(self.current_song_id)
+            if current_song:
+                duration = current_song.get('duration_seconds')
+                if duration and new_position > duration:
+                    new_position = max(0, duration - 1)  # Seek to near the end
             
             self.logger.info('Seeking from %ss to %ss (delta: %+ds)', 
                            current_position, new_position, delta_seconds)

@@ -114,12 +114,12 @@ def test_add_song_to_queue_and_play(full_system):
     
     assert result is True
     assert system['playback'].state == PlaybackState.PLAYING
-    assert system['playback'].current_song is not None
-    assert system['playback'].current_song['id'] == item_id
+    assert system['playback'].current_song_id is not None
+    assert system['playback'].current_song_id == item_id
     
     # Verify streaming controller was called
     system['streaming'].set_pitch_shift.assert_called_once_with(2)
-    system['streaming'].load_file.assert_called_once_with('/fake/path/to/video.mp4', start_position_seconds=0)
+    system['streaming'].load_file.assert_called_once_with('/fake/path/to/video.mp4')
 
 
 def test_queue_persistence_across_restarts(temp_db):
@@ -212,7 +212,7 @@ def test_song_transition_on_end(full_system):
     
     # Play first song
     system['playback'].play()
-    assert system['playback'].current_song['id'] == id1
+    assert system['playback'].current_song_id == id1
     
     # Simulate end of song
     system['playback'].on_song_end()
@@ -221,8 +221,8 @@ def test_song_transition_on_end(full_system):
     time.sleep(0.1)
     
     # Should transition to next song
-    assert system['playback'].current_song is not None
-    assert system['playback'].current_song['id'] == id2
+    assert system['playback'].current_song_id is not None
+    assert system['playback'].current_song_id == id2
     assert system['playback'].state == PlaybackState.PLAYING
 
 
@@ -243,12 +243,12 @@ def test_skip_to_next_song(full_system):
     
     # Play first song
     system['playback'].play()
-    assert system['playback'].current_song['id'] == id1
+    assert system['playback'].current_song_id == id1
     
     # Skip
     result = system['playback'].skip()
     assert result is True
-    assert system['playback'].current_song['id'] == id2
+    assert system['playback'].current_song_id == id2
 
 
 def test_queue_reordering(full_system):
