@@ -1788,6 +1788,65 @@
             }
         }
         
+        // Restart song from the beginning
+        async function restartSong() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/playback/restart', {method: 'POST'});
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                }
+            } catch (e) {
+                alert('Error restarting song');
+            }
+        }
+        
+        // Seek forward 10 seconds
+        async function seekForward() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/playback/seek', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({delta_seconds: 10})
+                });
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                }
+            } catch (e) {
+                alert('Error seeking');
+            }
+        }
+        
+        // Seek backward 10 seconds
+        async function seekBackward() {
+            if (!isOperator) {
+                alert('Operator authentication required');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/playback/seek', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({delta_seconds: -10})
+                });
+                if (!response.ok) {
+                    alert('Error: ' + (await response.json()).detail);
+                }
+            } catch (e) {
+                alert('Error seeking');
+            }
+        }
+        
         // Clear queue
         async function clearQueue() {
             if (!isOperator) {

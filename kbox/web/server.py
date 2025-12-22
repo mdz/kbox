@@ -57,6 +57,10 @@ class ConfigUpdateRequest(BaseModel):
     value: str
 
 
+class SeekRequest(BaseModel):
+    delta_seconds: int
+
+
 # Dependency to get components
 def get_queue_manager(request: Request) -> QueueManager:
     """Get QueueManager from app state."""
@@ -489,6 +493,39 @@ def create_app(
             raise HTTPException(
                 status_code=400, detail="Failed to update pitch"
             )
+
+    @app.post("/api/playback/restart")
+    async def restart(
+        playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator),
+    ):
+        """Restart current song from the beginning (operator only)."""
+        if not is_operator:
+            raise HTTPException(
+                status_code=403, detail="Operator authentication required"
+            )
+
+        if playback.restart():
+            return {"status": "restarted"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to restart song")
+
+    @app.post("/api/playback/seek")
+    async def seek(
+        request_data: SeekRequest,
+        playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator),
+    ):
+        """Seek forward or backward in current song (operator only)."""
+        if not is_operator:
+            raise HTTPException(
+                status_code=403, detail="Operator authentication required"
+            )
+
+        if playback.seek_relative(request_data.delta_seconds):
+            return {"status": "seeked", "delta_seconds": request_data.delta_seconds}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to seek")
 
     # Authentication endpoints
     @app.get("/api/auth/operator")

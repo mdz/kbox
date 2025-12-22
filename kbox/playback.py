@@ -620,6 +620,63 @@ class PlaybackController:
             self.logger.info('Set pitch to %s semitones for current song', semitones)
             return True
     
+    def restart(self) -> bool:
+        """
+        Restart the current song from the beginning.
+        
+        Returns:
+            True if successful, False if no current song or seek failed
+        """
+        with self.lock:
+            if not self.current_song:
+                self.logger.warning('No current song to restart')
+                return False
+            
+            if self.state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                self.logger.warning('Cannot restart: not playing or paused')
+                return False
+            
+            self.logger.info('Restarting song from beginning')
+            if self.streaming_controller.seek(0):
+                # Reset playback position in database
+                self.queue_manager.update_playback_position(self.current_song['id'], 0)
+                return True
+            return False
+    
+    def seek_relative(self, delta_seconds: int) -> bool:
+        """
+        Seek forward or backward by a relative amount.
+        
+        Args:
+            delta_seconds: Seconds to seek (positive = forward, negative = backward)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        with self.lock:
+            if not self.current_song:
+                self.logger.warning('No current song to seek')
+                return False
+            
+            if self.state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                self.logger.warning('Cannot seek: not playing or paused')
+                return False
+            
+            current_position = self.streaming_controller.get_position()
+            if current_position is None:
+                current_position = 0
+            
+            new_position = max(0, current_position + delta_seconds)
+            
+            # Clamp to song duration if available
+            duration = self.current_song.get('duration_seconds')
+            if duration and new_position > duration:
+                new_position = max(0, duration - 1)  # Seek to near the end
+            
+            self.logger.info('Seeking from %ss to %ss (delta: %+ds)', 
+                           current_position, new_position, delta_seconds)
+            return self.streaming_controller.seek(new_position)
+    
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""
         self.logger.info('Shutting down playback controller')
