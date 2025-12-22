@@ -104,7 +104,7 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager,
     assert playback_controller.state == PlaybackState.PLAYING
     assert playback_controller.current_song == mock_song
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4', start_position_seconds=0)
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4')
     # Song should NOT be marked as played when it starts - only when it finishes
     mock_queue_manager.mark_played.assert_not_called()
 
@@ -187,9 +187,7 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     # IMPORTANT: skip() must call stop_playback() (returns to idle) NOT stop() (destroys pipeline)
     mock_streaming_controller.stop_playback.assert_called_once()
     mock_streaming_controller.stop.assert_not_called()
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/next.mp4', start_position_seconds=0)
-    # Skip should update playback position for potential resume
-    mock_queue_manager.update_playback_position.assert_called()
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/next.mp4')
 
 
 def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streaming_controller):
@@ -273,8 +271,6 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
     
     # Should mark current song as played
     mock_queue_manager.mark_played.assert_called_once_with(1)
-    # Should clear playback position
-    mock_queue_manager.update_playback_position.assert_called_once_with(1, 0)
     # Should reset pitch
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
     # Should display transition interstitial image
@@ -302,8 +298,6 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
     
     # Should mark current song as played
     mock_queue_manager.mark_played.assert_called_once_with(1)
-    # Should clear playback position
-    mock_queue_manager.update_playback_position.assert_called_once_with(1, 0)
     assert playback_controller.current_song is None
     assert playback_controller.state == PlaybackState.IDLE
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(0)
@@ -320,52 +314,6 @@ def test_get_status(playback_controller):
     
     assert status['state'] == 'playing'
     assert status['current_song'] == {'id': 1, 'title': 'Test Song'}
-
-
-def test_play_with_resume_position(playback_controller, mock_queue_manager, 
-                                 mock_streaming_controller):
-    """Test playing a song with saved playback position (resume)."""
-    mock_song = {
-        'id': 1,
-        'title': 'Test Song',
-        'user_name': 'Alice',
-        'download_path': '/path/to/video.mp4',
-        'pitch_semitones': 0,
-        'download_status': QueueManager.STATUS_READY,
-        'played_at': None,
-        'playback_position_seconds': 45  # Resume from 45 seconds
-    }
-    mock_queue_manager.get_queue.return_value = [mock_song]
-    
-    result = playback_controller.play()
-    
-    assert result is True
-    assert playback_controller.state == PlaybackState.PLAYING
-    # Resume position should be passed to load_file
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4', start_position_seconds=45)
-
-
-def test_jump_to_song_with_resume(playback_controller, mock_queue_manager,
-                                  mock_streaming_controller):
-    """Test jumping to a song with resume position."""
-    mock_song = {
-        'id': 1,
-        'title': 'Test Song',
-        'user_name': 'Alice',
-        'download_path': '/path/to/video.mp4',
-        'pitch_semitones': 0,
-        'download_status': QueueManager.STATUS_READY,
-        'played_at': None,
-        'playback_position_seconds': 0
-    }
-    mock_queue_manager.get_item.return_value = mock_song
-    
-    result = playback_controller.jump_to_song(1, resume_position=30)
-    
-    assert result is True
-    assert playback_controller.state == PlaybackState.PLAYING
-    # Resume position should be passed to load_file
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/video.mp4', start_position_seconds=30)
 
 
 def test_jump_to_song_while_playing(playback_controller, mock_queue_manager,
@@ -397,6 +345,6 @@ def test_jump_to_song_while_playing(playback_controller, mock_queue_manager,
     # IMPORTANT: jump_to_song() must call stop_playback() (returns to idle) NOT stop() (destroys pipeline)
     mock_streaming_controller.stop_playback.assert_called_once()
     mock_streaming_controller.stop.assert_not_called()
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/new.mp4', start_position_seconds=0)
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/new.mp4')
 
 

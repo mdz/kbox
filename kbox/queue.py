@@ -564,39 +564,6 @@ class QueueManager:
         finally:
             conn.close()
     
-    def update_playback_position(self, item_id: int, position_seconds: int) -> bool:
-        """
-        Update playback position for a queue item.
-        
-        Args:
-            item_id: ID of the queue item
-            position_seconds: Current playback position in seconds
-            
-        Returns:
-            True if updated, False if item not found
-        """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                UPDATE queue_items 
-                SET playback_position_seconds = ?
-                WHERE id = ?
-            ''', (position_seconds, item_id))
-            
-            updated = cursor.rowcount > 0
-            conn.commit()
-            
-            if updated:
-                self.logger.debug('Updated playback position for item %s: %s seconds', item_id, position_seconds)
-            else:
-                self.logger.warning('Queue item %s not found for position update', item_id)
-            
-            return updated
-        finally:
-            conn.close()
-    
     def mark_played(self, item_id: int) -> bool:
         """
         Mark a queue item as played.

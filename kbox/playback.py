@@ -64,28 +64,23 @@ class PlaybackController:
         self._resume_interrupted_playback()
     
     def _start_position_tracking(self):
-        """Start background thread to track playback position."""
+        """Start background thread to check for "up next" notification."""
         if self._position_tracking_thread and self._position_tracking_thread.is_alive():
             return
         
         def track_position():
-            """Periodically update playback position in database and check for "up next" notification."""
+            """Periodically check for "up next" notification."""
             import time
             while self._tracking_position:
                 try:
                     if self.state == PlaybackState.PLAYING and self.current_song:
                         position = self.streaming_controller.get_position()
                         if position is not None:
-                            self.queue_manager.update_playback_position(
-                                self.current_song['id'],
-                                position
-                            )
-                            
                             # Check if we should show "up next" notification
                             self._check_up_next_notification(position)
-                    time.sleep(2)  # Update every 2 seconds
+                    time.sleep(2)  # Check every 2 seconds
                 except Exception as e:
-                    self.logger.error('Error tracking position: %s', e, exc_info=True)
+                    self.logger.error('Error in position tracking: %s', e, exc_info=True)
                     time.sleep(5)  # Wait longer on error
         
         self._tracking_position = True
@@ -120,38 +115,6 @@ class PlaybackController:
                 self.streaming_controller.show_notification(notification_text, duration_seconds=10.0)
                 self._up_next_shown = True
                 self.logger.debug('Showed up next notification for: %s', next_song['user_name'])
-    
-    def _resume_interrupted_playback(self):
-        """Check for songs with playback position and resume if needed."""
-        try:
-            conn = self.queue_manager.database.get_connection()
-            cursor = conn.cursor()
-            
-            # Find songs with playback position but not marked as played
-            cursor.execute('''
-                SELECT id, position, user_name, youtube_video_id, title,
-                       duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at,
-                       playback_position_seconds, error_message
-                FROM queue_items
-                WHERE playback_position_seconds > 0 
-                  AND played_at IS NULL
-                  AND download_status = 'ready'
-                ORDER BY position
-                LIMIT 1
-            ''')
-            
-            result = cursor.fetchone()
-            conn.close()
-            
-            if result:
-                song = dict(result)
-                self.logger.info('Found interrupted playback: %s at position %s seconds', 
-                               song['title'], song['playback_position_seconds'])
-                # Resume playback
-                self.jump_to_song(song['id'], resume_position=song['playback_position_seconds'])
-        except Exception as e:
-            self.logger.error('Error resuming interrupted playback: %s', e, exc_info=True)
     
     def play(self) -> bool:
         """
@@ -237,12 +200,10 @@ class PlaybackController:
             except Exception as e:
                 self.logger.warning('Could not set pitch shift: %s', e)
             
-            # Load file into streaming controller
-            # Pass start position so seek happens before audio plays
-            saved_position = song.get('playback_position_seconds', 0) or 0
-            self.logger.debug('[DEBUG] _play_song: before load_file, start_position=%s', saved_position)
+            # Load file into streaming controller (always start from beginning)
+            self.logger.debug('[DEBUG] _play_song: before load_file')
             try:
-                self.streaming_controller.load_file(download_path, start_position_seconds=saved_position)
+                self.streaming_controller.load_file(download_path)
             except Exception as e:
                 self.logger.error('Failed to load file into streaming controller: %s', e)
                 self.state = PlaybackState.ERROR
@@ -341,11 +302,7 @@ class PlaybackController:
                 return False
             
             # Record playback history for the song we're leaving (partial play)
-            current_position = self.streaming_controller.get_position()
-            if current_position is None:
-                current_position = self.current_song.get('playback_position_seconds', 0)
-            
-            start_position = self.current_song.get('playback_position_seconds', 0)
+            current_position = self.streaming_controller.get_position() or 0
             
             self.queue_manager.record_playback_history(
                 queue_item_id=self.current_song['id'],
@@ -354,12 +311,9 @@ class PlaybackController:
                 title=self.current_song['title'],
                 duration_seconds=self.current_song.get('duration_seconds'),
                 pitch_semitones=self.current_song.get('pitch_semitones', 0),
-                playback_position_start=start_position,
+                playback_position_start=0,
                 playback_position_end=current_position
             )
-            
-            # Clear playback position - songs always start fresh when navigated away from
-            self.queue_manager.update_playback_position(self.current_song['id'], 0)
             
             # Stop current playback (but do NOT mark as played)
             self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song['id'], next_song['id'])
@@ -369,7 +323,7 @@ class PlaybackController:
             # Load and play the next song
             return self._play_song(next_song)
     
-    def jump_to_song(self, item_id: int, resume_position: Optional[int] = None) -> bool:
+    def jump_to_song(self, item_id: int) -> bool:
         """
         Jump to a specific song in the queue.
         
@@ -393,17 +347,11 @@ class PlaybackController:
                 self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
                 return False
             
-            # Clear current song's position and stop playback
+            # Stop current playback
             if self.current_song:
-                self.queue_manager.update_playback_position(self.current_song['id'], 0)
                 self.streaming_controller.stop_playback()
             
-            # Override resume position if provided (for crash recovery)
-            if resume_position and resume_position > 0:
-                song = dict(song)  # Copy to avoid modifying cached item
-                song['playback_position_seconds'] = resume_position
-            
-            # Load and play the target song (navigation-based, no marking as played)
+            # Load and play the target song (always from beginning)
             return self._play_song(song)
     
     def previous(self) -> bool:
@@ -429,13 +377,10 @@ class PlaybackController:
                 self.logger.info('No previous song available')
                 return False
             
-            # Clear playback position - songs always start fresh when navigated away from
-            self.queue_manager.update_playback_position(self.current_song['id'], 0)
-            
             # Stop current playback (but do NOT mark as played or record history)
             self.streaming_controller.stop_playback()
             
-            # Load and play the previous song
+            # Load and play the previous song (from beginning)
             return self._play_song(prev_song)
     
     def _handle_error(self, item_id: int, error_message: str):
@@ -461,13 +406,8 @@ class PlaybackController:
             if self.current_song:
                 self.logger.info('Song ended: %s', self.current_song['title'])
                 
-                # Get final playback position
-                final_position = self.streaming_controller.get_position()
-                if final_position is None:
-                    final_position = self.current_song.get('playback_position_seconds', 0)
-                
-                # Get start position (for resume cases)
-                start_position = self.current_song.get('playback_position_seconds', 0)
+                # Get final playback position for history
+                final_position = self.streaming_controller.get_position() or 0
                 
                 # Record in playback history
                 self.queue_manager.record_playback_history(
@@ -477,13 +417,12 @@ class PlaybackController:
                     title=self.current_song['title'],
                     duration_seconds=self.current_song.get('duration_seconds'),
                     pitch_semitones=self.current_song.get('pitch_semitones', 0),
-                    playback_position_start=start_position,
+                    playback_position_start=0,
                     playback_position_end=final_position
                 )
                 
-                # Mark as played and clear playback position
+                # Mark as played
                 self.queue_manager.mark_played(self.current_song['id'])
-                self.queue_manager.update_playback_position(self.current_song['id'], 0)
             else:
                 self.logger.info('Song ended: unknown')
             
@@ -723,11 +662,7 @@ class PlaybackController:
                 return False
             
             self.logger.info('Restarting song from beginning')
-            if self.streaming_controller.seek(0):
-                # Reset playback position in database
-                self.queue_manager.update_playback_position(self.current_song['id'], 0)
-                return True
-            return False
+            return self.streaming_controller.seek(0)
     
     def seek_relative(self, delta_seconds: int) -> bool:
         """
