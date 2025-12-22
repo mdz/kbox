@@ -328,22 +328,6 @@
             color: #4a9eff;
         }
         
-        .operator-controls-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.9);
-            z-index: 1000;
-            overflow-y: auto;
-            padding: 20px;
-        }
-        
-        .operator-controls-screen.hidden {
-            display: none;
-        }
-        
         .config-screen {
             position: fixed;
             top: 0;
@@ -493,8 +477,6 @@
     
     {% include 'components/main_screen.html' %}
     
-    {% include 'components/operator_controls.html' %}
-    
     {% include 'components/config_screen.html' %}
     
     <script>
@@ -502,6 +484,11 @@
         let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
         let userName = null;
+        
+        // Controls lock state
+        let controlsLocked = true;
+        let autoLockTimer = null;
+        const AUTO_LOCK_TIMEOUT = 30000; // 30 seconds
         
         // Convert semitones to musical interval name
         function getIntervalName(semitones) {
@@ -893,47 +880,77 @@
                     }
                 });
             }
+            
+            // Update operator button to show correct initial state
+            updateOperatorButton();
         });
         
-        // Toggle playback controls visibility (now a full-screen overlay)
-        function togglePlaybackControls() {
-            const screen = document.getElementById('operator-controls-screen');
-            const configScreen = document.getElementById('config-screen');
-            const toggleButton = document.getElementById('playback-toggle-button');
+        // Toggle controls lock
+        function toggleControlsLock() {
+            controlsLocked = !controlsLocked;
             
-            if (!screen || !toggleButton) return;
+            if (!controlsLocked) {
+                // Start auto-lock timer when unlocked
+                resetAutoLockTimer();
+            } else {
+                // Clear timer when manually locked
+                if (autoLockTimer) {
+                    clearTimeout(autoLockTimer);
+                    autoLockTimer = null;
+                }
+            }
             
-            // Check if user is operator, prompt for PIN if not
-            if (!isOperator) {
-                showOperatorPinModal(() => togglePlaybackControls());
+            // Re-render now playing to update UI
+            loadQueue();
+        }
+        
+        // Reset the auto-lock timer
+        function resetAutoLockTimer() {
+            // Clear existing timer
+            if (autoLockTimer) {
+                clearTimeout(autoLockTimer);
+            }
+            
+            // Only set timer if controls are unlocked
+            if (!controlsLocked) {
+                autoLockTimer = setTimeout(() => {
+                    controlsLocked = true;
+                    autoLockTimer = null;
+                    // Re-render to show locked state
+                    loadQueue();
+                }, AUTO_LOCK_TIMEOUT);
+            }
+        }
+        
+        // Prompt for operator authentication
+        function promptOperatorAuth() {
+            if (isOperator) {
+                // Already authenticated, show status
+                alert('You are authenticated as operator');
                 return;
             }
-            
-            // Close config screen if open
-            if (configScreen && !configScreen.classList.contains('hidden')) {
-                toggleConfigScreen();
-            }
-            
-            if (screen.classList.contains('hidden')) {
-                // Open controls screen
-                screen.classList.remove('hidden');
-                toggleButton.classList.add('active');
-                toggleButton.title = 'Close Playback Controls';
-                
-                // Refresh queue to ensure current state is displayed
+            // Show PIN modal, refresh UI on success
+            showOperatorPinModal(() => {
+                // Update button text to show authenticated state
+                updateOperatorButton();
+                // Refresh the now playing section to show controls
                 loadQueue();
-            } else {
-                // Close controls screen
-                screen.classList.add('hidden');
-                toggleButton.classList.remove('active');
-                toggleButton.title = 'Open Playback Controls';
+            });
+        }
+        
+        // Update operator button to show auth state
+        function updateOperatorButton() {
+            const button = document.getElementById('operator-auth-button');
+            if (button) {
+                button.innerHTML = isOperator ? '✓' : '🔑';
+                button.style.background = isOperator ? '#f39c12' : '#666';
+                button.title = isOperator ? 'Operator (Authenticated)' : 'Operator Authentication';
             }
         }
         
         // Toggle configuration screen
         function toggleConfigScreen() {
             const screen = document.getElementById('config-screen');
-            const playbackScreen = document.getElementById('operator-controls-screen');
             const toggleButton = document.getElementById('config-toggle-button');
             
             if (!screen || !toggleButton) return;
@@ -942,11 +959,6 @@
             if (!isOperator) {
                 showOperatorPinModal(() => toggleConfigScreen());
                 return;
-            }
-            
-            // Close playback screen if open
-            if (playbackScreen && !playbackScreen.classList.contains('hidden')) {
-                togglePlaybackControls();
             }
             
             if (screen.classList.contains('hidden')) {
@@ -1527,6 +1539,16 @@
                 // Render Up Next section
                 renderUpNext(statusData, currentQueue);
                 
+                // Render Clear Queue button (operator only)
+                const clearQueueContainer = document.getElementById('clear-queue-button-container');
+                if (clearQueueContainer) {
+                    if (isOperator && currentQueue.length > 0) {
+                        clearQueueContainer.innerHTML = '<button onclick="clearQueue()" class="danger" style="padding: 8px 16px;">Clear Queue</button>';
+                    } else {
+                        clearQueueContainer.innerHTML = '';
+                    }
+                }
+                
                 // Render queue
                 const queueDiv = document.getElementById('queue-list');
                 
@@ -1582,9 +1604,10 @@
                 return;
             }
             
-            // Check if user can control pitch (their song or operator)
-            const canControlPitch = (currentSong.user_name === userName) || isOperator;
+            // Check if user can access controls (their song or operator)
+            const hasControlAccess = (currentSong.user_name === userName) || isOperator;
             
+            // Render song info (always visible)
             renderSongSettings('now-playing-content', {
                 title: currentSong.title,
                 thumbnail_url: currentSong.thumbnail_url,
@@ -1594,12 +1617,76 @@
                 pitch_semitones: currentSong.pitch_semitones || 0
             }, {
                 context: 'now-playing',
-                live: canControlPitch,
+                live: false,
                 showStatus: false,
                 showThumbnail: true,
                 showUser: true,
-                showPitchControls: canControlPitch
+                showPitchControls: false
             });
+            
+            // Add controls and lock button if user has access
+            if (hasControlAccess) {
+                // When unlocked: show all controls together
+                if (!controlsLocked) {
+                    // Pitch controls section
+                    const pitchControls = document.createElement('div');
+                    pitchControls.style.cssText = 'margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;';
+                    pitchControls.innerHTML = `
+                        <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Adjust Pitch (Live)</h3>
+                        <div id="now-playing-pitch-control-container"></div>
+                    `;
+                    container.appendChild(pitchControls);
+                    
+                    // Initialize pitch control
+                    const pitchValue = currentSong.pitch_semitones || 0;
+                    const pitchControlContainer = document.getElementById('now-playing-pitch-control-container');
+                    if (pitchControlContainer) {
+                        pitchControlContainer.innerHTML = createPitchControlHTML('now-playing', pitchValue, 24);
+                        updatePitchButtons('now-playing', pitchValue);
+                    }
+                    
+                    // Playback controls section
+                    const playbackControls = document.createElement('div');
+                    playbackControls.style.cssText = 'margin-top: 15px;';
+                    playbackControls.innerHTML = `
+                        <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Playback Controls</h3>
+                        <div class="controls">
+                            <div class="controls-row">
+                                <button id="play-pause-toggle-np" onclick="togglePlayPause(); resetAutoLockTimer();">▶ Play</button>
+                                <button onclick="stopPlayback(); resetAutoLockTimer();">⏹ Stop</button>
+                            </div>
+                            <div class="controls-row">
+                                <button onclick="playback('previous'); resetAutoLockTimer();">⏮ Previous</button>
+                                <button onclick="playback('skip'); resetAutoLockTimer();">⏭ Skip</button>
+                            </div>
+                            <div class="controls-row" style="grid-template-columns: 1fr 1fr 1fr;">
+                                <button onclick="seekBackward(); resetAutoLockTimer();">⏪ -10s</button>
+                                <button onclick="restartSong(); resetAutoLockTimer();">↺ Restart</button>
+                                <button onclick="seekForward(); resetAutoLockTimer();">+10s ⏩</button>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(playbackControls);
+                    
+                    // Update play/pause button state
+                    updatePlayPauseButton(statusData.state);
+                }
+                
+                // Lock button (always visible if user has access)
+                const lockButton = document.createElement('button');
+                lockButton.onclick = toggleControlsLock;
+                lockButton.style.cssText = 'width: 100%; margin-top: 15px; padding: 12px; font-size: 16px;';
+                
+                if (controlsLocked) {
+                    lockButton.innerHTML = '🔒 Unlock Controls';
+                    lockButton.style.background = '#555';
+                } else {
+                    lockButton.innerHTML = '🔓 Lock Controls';
+                    lockButton.style.background = '#666';
+                }
+                
+                container.appendChild(lockButton);
+            }
         }
         
         // Render Up Next section
@@ -1711,13 +1798,24 @@
         
         // Update play/pause toggle button based on state
         function updatePlayPauseButton(state) {
+            // Update button in operator controls modal (if it exists)
             const button = document.getElementById('play-pause-toggle');
-            if (!button) return;
+            if (button) {
+                if (state === 'playing') {
+                    button.textContent = '⏸ Pause';
+                } else {
+                    button.textContent = '▶ Play';
+                }
+            }
             
-            if (state === 'playing') {
-                button.textContent = '⏸ Pause';
-            } else {
-                button.textContent = '▶ Play';
+            // Update button in Now Playing section (if it exists)
+            const npButton = document.getElementById('play-pause-toggle-np');
+            if (npButton) {
+                if (state === 'playing') {
+                    npButton.textContent = '⏸ Pause';
+                } else {
+                    npButton.textContent = '▶ Play';
+                }
             }
         }
         
@@ -1737,11 +1835,6 @@
         
         // Toggle play/pause
         async function togglePlayPause() {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
             try {
                 // Get current state
                 const statusResponse = await fetch('/api/playback/status');
@@ -1783,11 +1876,6 @@
         
         // Stop playback
         async function stopPlayback() {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
             try {
                 const response = await fetch('/api/playback/stop', {method: 'POST'});
                 if (!response.ok) {
@@ -1804,11 +1892,6 @@
         
         // Playback controls (for skip, previous, etc.)
         async function playback(action) {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
             try {
                 const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
                 const data = await response.json();
@@ -1834,11 +1917,6 @@
         
         // Restart song from the beginning
         async function restartSong() {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
             try {
                 const response = await fetch('/api/playback/restart', {method: 'POST'});
                 if (!response.ok) {
@@ -1851,11 +1929,6 @@
         
         // Seek forward 10 seconds
         async function seekForward() {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
             try {
                 const response = await fetch('/api/playback/seek', {
                     method: 'POST',
@@ -1872,11 +1945,6 @@
         
         // Seek backward 10 seconds
         async function seekBackward() {
-            if (!isOperator) {
-                alert('Operator authentication required');
-                return;
-            }
-            
             try {
                 const response = await fetch('/api/playback/seek', {
                     method: 'POST',
