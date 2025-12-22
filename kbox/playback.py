@@ -404,21 +404,21 @@ class PlaybackController:
             # Load and play the target song (always from beginning)
             return self._play_song(song)
     
-    def play_now(self, item_id: int) -> bool:
+    def jump_to_song(self, item_id: int) -> bool:
         """
-        Play a song immediately.
+        Jump to and play a song immediately at its current queue position.
         
-        If a song is currently playing, moves this song ahead of it and plays immediately.
-        If playback is stopped, just plays the song at its current position.
+        Stops any currently playing song and starts playing the target song.
+        Does not reorder the queue.
         
         Args:
-            item_id: ID of the queue item to play now
+            item_id: ID of the queue item to jump to
         
         Returns:
             True if successful, False otherwise
         """
         with self.lock:
-            self.logger.info('Playing song ID %s now', item_id)
+            self.logger.info('Jumping to song ID %s', item_id)
             
             # Get the song from queue
             song = self.queue_manager.get_item(item_id)
@@ -431,34 +431,11 @@ class PlaybackController:
                 self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
                 return False
             
-            # If something is currently playing, move this song ahead of it
+            # Stop current playback if something is playing
             if self.current_song_id:
-                # Query fresh position from database
-                current_song = self.queue_manager.get_item(self.current_song_id)
-                if not current_song:
-                    self.logger.error('Current song ID %s not found', self.current_song_id)
-                    return False
-                
-                target_position = current_song.get('position', 1)
-                
-                self.logger.info('Moving song %s to position %s (ahead of current)', item_id, target_position)
-                
-                # Move the song to the current position
-                if not self.queue_manager.reorder_song(item_id, target_position):
-                    self.logger.error('Failed to reorder song %s to position %s', item_id, target_position)
-                    return False
-                
-                # Stop current playback
                 self.streaming_controller.stop_playback()
-                
-                # Refresh song data after reordering (position has changed)
-                song = self.queue_manager.get_item(item_id)
-                if not song:
-                    self.logger.error('Song %s not found after reordering', item_id)
-                    return False
-            else:
-                # Nothing playing - just play the song at its current position
-                self.logger.info('No song playing, playing song %s at position %s', item_id, song.get('position'))
+            
+            self.logger.info('Playing song %s at position %s', item_id, song.get('position'))
             
             # Load and play the song (always from beginning)
             return self._play_song(song)

@@ -498,13 +498,13 @@ def create_app(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
-        """Play a song now by moving it ahead of the current song and playing it (operator only)."""
+        """Jump to and play a song immediately at its current queue position (operator only)."""
         if not is_operator:
             raise HTTPException(
                 status_code=403, detail="Operator authentication required"
             )
 
-        if playback.play_now(item_id):
+        if playback.jump_to_song(item_id):
             return {"status": "playing_now", "item_id": item_id}
         else:
             raise HTTPException(status_code=400, detail="Failed to play song now")

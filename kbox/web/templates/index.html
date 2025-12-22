@@ -1274,16 +1274,16 @@
                 operatorOptions.style.display = 'block';
                 userOptions.style.display = 'none'; // Operators use the full operator controls
                 
-                // Enable/disable "Play Now" button based on download status
-                const playNowButton = document.getElementById('play-now-button');
-                if (playNowButton) {
+                // Enable/disable "Jump to Song" button based on download status
+                const jumpToButton = document.getElementById('jump-to-button');
+                if (jumpToButton) {
                     if (item.download_status === 'ready') {
-                        playNowButton.disabled = false;
-                        playNowButton.style.opacity = '1';
+                        jumpToButton.disabled = false;
+                        jumpToButton.style.opacity = '1';
                     } else {
-                        playNowButton.disabled = true;
-                        playNowButton.style.opacity = '0.5';
-                        playNowButton.title = 'Song must be ready to play';
+                        jumpToButton.disabled = true;
+                        jumpToButton.style.opacity = '0.5';
+                        jumpToButton.title = 'Song must be ready to play';
                     }
                 }
             } else {
@@ -1342,8 +1342,8 @@
             }
         }
         
-        // Play now (operator only) - immediately jump to and start playing the song
-        async function playNowQueueItem() {
+        // Jump to song (operator only) - immediately start playing the song at its current queue position
+        async function jumpToQueueItem() {
             if (!currentQueueItemToEdit) return;
             
             if (currentQueueItemToEdit.download_status !== 'ready') {

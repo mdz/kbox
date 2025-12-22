@@ -384,72 +384,20 @@ def test_jump_to_song_while_playing(playback_controller, mock_queue_manager,
     mock_streaming_controller.load_file.assert_called_once_with('/path/to/new.mp4')
 
 
-def test_play_now_moves_song_to_current_position(playback_controller, mock_queue_manager,
-                                                  mock_streaming_controller):
-    """Test play_now moves song ahead of currently playing song and plays it."""
-    # Set up current song playing at position 5
-    current_song = {
-        'id': 1,
-        'title': 'Current Song',
-        'position': 5,
-        'user_name': 'Alice',
-        'download_path': '/path/to/current.mp4',
-        'pitch_semitones': 0,
-        'download_status': QueueManager.STATUS_READY,
-        'played_at': None,
-        'playback_position_seconds': 0
-    }
-    playback_controller.current_song_id = 1
-    playback_controller.state = PlaybackState.PLAYING
-    
-    # Song to play now is at position 10
-    target_song = {
-        'id': 3,
-        'title': 'Play Now Song',
-        'position': 10,
-        'user_name': 'Bob',
-        'download_path': '/path/to/playnow.mp4',
-        'pitch_semitones': 0,
-        'download_status': QueueManager.STATUS_READY,
-        'played_at': None,
-        'playback_position_seconds': 0
-    }
-    
-    # After reordering, song is at position 5
-    target_song_after_reorder = target_song.copy()
-    target_song_after_reorder['position'] = 5
-    
-    # Mock get_item to return current song first (for position query),
-    # then target song, then target song after reordering
-    mock_queue_manager.get_item.side_effect = [target_song, current_song, target_song_after_reorder]
-    mock_queue_manager.reorder_song.return_value = True
-    
-    result = playback_controller.play_now(3)
-    
-    assert result is True
-    # Should move song to position 5 (current song's position)
-    mock_queue_manager.reorder_song.assert_called_once_with(3, 5)
-    # Should stop current playback
-    mock_streaming_controller.stop_playback.assert_called_once()
-    # Should load and play the new song
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/playnow.mp4')
-    assert playback_controller.current_song_id == 3
-
-
-def test_play_now_when_idle(playback_controller, mock_queue_manager,
-                            mock_streaming_controller):
-    """Test play_now plays song at current position when nothing is playing."""
+def test_jump_to_song_when_idle(playback_controller, mock_queue_manager,
+                                mock_streaming_controller):
+    """Test jump_to_song plays song at current position when nothing is playing."""
     # No current song
     playback_controller.current_song_id = None
     playback_controller.state = PlaybackState.IDLE
     
-    # Song to play now is at position 10
+    # Song to jump to is at position 10
     target_song = {
         'id': 3,
-        'title': 'Play Now Song',
+        'title': 'Jump To Song',
         'position': 10,
         'user_name': 'Bob',
-        'download_path': '/path/to/playnow.mp4',
+        'download_path': '/path/to/jumpto.mp4',
         'pitch_semitones': 0,
         'download_status': QueueManager.STATUS_READY,
         'played_at': None,
@@ -459,20 +407,54 @@ def test_play_now_when_idle(playback_controller, mock_queue_manager,
     # Mock get_item to return the song
     mock_queue_manager.get_item.return_value = target_song
     
-    result = playback_controller.play_now(3)
+    result = playback_controller.jump_to_song(3)
     
     assert result is True
-    # Should NOT reorder when idle - just play at current position
+    # Should NOT reorder - jump_to_song never reorders
     mock_queue_manager.reorder_song.assert_not_called()
     # Should not stop playback (nothing playing)
     mock_streaming_controller.stop_playback.assert_not_called()
     # Should load and play the song at its current position (10)
-    mock_streaming_controller.load_file.assert_called_once_with('/path/to/playnow.mp4')
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/jumpto.mp4')
     assert playback_controller.current_song_id == 3
 
 
-def test_play_now_song_not_ready(playback_controller, mock_queue_manager):
-    """Test play_now fails when song is not ready."""
+def test_jump_to_song_does_not_reorder(playback_controller, mock_queue_manager,
+                                        mock_streaming_controller):
+    """Test that jump_to_song does NOT reorder the queue - it just plays at current position."""
+    # Set up current song playing at position 5
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    
+    # Song to jump to is at position 10
+    target_song = {
+        'id': 3,
+        'title': 'Jump To Song',
+        'position': 10,
+        'user_name': 'Bob',
+        'download_path': '/path/to/jumpto.mp4',
+        'pitch_semitones': 0,
+        'download_status': QueueManager.STATUS_READY,
+        'played_at': None,
+        'playback_position_seconds': 0
+    }
+    
+    mock_queue_manager.get_item.return_value = target_song
+    
+    result = playback_controller.jump_to_song(3)
+    
+    assert result is True
+    # Should NOT reorder - jump_to_song never reorders
+    mock_queue_manager.reorder_song.assert_not_called()
+    # Should stop current playback
+    mock_streaming_controller.stop_playback.assert_called_once()
+    # Should load and play the song at its current position (still 10)
+    mock_streaming_controller.load_file.assert_called_once_with('/path/to/jumpto.mp4')
+    assert playback_controller.current_song_id == 3
+
+
+def test_jump_to_song_not_ready(playback_controller, mock_queue_manager):
+    """Test jump_to_song fails when song is not ready."""
     target_song = {
         'id': 3,
         'title': 'Not Ready Song',
@@ -481,7 +463,7 @@ def test_play_now_song_not_ready(playback_controller, mock_queue_manager):
     }
     mock_queue_manager.get_item.return_value = target_song
     
-    result = playback_controller.play_now(3)
+    result = playback_controller.jump_to_song(3)
     
     assert result is False
     # Should not attempt to reorder
