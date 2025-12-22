@@ -336,7 +336,7 @@ class PlaybackController:
                 self.logger.info('No current song, trying to start playback')
                 return self._load_and_play_next()
             
-            # Get current song data for history
+            # Get current song data
             current_song = self.queue_manager.get_item(self.current_song_id)
             if not current_song:
                 self.logger.error('Current song ID %s not found', self.current_song_id)
@@ -349,10 +349,21 @@ class PlaybackController:
                 self.logger.info('No next song available to skip to')
                 return False
             
-            # Phase 2: Playback history recording disabled for now
-            # current_position = self.streaming_controller.get_position() or 0
-            # self.queue_manager.record_playback_history(...)
-            pass
+            # Record history if threshold met
+            current_position = self.streaming_controller.get_position() or 0
+            if self._should_record_history(current_song.get('duration_seconds'), current_position):
+                completion_pct = self._calculate_completion_percentage(
+                    current_position, 
+                    current_song.get('duration_seconds')
+                )
+                self.queue_manager.record_history(
+                    queue_item_id=self.current_song_id,
+                    played_duration_seconds=current_position,
+                    playback_end_position_seconds=current_position,
+                    completion_percentage=completion_pct
+                )
+                # Mark as played in queue for current event tracking
+                self.queue_manager.mark_played(self.current_song_id)
             
             # Stop current playback (but do NOT mark as played)
             self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
@@ -707,12 +718,21 @@ class PlaybackController:
                 if finished_song:
                     self.logger.info('Song ended: %s', finished_song['title'])
                     
-                    # Phase 2: Playback history recording disabled for now
-                    # final_position = self.streaming_controller.get_position() or 0
-                    # self.queue_manager.record_playback_history(...)
-                    pass
+                    # Record history if threshold met
+                    final_position = self.streaming_controller.get_position() or 0
+                    if self._should_record_history(finished_song.get('duration_seconds'), final_position):
+                        completion_pct = self._calculate_completion_percentage(
+                            final_position, 
+                            finished_song.get('duration_seconds')
+                        )
+                        self.queue_manager.record_history(
+                            queue_item_id=finished_song_id,
+                            played_duration_seconds=final_position,
+                            playback_end_position_seconds=final_position,
+                            completion_percentage=completion_pct
+                        )
                     
-                    # Mark as played
+                    # Mark as played in queue for current event tracking
                     self.queue_manager.mark_played(finished_song_id)
                 else:
                     self.logger.warning('Finished song ID %s not found', finished_song_id)
@@ -1007,6 +1027,76 @@ class PlaybackController:
             self.logger.info('Seeking from %ss to %ss (delta: %+ds)', 
                            current_position, new_position, delta_seconds)
             return self.streaming_controller.seek(new_position)
+    
+    def _should_record_history(self, duration_seconds: Optional[int], played_seconds: int) -> bool:
+        """
+        Check if a performance should be recorded in history.
+        
+        Records if played duration meets threshold:
+        - 70% of total duration (default), OR
+        - 90+ seconds (default)
+        
+        Args:
+            duration_seconds: Total song duration (None if unknown)
+            played_seconds: How long the song was played
+            
+        Returns:
+            True if performance should be recorded
+        """
+        # Get thresholds from config
+        threshold_pct = self.config_manager.get('history_threshold_percentage')
+        threshold_seconds = self.config_manager.get('history_threshold_seconds')
+        
+        # Use defaults if not configured
+        if threshold_pct is None:
+            threshold_pct = 70
+        else:
+            try:
+                threshold_pct = int(threshold_pct)
+            except (ValueError, TypeError):
+                threshold_pct = 70
+        
+        if threshold_seconds is None:
+            threshold_seconds = 90
+        else:
+            try:
+                threshold_seconds = int(threshold_seconds)
+            except (ValueError, TypeError):
+                threshold_seconds = 90
+        
+        # Check time threshold
+        if played_seconds >= threshold_seconds:
+            self.logger.debug('History threshold met: %s seconds >= %s seconds', 
+                            played_seconds, threshold_seconds)
+            return True
+        
+        # Check percentage threshold if duration known
+        if duration_seconds and duration_seconds > 0:
+            percentage = (played_seconds / duration_seconds) * 100
+            if percentage >= threshold_pct:
+                self.logger.debug('History threshold met: %.1f%% >= %s%%', 
+                                percentage, threshold_pct)
+                return True
+        
+        self.logger.debug('History threshold NOT met: %s seconds (threshold: %s%% or %s seconds)',
+                        played_seconds, threshold_pct, threshold_seconds)
+        return False
+    
+    def _calculate_completion_percentage(self, played_seconds: int, duration_seconds: Optional[int]) -> float:
+        """
+        Calculate completion percentage.
+        
+        Args:
+            played_seconds: How long the song was played
+            duration_seconds: Total song duration
+            
+        Returns:
+            Completion percentage (0.0-100.0)
+        """
+        if not duration_seconds or duration_seconds <= 0:
+            return 0.0
+        
+        return min(100.0, (played_seconds / duration_seconds) * 100.0)
     
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""

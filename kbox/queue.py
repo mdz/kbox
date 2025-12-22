@@ -70,6 +70,21 @@ class QueueManager:
         except (json.JSONDecodeError, TypeError):
             return {}
     
+    @staticmethod
+    def _encode_performance(performance: Dict[str, Any]) -> str:
+        """Encode performance metrics dict to JSON string."""
+        return json.dumps(performance)
+    
+    @staticmethod
+    def _decode_performance(performance_json: str) -> Dict[str, Any]:
+        """Decode performance metrics JSON string to dict."""
+        if not performance_json:
+            return {}
+        try:
+            return json.loads(performance_json)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    
     def __init__(self, database: Database, youtube_client: Optional['YouTubeClient'] = None):
         """
         Initialize QueueManager.
@@ -709,28 +724,75 @@ class QueueManager:
         finally:
             conn.close()
     
-    def record_playback_history(
+    def record_history(
         self,
         queue_item_id: int,
-        user_name: str,
-        youtube_video_id: str,
-        title: str,
-        duration_seconds: Optional[int] = None,
-        pitch_semitones: int = 0,
-        playback_position_start: int = 0,
-        playback_position_end: Optional[int] = None
+        played_duration_seconds: int,
+        playback_end_position_seconds: int,
+        completion_percentage: float
     ) -> int:
         """
-        Record a song in playback history.
+        Record a performance in playback history.
         
-        PHASE 2: Playback history will be redesigned in Phase 2.
-        This is stubbed out for now to avoid breaking existing code.
+        Looks up song details from queue_items, combines with performance metrics,
+        and writes to playback_history.
         
+        Args:
+            queue_item_id: ID of the queue item that was played
+            played_duration_seconds: How long it was actually played
+            playback_end_position_seconds: Where playback ended
+            completion_percentage: Percent of song completed
+            
         Returns:
-            Dummy history ID (0)
+            History record ID, or 0 on error
         """
-        self.logger.debug('Playback history recording disabled (Phase 2 feature)')
-        return 0
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Get the raw JSON from queue_items (already properly formatted!)
+            cursor.execute('''
+                SELECT source, source_id, user_name, 
+                       song_metadata_json, settings_json
+                FROM queue_items
+                WHERE id = ?
+            ''', (queue_item_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                self.logger.error('Cannot record history: queue item %s not found', queue_item_id)
+                return 0
+            
+            # Build performance JSON
+            performance = {
+                'played_duration_seconds': played_duration_seconds,
+                'playback_end_position_seconds': playback_end_position_seconds,
+                'completion_percentage': completion_percentage
+            }
+            
+            # Insert into history - copy JSON directly from queue
+            cursor.execute('''
+                INSERT INTO playback_history 
+                (source, source_id, user_name, performed_at,
+                 song_metadata_json, settings_json, performance_json)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
+            ''', (
+                row['source'],
+                row['source_id'],
+                row['user_name'],
+                row['song_metadata_json'],  # Copy as-is
+                row['settings_json'],       # Copy as-is
+                self._encode_performance(performance)
+            ))
+            
+            history_id = cursor.lastrowid
+            conn.commit()
+            
+            self.logger.info('Recorded history for queue item %s (history ID: %s, completion: %.1f%%)',
+                           queue_item_id, history_id, completion_percentage)
+            return history_id
+        finally:
+            conn.close()
     
     def get_item(self, item_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -773,18 +835,37 @@ class QueueManager:
         finally:
             conn.close()
     
-    def get_last_song_settings(self, youtube_video_id: str, user_name: str) -> Dict[str, Any]:
+    def get_last_settings(self, source: str, source_id: str, user_name: str) -> Dict[str, Any]:
         """
-        Get all last used settings for a song from playback history for a specific user.
+        Get the last used settings for a song from playback history for a specific user.
         
-        PHASE 2: Playback history will be redesigned in Phase 2.
-        This is stubbed out for now to avoid breaking existing code.
+        Args:
+            source: Source type (e.g., 'youtube')
+            source_id: Source-specific identifier
+            user_name: Name of the user
         
         Returns:
-            Empty dict (no history available in Phase 1)
+            Settings dict (e.g., {'pitch_semitones': -2}), or empty dict if not found
         """
-        self.logger.debug('Settings recall from history disabled (Phase 2 feature)')
-        return {}
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Query most recent performance by this user for this song
+            cursor.execute('''
+                SELECT settings_json
+                FROM playback_history
+                WHERE source = ? AND source_id = ? AND user_name = ?
+                ORDER BY performed_at DESC, id DESC
+                LIMIT 1
+            ''', (source, source_id, user_name))
+            
+            result = cursor.fetchone()
+            if result:
+                return self._decode_settings(result['settings_json'])
+            return {}
+        finally:
+            conn.close()
     
     def update_pitch(self, item_id: int, pitch_semitones: int) -> bool:
         """

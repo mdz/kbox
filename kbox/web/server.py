@@ -170,12 +170,10 @@ def create_app(
         user_name: str,
         queue_mgr: QueueManager = Depends(get_queue_manager),
     ):
-        """Get saved settings (pitch, etc.) for a song from playback history for a specific user.
-        
-        Phase 2: History-based settings recall disabled for now.
-        """
-        # Phase 2 feature - return empty settings for now
-        return {"settings": {}}
+        """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
+        # Get settings from history (assumes YouTube source)
+        settings = queue_mgr.get_last_settings('youtube', youtube_video_id, user_name)
+        return {"settings": settings}
 
     @app.post("/api/queue")
     async def add_song(

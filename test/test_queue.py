@@ -232,3 +232,94 @@ def test_queue_persistence(temp_db):
     assert queue[0]['download_status'] == QueueManager.STATUS_READY
 
 
+def test_record_history(queue_manager):
+    """Test recording playback history."""
+    # Add a song
+    item_id = queue_manager.add_song(
+        'Alice', 'youtube', 'vid1', 'Test Song',
+        duration_seconds=180, pitch_semitones=2
+    )
+    
+    # Record history
+    history_id = queue_manager.record_history(
+        queue_item_id=item_id,
+        played_duration_seconds=150,
+        playback_end_position_seconds=150,
+        completion_percentage=83.3
+    )
+    
+    assert history_id > 0
+
+
+def test_record_history_nonexistent_item(queue_manager):
+    """Test recording history for nonexistent item."""
+    history_id = queue_manager.record_history(
+        queue_item_id=999,
+        played_duration_seconds=150,
+        playback_end_position_seconds=150,
+        completion_percentage=83.3
+    )
+    
+    # Should return 0 on error
+    assert history_id == 0
+
+
+def test_get_last_settings(queue_manager):
+    """Test getting last settings from history."""
+    # Add and record a song with specific pitch
+    item_id = queue_manager.add_song(
+        'Alice', 'youtube', 'vid1', 'Test Song',
+        pitch_semitones=-2
+    )
+    
+    queue_manager.record_history(
+        queue_item_id=item_id,
+        played_duration_seconds=150,
+        playback_end_position_seconds=150,
+        completion_percentage=83.3
+    )
+    
+    # Get settings back
+    settings = queue_manager.get_last_settings('youtube', 'vid1', 'Alice')
+    assert settings == {'pitch_semitones': -2}
+
+
+def test_get_last_settings_no_history(queue_manager):
+    """Test getting settings when no history exists."""
+    settings = queue_manager.get_last_settings('youtube', 'nonexistent', 'Alice')
+    assert settings == {}
+
+
+def test_get_last_settings_different_users(queue_manager):
+    """Test that settings are user-specific."""
+    # Alice sings with pitch -2
+    item1 = queue_manager.add_song('Alice', 'youtube', 'vid1', 'Song', pitch_semitones=-2)
+    queue_manager.record_history(item1, 150, 150, 83.3)
+    
+    # Bob sings same song with pitch +3
+    item2 = queue_manager.add_song('Bob', 'youtube', 'vid1', 'Song', pitch_semitones=3)
+    queue_manager.record_history(item2, 150, 150, 83.3)
+    
+    # Each user should get their own settings
+    alice_settings = queue_manager.get_last_settings('youtube', 'vid1', 'Alice')
+    bob_settings = queue_manager.get_last_settings('youtube', 'vid1', 'Bob')
+    
+    assert alice_settings == {'pitch_semitones': -2}
+    assert bob_settings == {'pitch_semitones': 3}
+
+
+def test_get_last_settings_most_recent(queue_manager):
+    """Test that get_last_settings returns most recent performance."""
+    # Alice sings with pitch -2
+    item1 = queue_manager.add_song('Alice', 'youtube', 'vid1', 'Song', pitch_semitones=-2)
+    queue_manager.record_history(item1, 150, 150, 83.3)
+    
+    # Alice sings again with pitch +1
+    item2 = queue_manager.add_song('Alice', 'youtube', 'vid1', 'Song', pitch_semitones=1)
+    queue_manager.record_history(item2, 150, 150, 83.3)
+    
+    # Should get the most recent (+1)
+    settings = queue_manager.get_last_settings('youtube', 'vid1', 'Alice')
+    assert settings == {'pitch_semitones': 1}
+
+

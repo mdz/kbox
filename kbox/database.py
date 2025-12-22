@@ -66,9 +66,35 @@ class Database:
             )
         ''')
         
-        # Note: playback_history will be redesigned in Phase 2
-        # For now, we drop it if it exists to avoid confusion
-        cursor.execute('DROP TABLE IF EXISTS playback_history')
+        # Playback history table - permanent record of performances
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS playback_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                song_metadata_json TEXT NOT NULL,
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                performance_json TEXT NOT NULL
+            )
+        ''')
+        
+        # Create indexes for common queries
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_history_user_song 
+            ON playback_history(user_name, source, source_id, performed_at DESC)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_history_time 
+            ON playback_history(performed_at DESC)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_history_user 
+            ON playback_history(user_name, performed_at DESC)
+        ''')
         
         conn.commit()
         conn.close()
