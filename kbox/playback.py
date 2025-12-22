@@ -56,6 +56,9 @@ class PlaybackController:
         # Download timeout (10 minutes) - reset stuck downloads after this time
         self._download_timeout = timedelta(minutes=10)
         
+        # Interstitial generator (lazy-initialized)
+        self._interstitial_generator = None
+        
         # Start download monitor thread
         self._download_monitor_thread = None
         self._monitoring = True
@@ -409,7 +412,7 @@ class PlaybackController:
                 self.state = PlaybackState.IDLE
                 
                 # Show idle screen
-                self.streaming_controller.show_idle_screen()
+                self.show_idle_screen()
                 return True
             except Exception as e:
                 self.logger.error('Error stopping playback: %s', e, exc_info=True)
@@ -617,7 +620,7 @@ class PlaybackController:
             # No more songs - show end-of-queue screen
             self.logger.info('No more songs, showing end-of-queue screen')
             self.state = PlaybackState.IDLE
-            self.streaming_controller.show_end_of_queue_screen()
+            self._show_end_of_queue_screen()
             return
         
         next_song = ready_songs[0]
@@ -637,7 +640,7 @@ class PlaybackController:
         self.logger.info('Showing transition for: %s (duration: %ss)', 
                         next_song['user_name'], transition_duration)
         self.state = PlaybackState.TRANSITION
-        self.streaming_controller.show_transition_screen(
+        self._show_transition_screen(
             singer_name=next_song['user_name'],
             song_title=next_song.get('title')
         )
@@ -671,14 +674,97 @@ class PlaybackController:
             self.logger.info('Transition complete, starting: %s', next_song['title'])
             self._play_song(next_song)
     
-    def show_idle_screen(self):
+    # =========================================================================
+    # Interstitial Display
+    # =========================================================================
+    
+    def _get_interstitial_generator(self):
+        """Get or create the interstitial generator (lazy initialization)."""
+        if self._interstitial_generator is None:
+            from .interstitials import InterstitialGenerator
+            import os
+            # Get cache directory from config or use default
+            cache_dir = self.config_manager.get('cache_directory')
+            if cache_dir:
+                cache_dir = os.path.join(cache_dir, 'interstitials')
+            self._interstitial_generator = InterstitialGenerator(cache_dir=cache_dir)
+        return self._interstitial_generator
+    
+    def _get_web_url(self) -> Optional[str]:
+        """Get the web interface URL for QR codes."""
+        # Access server through streaming controller
+        server = getattr(self.streaming_controller, 'server', None)
+        if server:
+            return getattr(server, 'external_url', None)
+        return None
+    
+    def show_idle_screen(self, message: str = "Add songs to get started!"):
         """
         Show the idle screen interstitial.
         
-        Called when entering idle state or when user stops playback.
+        Args:
+            message: Message to display on the idle screen
         """
-        with self.lock:
-            self.streaming_controller.show_idle_screen()
+        self.logger.info('Showing idle screen: %s', message)
+        
+        generator = self._get_interstitial_generator()
+        web_url = self._get_web_url()
+        
+        image_path = generator.generate_idle_screen(
+            web_url=web_url,
+            message=message
+        )
+        
+        if image_path:
+            self.streaming_controller.display_image(image_path)
+        else:
+            self.logger.warning('Could not generate idle screen')
+    
+    def _show_transition_screen(self, singer_name: str, song_title: Optional[str] = None):
+        """
+        Display the between-songs transition screen.
+        
+        Args:
+            singer_name: Name of the next singer
+            song_title: Optional song title (can be None for surprise)
+        """
+        self.logger.info('Showing transition screen for: %s', singer_name)
+        
+        generator = self._get_interstitial_generator()
+        web_url = self._get_web_url()
+        
+        image_path = generator.generate_transition_screen(
+            singer_name=singer_name,
+            song_title=song_title,
+            web_url=web_url
+        )
+        
+        if image_path:
+            self.streaming_controller.display_image(image_path)
+        else:
+            self.logger.warning('Could not generate transition screen')
+    
+    def _show_end_of_queue_screen(self, message: str = "That's all for now!"):
+        """
+        Display the end-of-queue interstitial screen.
+        
+        Args:
+            message: Message to display
+        """
+        self.logger.info('Showing end-of-queue screen: %s', message)
+        
+        generator = self._get_interstitial_generator()
+        web_url = self._get_web_url()
+        
+        image_path = generator.generate_end_of_queue_screen(
+            web_url=web_url,
+            message=message
+        )
+        
+        if image_path:
+            self.streaming_controller.display_image(image_path)
+        else:
+            self.logger.warning('Could not generate end-of-queue screen')
     
     def get_status(self) -> Dict[str, Any]:
         """

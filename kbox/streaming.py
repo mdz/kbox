@@ -72,7 +72,6 @@ class StreamingController:
         
         # Interstitial state
         self._is_interstitial = False  # True when displaying interstitial (not a song)
-        self._interstitial_generator = None  # Lazy-initialized
         
         # GStreamer initialization state
         self._gst_initialized = False
@@ -707,107 +706,20 @@ class StreamingController:
             self.logger.warning('Failed to set QR visibility: %s', e)
     
     # =========================================================================
-    # Interstitial Display
+    # Static Image Display
     # =========================================================================
     
-    def _get_interstitial_generator(self):
-        """Get or create the interstitial generator."""
-        if self._interstitial_generator is None:
-            from .interstitials import InterstitialGenerator
-            # Get cache directory from config or use default
-            cache_dir = self.config_manager.get('cache_directory')
-            if cache_dir:
-                import os
-                cache_dir = os.path.join(cache_dir, 'interstitials')
-            self._interstitial_generator = InterstitialGenerator(cache_dir=cache_dir)
-        return self._interstitial_generator
-    
-    def _get_web_url(self) -> Optional[str]:
-        """Get the web interface URL for QR codes."""
-        if self.server:
-            return getattr(self.server, 'external_url', None)
-        return None
-    
-    def show_idle_screen(self, message: str = "Add songs to get started!"):
+    def display_image(self, image_path: str):
         """
-        Display the idle interstitial screen.
+        Display a static image (interstitial screen).
+        
+        The image will be displayed indefinitely until another file is loaded.
+        Audio is muted for image display.
         
         Args:
-            message: Message to display on the idle screen
+            image_path: Path to the image file to display
         """
-        self.logger.info('Showing idle screen: %s', message)
-        
-        generator = self._get_interstitial_generator()
-        web_url = self._get_web_url()
-        
-        image_path = generator.generate_idle_screen(
-            web_url=web_url,
-            message=message
-        )
-        
-        if image_path:
-            self._load_interstitial(image_path)
-        else:
-            self.logger.warning('Could not generate idle screen')
-    
-    def show_transition_screen(
-        self,
-        singer_name: str,
-        song_title: Optional[str] = None
-    ):
-        """
-        Display the between-songs transition screen.
-        
-        Args:
-            singer_name: Name of the next singer
-            song_title: Optional song title (can be None for surprise)
-        """
-        self.logger.info('Showing transition screen for: %s', singer_name)
-        
-        generator = self._get_interstitial_generator()
-        web_url = self._get_web_url()
-        
-        image_path = generator.generate_transition_screen(
-            singer_name=singer_name,
-            song_title=song_title,
-            web_url=web_url
-        )
-        
-        if image_path:
-            self._load_interstitial(image_path)
-        else:
-            self.logger.warning('Could not generate transition screen')
-    
-    def show_end_of_queue_screen(self, message: str = "That's all for now!"):
-        """
-        Display the end-of-queue interstitial screen.
-        
-        Args:
-            message: Message to display
-        """
-        self.logger.info('Showing end-of-queue screen: %s', message)
-        
-        generator = self._get_interstitial_generator()
-        web_url = self._get_web_url()
-        
-        image_path = generator.generate_end_of_queue_screen(
-            web_url=web_url,
-            message=message
-        )
-        
-        if image_path:
-            self._load_interstitial(image_path)
-        else:
-            self.logger.warning('Could not generate end-of-queue screen')
-    
-    def _load_interstitial(self, image_path: str):
-        """
-        Load and display an interstitial image.
-        
-        Args:
-            image_path: Path to the interstitial image file
-        """
-        self.logger.debug('Loading interstitial: %s', image_path)
+        self.logger.debug('Displaying image: %s', image_path)
         
         Gst = _get_gst()
         
@@ -839,7 +751,7 @@ class StreamingController:
         
         self.state = 'playing'
         self.current_file = image_path
-        self.logger.info('Interstitial displayed successfully')
+        self.logger.info('Image displayed successfully')
     
     def is_showing_interstitial(self) -> bool:
         """Check if currently showing an interstitial."""

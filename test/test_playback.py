@@ -35,17 +35,20 @@ def mock_streaming_controller():
     controller.set_eos_callback = Mock()
     controller.get_position = Mock(return_value=0)
     controller.seek = Mock(return_value=True)
-    # Interstitial methods
-    controller.show_idle_screen = Mock()
-    controller.show_transition_screen = Mock()
-    controller.show_end_of_queue_screen = Mock()
+    controller.show_notification = Mock()
+    # Static image display (for interstitials)
+    controller.display_image = Mock()
+    controller.server = None  # No server in tests
     return controller
 
 
 @pytest.fixture
 def mock_config_manager():
     """Create a mock ConfigManager."""
-    return Mock()
+    config = Mock()
+    # Configure get() to return None for unknown keys, or specific values
+    config.get.return_value = None
+    return config
 
 
 @pytest.fixture
@@ -284,11 +287,8 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
     mock_queue_manager.update_playback_position.assert_called_once_with(1, 0)
     # Should reset pitch
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
-    # Should show transition screen (not immediately load next song)
-    mock_streaming_controller.show_transition_screen.assert_called_once_with(
-        singer_name='Bob',
-        song_title='Song 2'
-    )
+    # Should display transition interstitial image
+    mock_streaming_controller.display_image.assert_called_once()
     # State should be TRANSITION (waiting for timer)
     assert playback_controller.state == PlaybackState.TRANSITION
     # Next song should be pending
@@ -317,8 +317,8 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
     assert playback_controller.current_song is None
     assert playback_controller.state == PlaybackState.IDLE
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(0)
-    # Should show end-of-queue screen
-    mock_streaming_controller.show_end_of_queue_screen.assert_called_once()
+    # Should display end-of-queue interstitial image
+    mock_streaming_controller.display_image.assert_called_once()
 
 
 def test_get_status(playback_controller):
