@@ -15,6 +15,29 @@
         </div>
     </div>
     
+    <!-- Playback Controls Section (Operator Only) -->
+    <div class="section operator-panel" id="playback-controls-section" style="display: none;">
+        <h2>Playback Controls</h2>
+        <div id="playback-controls-content">
+            <div class="controls" id="playback-buttons-section" style="display: none;">
+                <div class="controls-row">
+                    <button id="play-pause-toggle" onclick="togglePlayPause(); resetPlaybackAutoLockTimer()">▶ Play</button>
+                    <button onclick="stopPlayback(); resetPlaybackAutoLockTimer()">⏹ Stop</button>
+                </div>
+                <div class="controls-row">
+                    <button onclick="playback('previous'); resetPlaybackAutoLockTimer()">⏮ Previous</button>
+                    <button onclick="playback('skip'); resetPlaybackAutoLockTimer()">⏭ Skip</button>
+                </div>
+                <div class="controls-row" style="grid-template-columns: 1fr 1fr 1fr;">
+                    <button onclick="seekBackward(); resetPlaybackAutoLockTimer()">⏪ -10s</button>
+                    <button onclick="restartSong(); resetPlaybackAutoLockTimer()">↺ Restart</button>
+                    <button onclick="seekForward(); resetPlaybackAutoLockTimer()">+10s ⏩</button>
+                </div>
+            </div>
+            <button id="playback-lock-button" onclick="togglePlaybackControlsLock()" style="width: 100%; margin-top: 10px; padding: 12px; font-size: 16px; background: #555;">🔒 Unlock Controls</button>
+        </div>
+    </div>
+    
     <!-- Up Next Section -->
     <div class="section" id="up-next-section">
         <div id="up-next-content" style="text-align: center; padding: 10px; color: #aaa;">
