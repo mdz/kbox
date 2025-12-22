@@ -17,6 +17,7 @@ class PlaybackState(Enum):
     IDLE = 'idle'
     PLAYING = 'playing'
     PAUSED = 'paused'
+    TRANSITION = 'transition'  # Between songs, showing interstitial
     ERROR = 'error'
 
 class PlaybackController:
@@ -47,6 +48,10 @@ class PlaybackController:
         self.state = PlaybackState.IDLE
         self.current_song: Optional[Dict[str, Any]] = None
         self.lock = threading.Lock()
+        
+        # Transition/interstitial state
+        self._transition_timer = None
+        self._next_song_pending = None  # Song to play after transition
         
         # Download timeout (10 minutes) - reset stuck downloads after this time
         self._download_timeout = timedelta(minutes=10)
@@ -270,6 +275,17 @@ class PlaybackController:
                     self.logger.error('Error resuming playback: %s', e, exc_info=True)
                     return False
             
+            if self.state == PlaybackState.TRANSITION:
+                # Already transitioning to next song, skip the wait
+                self.logger.info('Skipping transition, starting song immediately')
+                if self._transition_timer:
+                    self._transition_timer.cancel()
+                    self._transition_timer = None
+                if self._next_song_pending:
+                    next_song = self._next_song_pending
+                    self._next_song_pending = None
+                    return self._play_song(next_song)
+            
             # Start new song
             return self._load_and_play_next()
     
@@ -370,21 +386,30 @@ class PlaybackController:
         """
         Stop current playback and return to idle state.
         Unlike skip(), this does not try to load the next song.
+        Shows the idle interstitial screen.
         
         Returns:
             True if stopped, False otherwise
         """
         with self.lock:
+            # Cancel any pending transition
+            if self._transition_timer:
+                self._transition_timer.cancel()
+                self._transition_timer = None
+            self._next_song_pending = None
+            
             if not self.current_song and self.state == PlaybackState.IDLE:
                 self.logger.debug('Already idle, nothing to stop')
                 return False
             
             self.logger.info('Stopping playback')
             try:
-                if self.current_song:
-                    self.streaming_controller.stop_playback()
+                self.streaming_controller.stop_playback()
                 self.current_song = None
                 self.state = PlaybackState.IDLE
+                
+                # Show idle screen
+                self.streaming_controller.show_idle_screen()
                 return True
             except Exception as e:
                 self.logger.error('Error stopping playback: %s', e, exc_info=True)
@@ -568,11 +593,92 @@ class PlaybackController:
             # Reset pitch
             self.streaming_controller.set_pitch_shift(0)
             
-            # Load next song
+            # Clear current song
             self.current_song = None
-            if not self._load_and_play_next():
-                self.logger.info('No more songs, entering idle state')
+            
+            # Check for next song and show transition
+            self._show_transition_or_end()
+    
+    def _show_transition_or_end(self):
+        """
+        Show transition screen for next song, or end-of-queue screen.
+        
+        Called after a song ends. Shows appropriate interstitial and schedules
+        the next song to start after the transition duration.
+        
+        Note: Called with lock held.
+        """
+        # Get next ready song
+        queue = self.queue_manager.get_queue(include_played=False)
+        ready_songs = [item for item in queue 
+                      if item['download_status'] == QueueManager.STATUS_READY]
+        
+        if not ready_songs:
+            # No more songs - show end-of-queue screen
+            self.logger.info('No more songs, showing end-of-queue screen')
+            self.state = PlaybackState.IDLE
+            self.streaming_controller.show_end_of_queue_screen()
+            return
+        
+        next_song = ready_songs[0]
+        self._next_song_pending = next_song
+        
+        # Get transition duration from config (default 5 seconds)
+        transition_duration = self.config_manager.get('transition_duration_seconds')
+        if transition_duration is None:
+            transition_duration = 5
+        else:
+            try:
+                transition_duration = int(transition_duration)
+            except (ValueError, TypeError):
+                transition_duration = 5
+        
+        # Show transition screen
+        self.logger.info('Showing transition for: %s (duration: %ss)', 
+                        next_song['user_name'], transition_duration)
+        self.state = PlaybackState.TRANSITION
+        self.streaming_controller.show_transition_screen(
+            singer_name=next_song['user_name'],
+            song_title=next_song.get('title')
+        )
+        
+        # Schedule the next song to start after transition
+        if self._transition_timer:
+            self._transition_timer.cancel()
+        
+        def start_next_song():
+            self._on_transition_complete()
+        
+        self._transition_timer = threading.Timer(transition_duration, start_next_song)
+        self._transition_timer.daemon = True
+        self._transition_timer.start()
+    
+    def _on_transition_complete(self):
+        """Called when transition timer fires to start the next song."""
+        with self.lock:
+            if self.state != PlaybackState.TRANSITION:
+                self.logger.debug('Transition complete but state changed, ignoring')
+                return
+            
+            if not self._next_song_pending:
+                self.logger.warning('Transition complete but no pending song')
                 self.state = PlaybackState.IDLE
+                return
+            
+            next_song = self._next_song_pending
+            self._next_song_pending = None
+            
+            self.logger.info('Transition complete, starting: %s', next_song['title'])
+            self._play_song(next_song)
+    
+    def show_idle_screen(self):
+        """
+        Show the idle screen interstitial.
+        
+        Called when entering idle state or when user stops playback.
+        """
+        with self.lock:
+            self.streaming_controller.show_idle_screen()
     
     def get_status(self) -> Dict[str, Any]:
         """
@@ -682,6 +788,11 @@ class PlaybackController:
         self.logger.info('Shutting down playback controller')
         self._monitoring = False
         self._tracking_position = False
+        
+        # Cancel transition timer
+        if self._transition_timer:
+            self._transition_timer.cancel()
+            self._transition_timer = None
         
         # Stop download monitor thread
         if self._download_monitor_thread and self._download_monitor_thread.is_alive():

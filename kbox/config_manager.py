@@ -62,6 +62,8 @@ class ConfigManager:
         # Overlay settings
         'external_url': None,  # External URL for QR code (overrides auto-detect)
         'overlay_qr_position': 'top-left',  # QR position: top-left, top-right, bottom-left, bottom-right
+        # Interstitial settings
+        'transition_duration_seconds': '5',  # Duration of transition screen between songs
     }
     
     # Keys that should be editable via the web UI (in display order)
@@ -72,6 +74,7 @@ class ConfigManager:
         'cache_directory',
         'external_url',
         'overlay_qr_position',
+        'transition_duration_seconds',
         'default_mic_volume',
         'default_youtube_volume',
         'default_reverb_amount',
