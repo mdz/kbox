@@ -51,27 +51,24 @@ class PlaybackController:
         # Interstitial generator (lazy-initialized)
         self._interstitial_generator = None
         
-        # Start position tracking thread
-        self._position_tracking_thread = None
-        self._tracking_position = False
+        # Start "up next" notification monitoring thread
+        self._notification_thread = None
+        self._monitoring_notifications = False
         self._up_next_shown = False  # Track if "up next" notification was shown for current song
-        self._start_position_tracking()
+        self._start_notification_monitor()
         
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
-        
-        # Check for songs to resume on startup
-        self._resume_interrupted_playback()
     
-    def _start_position_tracking(self):
-        """Start background thread to check for "up next" notification."""
-        if self._position_tracking_thread and self._position_tracking_thread.is_alive():
+    def _start_notification_monitor(self):
+        """Start background thread to monitor playback and show 'up next' notifications."""
+        if self._notification_thread and self._notification_thread.is_alive():
             return
         
-        def track_position():
-            """Periodically check for "up next" notification."""
+        def monitor_notifications():
+            """Periodically check if we should show 'up next' notification."""
             import time
-            while self._tracking_position:
+            while self._monitoring_notifications:
                 try:
                     if self.state == PlaybackState.PLAYING and self.current_song:
                         position = self.streaming_controller.get_position()
@@ -80,13 +77,13 @@ class PlaybackController:
                             self._check_up_next_notification(position)
                     time.sleep(2)  # Check every 2 seconds
                 except Exception as e:
-                    self.logger.error('Error in position tracking: %s', e, exc_info=True)
+                    self.logger.error('Error in notification monitor: %s', e, exc_info=True)
                     time.sleep(5)  # Wait longer on error
         
-        self._tracking_position = True
-        self._position_tracking_thread = threading.Thread(target=track_position, daemon=True, name='PositionTracker')
-        self._position_tracking_thread.start()
-        self.logger.info('Position tracking started')
+        self._monitoring_notifications = True
+        self._notification_thread = threading.Thread(target=monitor_notifications, daemon=True, name='NotificationMonitor')
+        self._notification_thread.start()
+        self.logger.info('Notification monitor started')
     
     def _check_up_next_notification(self, current_position: int):
         """
@@ -701,18 +698,18 @@ class PlaybackController:
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""
         self.logger.info('Shutting down playback controller')
-        self._tracking_position = False
+        self._monitoring_notifications = False
         
         # Cancel transition timer
         if self._transition_timer:
             self._transition_timer.cancel()
             self._transition_timer = None
         
-        # Stop position tracking thread
-        if self._position_tracking_thread and self._position_tracking_thread.is_alive():
-            self._position_tracking_thread.join(timeout=2.0)
-            if self._position_tracking_thread.is_alive():
-                self.logger.warning('Position tracking thread did not stop within timeout')
+        # Stop notification monitor thread
+        if self._notification_thread and self._notification_thread.is_alive():
+            self._notification_thread.join(timeout=2.0)
+            if self._notification_thread.is_alive():
+                self.logger.warning('Notification monitor thread did not stop within timeout')
         
         # Stop streaming
         if self.streaming_controller:
