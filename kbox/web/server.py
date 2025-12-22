@@ -18,13 +18,14 @@ from ..youtube import YouTubeClient
 from ..playback import PlaybackController
 from ..config_manager import ConfigManager
 from ..streaming import StreamingController
+from ..user import UserManager
 
 logger = logging.getLogger(__name__)
 
 
 # Request models
 class AddSongRequest(BaseModel):
-    user_name: str
+    user_id: str  # UUID for identity
     youtube_video_id: str  # Keep for backward compatibility with frontend
     title: str
     duration_seconds: Optional[int] = None
@@ -39,14 +40,21 @@ class ReorderRequest(BaseModel):
 
 class PitchRequest(BaseModel):
     semitones: int
-    user_name: str
+    user_id: str  # UUID for identity
 
 
 class UpdateQueueItemRequest(BaseModel):
     """Request model for updating queue item properties."""
 
     pitch_semitones: Optional[int] = None
-    user_name: Optional[str] = None  # For permission checking
+    user_id: Optional[str] = None  # UUID for permission checking
+
+
+class UserRequest(BaseModel):
+    """Request model for user registration/update."""
+    
+    user_id: str  # UUID
+    display_name: str
 
 
 class OperatorAuthRequest(BaseModel):
@@ -88,6 +96,11 @@ def get_streaming_controller(request: Request) -> StreamingController:
     return request.app.state.streaming_controller
 
 
+def get_user_manager(request: Request) -> UserManager:
+    """Get UserManager from app state."""
+    return request.app.state.user_manager
+
+
 def check_operator(request: Request) -> bool:
     """
     Check if user is authenticated as operator.
@@ -104,6 +117,7 @@ def create_app(
     youtube_client: YouTubeClient,
     playback_controller: PlaybackController,
     config_manager: ConfigManager,
+    user_manager: UserManager,
     streaming_controller: Optional[StreamingController] = None,
     test_mode: bool = False,
 ) -> FastAPI:
@@ -115,6 +129,7 @@ def create_app(
         youtube_client: YouTubeClient instance
         playback_controller: PlaybackController instance
         config_manager: ConfigManager instance
+        user_manager: UserManager instance
         streaming_controller: StreamingController instance (optional, for overlays)
 
     Returns:
@@ -132,6 +147,7 @@ def create_app(
     app.state.youtube_client = youtube_client
     app.state.playback_controller = playback_controller
     app.state.config_manager = config_manager
+    app.state.user_manager = user_manager
     app.state.streaming_controller = streaming_controller
     app.state.test_mode = test_mode
     logger.info("Test mode enabled: %s", test_mode)
@@ -167,23 +183,13 @@ def create_app(
     @app.get("/api/queue/settings/{youtube_video_id}")
     async def get_song_settings(
         youtube_video_id: str,
-        user_name: str,
+        user_id: str,
         queue_mgr: QueueManager = Depends(get_queue_manager),
     ):
         """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
         # Get settings from history (assumes YouTube source)
-        settings = queue_mgr.get_last_settings('youtube', youtube_video_id, user_name)
+        settings = queue_mgr.get_last_settings('youtube', youtube_video_id, user_id)
         return {"settings": settings}
-    
-    @app.get("/api/history/{user_name}")
-    async def get_user_history(
-        user_name: str,
-        limit: int = 50,
-        queue_mgr: QueueManager = Depends(get_queue_manager),
-    ):
-        """Get playback history for a specific user."""
-        history = queue_mgr.get_user_history(user_name, limit)
-        return {"history": history}
 
     @app.post("/api/queue")
     async def add_song(
@@ -191,12 +197,17 @@ def create_app(
         request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         youtube: YouTubeClient = Depends(get_youtube_client),
+        user_mgr: UserManager = Depends(get_user_manager),
     ):
         """Add song to queue."""
         try:
+            # Get user's display name for notification
+            user = user_mgr.get_user(request_data.user_id)
+            display_name = user['display_name'] if user else 'Someone'
+            
             # Add song with source-agnostic schema
             item_id = queue_mgr.add_song(
-                user_name=request_data.user_name,
+                user_id=request_data.user_id,
                 source='youtube',
                 source_id=request_data.youtube_video_id,
                 title=request_data.title,
@@ -213,7 +224,7 @@ def create_app(
             streaming = request.app.state.streaming_controller
             if streaming:
                 streaming.show_notification(
-                    f"{request_data.user_name} added a song",
+                    f"{display_name} added a song",
                     duration_seconds=5.0
                 )
 
@@ -225,7 +236,7 @@ def create_app(
     @app.delete("/api/queue/{item_id}")
     async def remove_song(
         item_id: int,
-        user_name: Optional[str] = None,
+        user_id: Optional[str] = None,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         is_operator: bool = Depends(check_operator),
     ):
@@ -233,7 +244,7 @@ def create_app(
         Remove song from queue.
         
         Operators can remove any song. Users can remove their own songs
-        by providing their user_name as a query parameter.
+        by providing their user_id as a query parameter.
         """
         # Get the item to check ownership
         item = queue_mgr.get_item(item_id)
@@ -242,7 +253,7 @@ def create_app(
 
         # Check permissions: operator can remove any, users can only remove their own
         if not is_operator:
-            if not user_name or user_name != item["user_name"]:
+            if not user_id or user_id != item["user_id"]:
                 raise HTTPException(
                     status_code=403, detail="You can only remove songs you added"
                 )
@@ -293,8 +304,8 @@ def create_app(
         # Check permissions: operator can edit any, users can only edit their own
         if not is_operator:
             if (
-                not request_data.user_name
-                or request_data.user_name != item["user_name"]
+                not request_data.user_id
+                or request_data.user_id != item["user_id"]
             ):
                 raise HTTPException(
                     status_code=403, detail="You can only edit songs you added"
@@ -528,7 +539,7 @@ def create_app(
             )
         
         # Check authorization: user's own song OR operator
-        is_own_song = current_song.get("user_name") == request_data.user_name
+        is_own_song = current_song.get("user_id") == request_data.user_id
         is_op = check_operator(request)
         
         if not is_own_song and not is_op:
@@ -631,14 +642,27 @@ def create_app(
             "value": request_data.value,
         }
 
+    # User endpoints
+    @app.post("/api/users")
+    async def register_user(
+        request_data: UserRequest,
+        user_mgr: UserManager = Depends(get_user_manager),
+    ):
+        """Register or update a user."""
+        user = user_mgr.get_or_create_user(
+            user_id=request_data.user_id,
+            display_name=request_data.display_name
+        )
+        return user
+
     # History endpoints
-    @app.get("/api/history/{user_name}")
+    @app.get("/api/history/{user_id}")
     async def get_user_history(
-        user_name: str,
+        user_id: str,
         queue_mgr: QueueManager = Depends(get_queue_manager),
     ):
         """Get playback history for a specific user."""
-        history = queue_mgr.get_user_history(user_name, limit=50)
+        history = queue_mgr.get_user_history(user_id, limit=50)
         return {"history": history}
 
     # Web UI

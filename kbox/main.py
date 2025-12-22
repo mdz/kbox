@@ -11,6 +11,7 @@ import uvicorn
 from .database import Database
 from .config_manager import ConfigManager
 from .queue import QueueManager
+from .user import UserManager
 from .youtube import YouTubeClient
 from .streaming import StreamingController
 from .playback import PlaybackController
@@ -59,6 +60,7 @@ class KboxServer:
             youtube_api_key, cache_directory=self.config_manager.get("cache_directory")
         )
         self.queue_manager = QueueManager(self.database, youtube_client=self.youtube_client)
+        self.user_manager = UserManager(self.database)
 
         # StreamingController uses ConfigManager for configuration
         # Pass test_mode to use fakesinks for testing
@@ -79,6 +81,7 @@ class KboxServer:
             self.youtube_client,
             self.playback_controller,
             self.config_manager,
+            self.user_manager,
             streaming_controller=self.streaming_controller,
             test_mode=self.test_mode,
         )

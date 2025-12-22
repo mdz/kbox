@@ -242,7 +242,7 @@ class QueueManager:
     
     def add_song(
         self,
-        user_name: str,
+        user_id: str,
         source: str,
         source_id: str,
         title: str,
@@ -255,7 +255,7 @@ class QueueManager:
         Add a song to the end of the queue.
         
         Args:
-            user_name: Name of the user who requested the song
+            user_id: UUID of the user who requested the song
             source: Source type (e.g., 'youtube')
             source_id: Source-specific identifier (e.g., video ID)
             title: Song title
@@ -270,6 +270,14 @@ class QueueManager:
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            
+            # Get user's display name
+            cursor.execute('SELECT display_name FROM users WHERE id = ?', (user_id,))
+            user_row = cursor.fetchone()
+            if not user_row:
+                self.logger.error('User %s not found, cannot add song', user_id)
+                raise ValueError(f'User {user_id} not found')
+            user_name = user_row['display_name']
             
             # Get the highest position
             cursor.execute('SELECT MAX(position) as max_pos FROM queue_items')
@@ -291,11 +299,12 @@ class QueueManager:
             # Insert new item
             cursor.execute('''
                 INSERT INTO queue_items 
-                (position, user_name, source, source_id, song_metadata_json,
+                (position, user_id, user_name, source, source_id, song_metadata_json,
                  settings_json, download_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 next_position,
+                user_id,
                 user_name,
                 source,
                 source_id,
@@ -434,7 +443,7 @@ class QueueManager:
             
             if include_played:
                 cursor.execute('''
-                    SELECT id, position, user_name, source, source_id,
+                    SELECT id, position, user_id, user_name, source, source_id,
                            song_metadata_json, settings_json, download_json,
                            download_status, created_at, played_at
                     FROM queue_items
@@ -442,7 +451,7 @@ class QueueManager:
                 ''')
             else:
                 cursor.execute('''
-                    SELECT id, position, user_name, source, source_id,
+                    SELECT id, position, user_id, user_name, source, source_id,
                            song_metadata_json, settings_json, download_json,
                            download_status, created_at, played_at
                     FROM queue_items
@@ -481,7 +490,7 @@ class QueueManager:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT id, position, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, source, source_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -532,7 +541,7 @@ class QueueManager:
             
             # Get next ready song after current position
             cursor.execute('''
-                SELECT id, position, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, source, source_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -583,7 +592,7 @@ class QueueManager:
             
             # Get previous ready song before current position
             cursor.execute('''
-                SELECT id, position, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, source, source_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -752,7 +761,7 @@ class QueueManager:
             
             # Get the raw JSON from queue_items (already properly formatted!)
             cursor.execute('''
-                SELECT source, source_id, user_name, 
+                SELECT source, source_id, user_id, user_name, 
                        song_metadata_json, settings_json
                 FROM queue_items
                 WHERE id = ?
@@ -773,12 +782,13 @@ class QueueManager:
             # Insert into history - copy JSON directly from queue
             cursor.execute('''
                 INSERT INTO playback_history 
-                (source, source_id, user_name, performed_at,
+                (source, source_id, user_id, user_name, performed_at,
                  song_metadata_json, settings_json, performance_json)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
             ''', (
                 row['source'],
                 row['source_id'],
+                row['user_id'],
                 row['user_name'],
                 row['song_metadata_json'],  # Copy as-is
                 row['settings_json'],       # Copy as-is
@@ -809,7 +819,7 @@ class QueueManager:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT id, position, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, source, source_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -835,14 +845,14 @@ class QueueManager:
         finally:
             conn.close()
     
-    def get_last_settings(self, source: str, source_id: str, user_name: str) -> Dict[str, Any]:
+    def get_last_settings(self, source: str, source_id: str, user_id: str) -> Dict[str, Any]:
         """
         Get the last used settings for a song from playback history for a specific user.
         
         Args:
             source: Source type (e.g., 'youtube')
             source_id: Source-specific identifier
-            user_name: Name of the user
+            user_id: UUID of the user
         
         Returns:
             Settings dict (e.g., {'pitch_semitones': -2}), or empty dict if not found
@@ -855,10 +865,10 @@ class QueueManager:
             cursor.execute('''
                 SELECT settings_json
                 FROM playback_history
-                WHERE source = ? AND source_id = ? AND user_name = ?
+                WHERE source = ? AND source_id = ? AND user_id = ?
                 ORDER BY performed_at DESC, id DESC
                 LIMIT 1
-            ''', (source, source_id, user_name))
+            ''', (source, source_id, user_id))
             
             result = cursor.fetchone()
             if result:
@@ -867,66 +877,12 @@ class QueueManager:
         finally:
             conn.close()
     
-    def get_user_history(self, user_name: str, limit: int = 50) -> list[Dict[str, Any]]:
+    def get_user_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """
         Get playback history for a specific user.
         
         Args:
-            user_name: Name of the user
-            limit: Maximum number of records to return (default 50)
-        
-        Returns:
-            List of history records with song metadata, settings, and performance info
-        """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT 
-                    id,
-                    source,
-                    source_id,
-                    performed_at,
-                    song_metadata_json,
-                    settings_json,
-                    performance_json
-                FROM playback_history
-                WHERE user_name = ?
-                ORDER BY performed_at DESC, id DESC
-                LIMIT ?
-            ''', (user_name, limit))
-            
-            results = []
-            for row in cursor.fetchall():
-                metadata = self._decode_metadata(row['song_metadata_json'])
-                settings = self._decode_settings(row['settings_json'])
-                performance = self._decode_performance(row['performance_json'])
-                
-                results.append({
-                    'id': row['id'],
-                    'source': row['source'],
-                    'source_id': row['source_id'],
-                    'performed_at': row['performed_at'],
-                    'title': metadata.get('title', 'Unknown'),
-                    'duration_seconds': metadata.get('duration_seconds'),
-                    'thumbnail_url': metadata.get('thumbnail_url'),
-                    'pitch_semitones': settings.get('pitch_semitones', 0),
-                    'played_duration_seconds': performance.get('played_duration_seconds'),
-                    'playback_end_position_seconds': performance.get('playback_end_position_seconds'),
-                    'completion_percentage': performance.get('completion_percentage'),
-                })
-            
-            return results
-        finally:
-            conn.close()
-    
-    def get_user_history(self, user_name: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """
-        Get playback history for a specific user.
-        
-        Args:
-            user_name: Name of the user
+            user_id: UUID of the user
             limit: Maximum number of records to return (default 50)
             
         Returns:
@@ -937,13 +893,13 @@ class QueueManager:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT id, source, source_id, user_name, performed_at,
+                SELECT id, source, source_id, user_id, user_name, performed_at,
                        song_metadata_json, settings_json, performance_json
                 FROM playback_history
-                WHERE user_name = ?
+                WHERE user_id = ?
                 ORDER BY performed_at DESC, id DESC
                 LIMIT ?
-            ''', (user_name, limit))
+            ''', (user_id, limit))
             
             history = []
             for row in cursor.fetchall():
@@ -1007,4 +963,5 @@ class QueueManager:
             return updated
         finally:
             conn.close()
+    
 

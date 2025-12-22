@@ -510,6 +510,21 @@
         let isOperator = {{ 'true' if test_mode else 'false' }};
         let currentQueue = [];
         let userName = null;
+        let userId = null;
+        
+        // Generate UUID (with fallback for non-secure contexts)
+        function generateUUID() {
+            // Try native crypto.randomUUID first (requires HTTPS or localhost)
+            if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+                return crypto.randomUUID();
+            }
+            // Fallback: generate UUID v4 manually
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
         
         // Controls lock state (for pitch controls in Now Playing)
         let controlsLocked = true;
@@ -632,7 +647,7 @@
             }
             
             // Get user/channel name (highlight if it's the current user)
-            const isCurrentUser = songData.user_name === userName;
+            const isCurrentUser = songData.user_id === userId;
             const userText = songData.user_name 
                 ? (isCurrentUser 
                     ? `🎤 <strong style="color: #4aff6e;">Your song!</strong>` 
@@ -732,12 +747,16 @@
             }
         }
         
-        // Initialize user name
+        // Initialize user identity
         // @ts-ignore - Jinja2 template syntax
         {% if test_mode %}
-        // In test mode, use a fixed name and skip the prompt
+        // In test mode, use a fixed identity and skip the prompt
         userName = 'Test User';
+        userId = localStorage.getItem('kbox_user_id') || generateUUID();
         localStorage.setItem('kbox_user_name', userName);
+        localStorage.setItem('kbox_user_id', userId);
+        // Register with server
+        registerUser(userId, userName);
         // Ensure modal is hidden in test mode (run immediately)
         (function() {
             const modal = document.getElementById('name-modal');
@@ -747,10 +766,11 @@
         })();
         // @ts-ignore - Jinja2 template syntax
         {% else %}
-        // Check if user name is stored
+        // Check if user identity is stored
         userName = localStorage.getItem('kbox_user_name');
-        if (!userName) {
-            // Show name prompt modal
+        userId = localStorage.getItem('kbox_user_id');
+        if (!userName || !userId) {
+            // Show name prompt modal (will generate userId when name is entered)
             const modal = document.getElementById('name-modal');
             if (modal) {
                 modal.classList.remove('hidden');
@@ -767,9 +787,31 @@
                     setTimeout(() => nameInput.focus(), 100);
                 }
             }
+        } else {
+            // Existing user - register/update with server to ensure display name is current
+            registerUser(userId, userName);
         }
         // @ts-ignore - Jinja2 template syntax
         {% endif %}
+        
+        // Register user with server (creates or updates)
+        async function registerUser(uid, displayName) {
+            try {
+                const response = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_id: uid,
+                        display_name: displayName
+                    })
+                });
+                if (!response.ok) {
+                    console.error('Failed to register user:', await response.text());
+                }
+            } catch (e) {
+                console.error('Error registering user:', e);
+            }
+        }
         
         // Save user name from modal
         function saveUserName() {
@@ -782,7 +824,15 @@
                     return;
                 }
             userName = name;
+            // Generate new UUID if we don't have one, otherwise keep existing
+            if (!userId) {
+                userId = generateUUID();
+            }
             localStorage.setItem('kbox_user_name', userName);
+            localStorage.setItem('kbox_user_id', userId);
+            
+            // Register with server
+            registerUser(userId, userName);
             
             // Hide modal
             const modal = document.getElementById('name-modal');
@@ -1234,7 +1284,7 @@
             currentQueueItemToEdit = item;
             
             // Check if user can edit this song
-            const canEdit = isOperator || (userName && item.user_name === userName);
+            const canEdit = isOperator || (userId && item.user_id === userId);
             
             // Use reusable song settings component
             const additionalControls = !canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : '';
@@ -1268,7 +1318,7 @@
             // Show/hide operator options based on operator status
             const operatorOptions = document.getElementById('edit-queue-item-operator-options');
             const userOptions = document.getElementById('edit-queue-item-user-options');
-            const isOwnSong = userName && item.user_name === userName;
+            const isOwnSong = userId && item.user_id === userId;
             
             if (isOperator) {
                 operatorOptions.style.display = 'block';
@@ -1311,7 +1361,7 @@
             if (!currentQueueItemToEdit) return;
             
             // Check permissions
-            const canEdit = isOperator || (userName && currentQueueItemToEdit.user_name === userName);
+            const canEdit = isOperator || (userId && currentQueueItemToEdit.user_id === userId);
             if (!canEdit) {
                 alert('You can only edit songs you added');
                 return;
@@ -1326,7 +1376,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         pitch_semitones: pitchSemitones,
-                        user_name: userName
+                        user_id: userId
                     })
                 });
                 
@@ -1446,7 +1496,7 @@
             if (!confirm(`Remove "${currentQueueItemToEdit.title}" from queue?`)) return;
             
             try {
-                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}?user_name=${encodeURIComponent(userName)}`, {method: 'DELETE'});
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
                 if (response.ok) {
                     cancelEditQueueItem();
                     loadQueue();
@@ -1526,7 +1576,7 @@
             // Fetch saved settings for this video and user (pitch preset, etc.)
             let savedPitch = 0;
             try {
-                const settingsResponse = await fetch(`/api/queue/settings/${video.id}?user_name=${encodeURIComponent(userName)}`);
+                const settingsResponse = await fetch(`/api/queue/settings/${video.id}?user_id=${encodeURIComponent(userId)}`);
                 if (settingsResponse.ok) {
                     const settingsData = await settingsResponse.json();
                     savedPitch = settingsData.settings.pitch_semitones || 0;
@@ -1581,7 +1631,7 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        user_name: userName,
+                        user_id: userId,
                         youtube_video_id: currentVideoToAdd.id,
                         title: currentVideoToAdd.title,
                         duration_seconds: currentVideoToAdd.duration_seconds,
@@ -1636,7 +1686,7 @@
             modal.style.display = 'flex';
             
             try {
-                const response = await fetch(`/api/history/${encodeURIComponent(userName)}`);
+                const response = await fetch(`/api/history/${encodeURIComponent(userId)}`);
                 const data = await response.json();
                 
                 if (data.history && data.history.length > 0) {
@@ -1766,7 +1816,7 @@
             }
             
             // Check if user can access pitch controls (their song or operator)
-            const hasControlAccess = (currentSong.user_name === userName) || isOperator;
+            const hasControlAccess = (currentSong.user_id === userId) || isOperator;
             
             // Check if we already have pitch controls rendered
             const hasExistingControls = document.getElementById('now-playing-lock-button') !== null;
@@ -1900,7 +1950,7 @@
             const currentDuration = currentSong ? (currentSong.duration_seconds || 0) : 0;
             const currentRemaining = Math.max(0, currentDuration - position);
             
-            const isNextYou = nextSong.user_name === userName;
+            const isNextYou = nextSong.user_id === userId;
             const nameStyle = isNextYou ? 'color: #4aff6e; font-size: 1.2em;' : 'color: #4a9eff;';
             const youLabel = isNextYou ? '🎤 ' : '';
             
@@ -1915,7 +1965,7 @@
             
             // If next is not the current user, find when they ARE up
             if (!isNextYou && currentSong) {
-                const userSongIndex = upcomingSongs.findIndex(item => item.user_name === userName);
+                const userSongIndex = upcomingSongs.findIndex(item => item.user_id === userId);
                 if (userSongIndex > 0) {
                     // Sum durations of songs before user's turn
                     let timeUntilYou = currentRemaining;
@@ -1953,7 +2003,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         semitones: newValue,
-                        user_name: userName
+                        user_id: userId
                     })
                 });
                 

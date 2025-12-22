@@ -6,7 +6,6 @@ Handles SQLite database initialization, schema creation, and connection manageme
 
 import logging
 import sqlite3
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -40,6 +39,15 @@ class Database:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
+        # Users table - UUID-based identity with display name
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Queue items table - source-agnostic with JSON columns
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS queue_items (
@@ -48,6 +56,7 @@ class Database:
                 download_status TEXT DEFAULT 'pending',
                 played_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id TEXT NOT NULL,
                 user_name TEXT NOT NULL,
                 source TEXT NOT NULL,
                 source_id TEXT NOT NULL,
@@ -72,6 +81,7 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source TEXT NOT NULL,
                 source_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
                 user_name TEXT NOT NULL,
                 performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 song_metadata_json TEXT NOT NULL,
@@ -80,10 +90,10 @@ class Database:
             )
         ''')
         
-        # Create indexes for common queries
+        # Create indexes for common queries (use user_id for identity lookups)
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_history_user_song 
-            ON playback_history(user_name, source, source_id, performed_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_history_user_id_song 
+            ON playback_history(user_id, source, source_id, performed_at DESC)
         ''')
         
         cursor.execute('''
@@ -92,14 +102,18 @@ class Database:
         ''')
         
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_history_user 
-            ON playback_history(user_name, performed_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_history_user_id 
+            ON playback_history(user_id, performed_at DESC)
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_queue_user_id
+            ON queue_items(user_id)
         ''')
         
         conn.commit()
         conn.close()
         self.logger.debug('Database schema created/verified')
-    
     
     def get_connection(self):
         """
