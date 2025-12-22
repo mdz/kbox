@@ -867,6 +867,103 @@ class QueueManager:
         finally:
             conn.close()
     
+    def get_user_history(self, user_name: str, limit: int = 50) -> list[Dict[str, Any]]:
+        """
+        Get playback history for a specific user.
+        
+        Args:
+            user_name: Name of the user
+            limit: Maximum number of records to return (default 50)
+        
+        Returns:
+            List of history records with song metadata, settings, and performance info
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT 
+                    id,
+                    source,
+                    source_id,
+                    performed_at,
+                    song_metadata_json,
+                    settings_json,
+                    performance_json
+                FROM playback_history
+                WHERE user_name = ?
+                ORDER BY performed_at DESC, id DESC
+                LIMIT ?
+            ''', (user_name, limit))
+            
+            results = []
+            for row in cursor.fetchall():
+                metadata = self._decode_metadata(row['song_metadata_json'])
+                settings = self._decode_settings(row['settings_json'])
+                performance = self._decode_performance(row['performance_json'])
+                
+                results.append({
+                    'id': row['id'],
+                    'source': row['source'],
+                    'source_id': row['source_id'],
+                    'performed_at': row['performed_at'],
+                    'title': metadata.get('title', 'Unknown'),
+                    'duration_seconds': metadata.get('duration_seconds'),
+                    'thumbnail_url': metadata.get('thumbnail_url'),
+                    'pitch_semitones': settings.get('pitch_semitones', 0),
+                    'played_duration_seconds': performance.get('played_duration_seconds'),
+                    'playback_end_position_seconds': performance.get('playback_end_position_seconds'),
+                    'completion_percentage': performance.get('completion_percentage'),
+                })
+            
+            return results
+        finally:
+            conn.close()
+    
+    def get_user_history(self, user_name: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Get playback history for a specific user.
+        
+        Args:
+            user_name: Name of the user
+            limit: Maximum number of records to return (default 50)
+            
+        Returns:
+            List of history records with decoded JSON fields
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT id, source, source_id, user_name, performed_at,
+                       song_metadata_json, settings_json, performance_json
+                FROM playback_history
+                WHERE user_name = ?
+                ORDER BY performed_at DESC, id DESC
+                LIMIT ?
+            ''', (user_name, limit))
+            
+            history = []
+            for row in cursor.fetchall():
+                record = dict(row)
+                # Decode JSON fields
+                metadata = self._decode_metadata(record.pop('song_metadata_json'))
+                settings = self._decode_settings(record.pop('settings_json'))
+                performance = self._decode_performance(record.pop('performance_json'))
+                
+                # Merge all fields
+                record.update(metadata)
+                record.update(settings)
+                record.update(performance)
+                
+                history.append(record)
+            
+            return history
+        finally:
+            conn.close()
+    
     def update_pitch(self, item_id: int, pitch_semitones: int) -> bool:
         """
         Update pitch adjustment for a queue item.

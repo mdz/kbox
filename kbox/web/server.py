@@ -174,6 +174,16 @@ def create_app(
         # Get settings from history (assumes YouTube source)
         settings = queue_mgr.get_last_settings('youtube', youtube_video_id, user_name)
         return {"settings": settings}
+    
+    @app.get("/api/history/{user_name}")
+    async def get_user_history(
+        user_name: str,
+        limit: int = 50,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+    ):
+        """Get playback history for a specific user."""
+        history = queue_mgr.get_user_history(user_name, limit)
+        return {"history": history}
 
     @app.post("/api/queue")
     async def add_song(
@@ -620,6 +630,16 @@ def create_app(
             "key": request_data.key,
             "value": request_data.value,
         }
+
+    # History endpoints
+    @app.get("/api/history/{user_name}")
+    async def get_user_history(
+        user_name: str,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+    ):
+        """Get playback history for a specific user."""
+        history = queue_mgr.get_user_history(user_name, limit=50)
+        return {"history": history}
 
     # Web UI
     @app.get("/", response_class=HTMLResponse)

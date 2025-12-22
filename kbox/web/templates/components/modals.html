@@ -93,3 +93,14 @@
     </div>
 </div>
 
+<!-- History Modal -->
+<div class="modal-overlay hidden" id="history-modal" style="display: none;" onclick="if(event.target === this) hideHistoryModal();">
+    <div class="modal" style="max-width: 600px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
+        <h2>My Song History</h2>
+        <div id="history-content" style="margin-top: 20px;">
+            <!-- History will be rendered here by JavaScript -->
+        </div>
+        <button onclick="hideHistoryModal()" style="margin-top: 20px;">Close</button>
+    </div>
+</div>
+

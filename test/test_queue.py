@@ -323,3 +323,56 @@ def test_get_last_settings_most_recent(queue_manager):
     assert settings == {'pitch_semitones': 1}
 
 
+def test_get_user_history(queue_manager):
+    """Test getting user's playback history."""
+    # Add and record several songs for Alice
+    item1 = queue_manager.add_song('Alice', 'youtube', 'vid1', 'Song 1', duration_seconds=180, pitch_semitones=-2)
+    queue_manager.record_history(item1, 150, 150, 83.3)
+    
+    item2 = queue_manager.add_song('Alice', 'youtube', 'vid2', 'Song 2', duration_seconds=200, pitch_semitones=0)
+    queue_manager.record_history(item2, 200, 200, 100.0)
+    
+    # Add one for Bob
+    item3 = queue_manager.add_song('Bob', 'youtube', 'vid3', 'Song 3', duration_seconds=220, pitch_semitones=3)
+    queue_manager.record_history(item3, 220, 220, 100.0)
+    
+    # Get Alice's history
+    alice_history = queue_manager.get_user_history('Alice', limit=50)
+    
+    assert len(alice_history) == 2
+    # Most recent first
+    assert alice_history[0]['title'] == 'Song 2'
+    assert alice_history[0]['pitch_semitones'] == 0
+    assert alice_history[0]['completion_percentage'] == 100.0
+    assert alice_history[1]['title'] == 'Song 1'
+    assert alice_history[1]['pitch_semitones'] == -2
+    assert alice_history[1]['completion_percentage'] == 83.3
+    
+    # Get Bob's history
+    bob_history = queue_manager.get_user_history('Bob', limit=50)
+    assert len(bob_history) == 1
+    assert bob_history[0]['title'] == 'Song 3'
+
+
+def test_get_user_history_limit(queue_manager):
+    """Test that history respects the limit parameter."""
+    # Add 5 songs for Alice
+    for i in range(5):
+        item = queue_manager.add_song('Alice', 'youtube', f'vid{i}', f'Song {i}', duration_seconds=180)
+        queue_manager.record_history(item, 150, 150, 83.3)
+    
+    # Request only 3
+    history = queue_manager.get_user_history('Alice', limit=3)
+    assert len(history) == 3
+    # Should be most recent 3 (vid4, vid3, vid2)
+    assert history[0]['source_id'] == 'vid4'
+    assert history[1]['source_id'] == 'vid3'
+    assert history[2]['source_id'] == 'vid2'
+
+
+def test_get_user_history_empty(queue_manager):
+    """Test getting history for user with no history."""
+    history = queue_manager.get_user_history('NonExistentUser', limit=50)
+    assert history == []
+
+
