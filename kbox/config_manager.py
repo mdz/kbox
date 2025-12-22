@@ -59,7 +59,26 @@ class ConfigManager:
         'default_youtube_volume': '0.8',
         'default_reverb_amount': '0.3',
         'reverb_plugin': None,  # Will be determined at runtime
+        # Overlay settings
+        'external_url': None,  # External URL for QR code (overrides auto-detect)
+        'overlay_qr_position': 'top-left',  # QR position: top-left, top-right, bottom-left, bottom-right
     }
+    
+    # Keys that should be editable via the web UI (in display order)
+    # Keys not in this list are internal/system config
+    EDITABLE_KEYS = [
+        'operator_pin',
+        'youtube_api_key',
+        'cache_directory',
+        'external_url',
+        'overlay_qr_position',
+        'default_mic_volume',
+        'default_youtube_volume',
+        'default_reverb_amount',
+        'audio_input_device',
+        'audio_output_device',
+        'video_input_device',
+    ]
     
     def __init__(self, database: Database):
         """
@@ -201,4 +220,13 @@ class ConfigManager:
             return result
         finally:
             conn.close()
+    
+    def get_editable_keys(self) -> list:
+        """
+        Get list of config keys that should be editable via web UI.
+        
+        Returns:
+            List of key names in display order
+        """
+        return self.EDITABLE_KEYS.copy()
 

@@ -8,6 +8,7 @@ READY (idle) and PLAYING (song) states.
 
 import logging
 import sys
+import threading
 from typing import Optional
 
 # Defer GStreamer imports until actually needed to avoid crashes on import
@@ -62,6 +63,12 @@ class StreamingController:
         self.audio_bin = None
         self.video_bin = None
         self.pitch_shift_element = None
+        
+        # Overlay elements (set by _create_video_sink_bin)
+        self.qr_overlay = None
+        self.text_overlay = None
+        self._notification_timer = None
+        self._notification_lock = None
         
         # GStreamer initialization state
         self._gst_initialized = False
@@ -192,40 +199,117 @@ class StreamingController:
         return audio_bin
     
     def _create_video_sink_bin(self):
-        """Create video sink bin with scaling and format conversion."""
+        """Create video sink bin with overlays, scaling and format conversion."""
         Gst = _get_gst()
         video_bin = Gst.Bin.new('video_sink_bin')
         
-        # Create elements: videoconvert -> videoscale -> sink
+        # Build element chain: videoconvert -> qr_overlay -> text_overlay -> videoscale -> sink
+        elements = []
+        
+        # 1. videoconvert (required)
         vc = Gst.ElementFactory.make('videoconvert', 'videoconvert')
         if vc is None:
             raise RuntimeError('Failed to create videoconvert element')
+        elements.append(vc)
         
+        # 2. QR code overlay (optional - graceful fallback if unavailable)
+        self.qr_overlay = self._create_qr_overlay_element()
+        if self.qr_overlay:
+            elements.append(self.qr_overlay)
+        
+        # 3. Text overlay for notifications (optional - graceful fallback)
+        self.text_overlay = self._create_text_overlay_element()
+        if self.text_overlay:
+            elements.append(self.text_overlay)
+        
+        # Initialize notification lock
+        self._notification_lock = threading.Lock()
+        
+        # 4. videoscale (required)
         vs = Gst.ElementFactory.make('videoscale', 'videoscale')
         if vs is None:
             raise RuntimeError('Failed to create videoscale element')
+        elements.append(vs)
         
-        # Create platform-appropriate video sink
+        # 5. Platform-appropriate video sink
         from .platform import create_video_sink
         sink = create_video_sink(test_mode=self.test_mode)
+        elements.append(sink)
         
         # Add all elements to bin
-        for elem in [vc, vs, sink]:
+        for elem in elements:
             video_bin.add(elem)
         
-        # Link elements
-        if not vc.link(vs):
-            raise RuntimeError('Failed to link videoconvert to videoscale')
-        if not vs.link(sink):
-            raise RuntimeError('Failed to link videoscale to sink')
+        # Link elements in order
+        for i in range(len(elements) - 1):
+            if not elements[i].link(elements[i + 1]):
+                raise RuntimeError(f'Failed to link {elements[i].get_name()} to {elements[i + 1].get_name()}')
         
         # Create ghost pad pointing to first element's sink pad
-        sink_pad = vc.get_static_pad('sink')
+        sink_pad = elements[0].get_static_pad('sink')
         ghost_pad = Gst.GhostPad.new('sink', sink_pad)
         video_bin.add_pad(ghost_pad)
         
-        self.logger.info('Video sink bin created')
+        self.logger.info('Video sink bin created with overlays (qr=%s, text=%s)',
+                        self.qr_overlay is not None, self.text_overlay is not None)
         return video_bin
+    
+    def _create_qr_overlay_element(self):
+        """Create gdkpixbufoverlay element for QR code, or None if unavailable."""
+        Gst = _get_gst()
+        
+        try:
+            qr = Gst.ElementFactory.make('gdkpixbufoverlay', 'qr_overlay')
+            if qr is None:
+                self.logger.warning('gdkpixbufoverlay not available, QR overlay disabled')
+                return None
+            
+            # Store config for later use when positioning
+            self._qr_position = self.config_manager.get('overlay_qr_position') or 'bottom-left'
+            self._qr_size = 80  # Small, unobtrusive size
+            self._qr_padding = 15
+            
+            # Set size and alpha - positioning will be done when we know video dimensions
+            # For now, use simple top-left positioning which always works
+            qr.set_property('overlay-width', self._qr_size)
+            qr.set_property('overlay-height', self._qr_size)
+            qr.set_property('offset-x', self._qr_padding)
+            qr.set_property('offset-y', self._qr_padding)
+            qr.set_property('alpha', 0.7)  # Semi-transparent
+            
+            self.logger.info('QR overlay element created (size=%dpx, alpha=0.7)', self._qr_size)
+            return qr
+            
+        except Exception as e:
+            self.logger.warning('Failed to create QR overlay: %s', e)
+            return None
+    
+    def _create_text_overlay_element(self):
+        """Create textoverlay element for notifications, or None if unavailable."""
+        Gst = _get_gst()
+        
+        try:
+            text = Gst.ElementFactory.make('textoverlay', 'text_overlay')
+            if text is None:
+                self.logger.warning('textoverlay not available, text notifications disabled')
+                return None
+            
+            # Configure text overlay - subtle, top-left corner
+            text.set_property('text', '')  # Start with no text
+            text.set_property('valignment', 'top')
+            text.set_property('halignment', 'left')
+            text.set_property('xpad', 20)
+            text.set_property('ypad', 20)
+            text.set_property('font-desc', 'Sans 18')
+            text.set_property('shaded-background', True)
+            text.set_property('silent', True)  # No text initially
+            
+            self.logger.info('Text overlay element created')
+            return text
+            
+        except Exception as e:
+            self.logger.warning('Failed to create text overlay: %s', e)
+            return None
     
     def _create_pitch_shift_or_identity(self):
         """Create pitch shift element or identity passthrough if unavailable."""
@@ -391,6 +475,11 @@ class StreamingController:
         """Stop the streaming controller and cleanup resources."""
         self.logger.info('Stopping streaming controller...')
         
+        # Cancel notification timer
+        if self._notification_timer:
+            self._notification_timer.cancel()
+            self._notification_timer = None
+        
         # Stop bus polling first
         self._stop_bus_polling()
         
@@ -485,6 +574,127 @@ class StreamingController:
         except Exception as e:
             self.logger.error('Error seeking: %s', e, exc_info=True)
             return False
+    
+    # =========================================================================
+    # Overlay Control
+    # =========================================================================
+    
+    def show_notification(self, text: str, duration_seconds: float = 5.0):
+        """
+        Show transient text notification that auto-hides.
+        
+        Args:
+            text: Notification text to display
+            duration_seconds: How long to show the notification (default 5s)
+        """
+        if not self.text_overlay:
+            self.logger.debug('Text overlay not available, skipping notification')
+            return
+        
+        if not self._notification_lock:
+            return
+        
+        with self._notification_lock:
+            # Cancel any pending hide timer
+            if self._notification_timer:
+                self._notification_timer.cancel()
+                self._notification_timer = None
+            
+            try:
+                # Show the text
+                self.text_overlay.set_property('text', text)
+                self.text_overlay.set_property('silent', False)
+                self.logger.debug('Showing notification: %s', text)
+                
+                # Schedule hide after duration
+                def hide_notification():
+                    self._hide_notification()
+                
+                self._notification_timer = threading.Timer(
+                    duration_seconds, hide_notification
+                )
+                self._notification_timer.daemon = True
+                self._notification_timer.start()
+                
+            except Exception as e:
+                self.logger.warning('Failed to show notification: %s', e)
+    
+    def _hide_notification(self):
+        """Hide the current notification."""
+        if not self.text_overlay:
+            return
+        
+        if not self._notification_lock:
+            return
+        
+        with self._notification_lock:
+            try:
+                self.text_overlay.set_property('text', '')
+                self.text_overlay.set_property('silent', True)
+                self._notification_timer = None
+                self.logger.debug('Notification hidden')
+            except Exception as e:
+                self.logger.warning('Failed to hide notification: %s', e)
+    
+    def update_qr_overlay(self, image_path: str):
+        """
+        Update QR code overlay image.
+        
+        Args:
+            image_path: Path to the QR code PNG image
+        """
+        if not self.qr_overlay:
+            self.logger.debug('QR overlay not available')
+            return
+        
+        try:
+            import os
+            if not os.path.exists(image_path):
+                self.logger.warning('QR image not found: %s', image_path)
+                return
+            
+            # Verify file size
+            file_size = os.path.getsize(image_path)
+            self.logger.debug('QR image file size: %d bytes', file_size)
+            
+            self.qr_overlay.set_property('location', image_path)
+            
+            # Log current overlay properties for debugging
+            try:
+                loc = self.qr_overlay.get_property('location')
+                ox = self.qr_overlay.get_property('offset-x')
+                oy = self.qr_overlay.get_property('offset-y')
+                ow = self.qr_overlay.get_property('overlay-width')
+                oh = self.qr_overlay.get_property('overlay-height')
+                alpha = self.qr_overlay.get_property('alpha')
+                self.logger.info('QR overlay configured: location=%s, offset=(%d,%d), size=%dx%d, alpha=%.2f',
+                               loc, ox, oy, ow, oh, alpha)
+            except Exception as prop_err:
+                self.logger.debug('Could not read overlay properties: %s', prop_err)
+            
+        except Exception as e:
+            self.logger.warning('Failed to update QR overlay: %s', e)
+    
+    def set_qr_visible(self, visible: bool):
+        """
+        Toggle QR code visibility.
+        
+        Args:
+            visible: True to show, False to hide
+        """
+        if not self.qr_overlay:
+            self.logger.debug('QR overlay not available')
+            return
+        
+        try:
+            if visible:
+                self.qr_overlay.set_property('alpha', 0.9)
+            else:
+                self.qr_overlay.set_property('alpha', 0.0)
+            self.logger.debug('QR overlay visibility set to: %s', visible)
+            
+        except Exception as e:
+            self.logger.warning('Failed to set QR visibility: %s', e)
     
     # =========================================================================
     # Callbacks

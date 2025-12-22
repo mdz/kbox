@@ -978,20 +978,9 @@
                     throw new Error('Failed to load configuration');
                 }
                 
-                const config = await response.json();
-                
-                // Filter out internal/system config keys that shouldn't be edited via UI
-                const editableKeys = [
-                    'operator_pin',
-                    'youtube_api_key',
-                    'cache_directory',
-                    'default_mic_volume',
-                    'default_youtube_volume',
-                    'default_reverb_amount',
-                    'audio_input_device',
-                    'audio_output_device',
-                    'video_input_device'
-                ];
+                const data = await response.json();
+                const config = data.values;
+                const editableKeys = data.editable_keys;
                 
                 let html = '<div style="display: flex; flex-direction: column; gap: 15px;">';
                 

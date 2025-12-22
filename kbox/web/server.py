@@ -17,6 +17,7 @@ from ..queue import QueueManager
 from ..youtube import YouTubeClient
 from ..playback import PlaybackController
 from ..config_manager import ConfigManager
+from ..streaming import StreamingController
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,11 @@ def get_config_manager(request: Request) -> ConfigManager:
     return request.app.state.config_manager
 
 
+def get_streaming_controller(request: Request) -> StreamingController:
+    """Get StreamingController from app state."""
+    return request.app.state.streaming_controller
+
+
 def check_operator(request: Request) -> bool:
     """
     Check if user is authenticated as operator.
@@ -93,6 +99,7 @@ def create_app(
     youtube_client: YouTubeClient,
     playback_controller: PlaybackController,
     config_manager: ConfigManager,
+    streaming_controller: Optional[StreamingController] = None,
     test_mode: bool = False,
 ) -> FastAPI:
     """
@@ -103,6 +110,7 @@ def create_app(
         youtube_client: YouTubeClient instance
         playback_controller: PlaybackController instance
         config_manager: ConfigManager instance
+        streaming_controller: StreamingController instance (optional, for overlays)
 
     Returns:
         Configured FastAPI app
@@ -119,6 +127,7 @@ def create_app(
     app.state.youtube_client = youtube_client
     app.state.playback_controller = playback_controller
     app.state.config_manager = config_manager
+    app.state.streaming_controller = streaming_controller
     app.state.test_mode = test_mode
     logger.info("Test mode enabled: %s", test_mode)
 
@@ -163,6 +172,7 @@ def create_app(
     @app.post("/api/queue")
     async def add_song(
         request_data: AddSongRequest,
+        request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         youtube: YouTubeClient = Depends(get_youtube_client),
     ):
@@ -180,6 +190,14 @@ def create_app(
 
             # Trigger download (PlaybackController will handle this)
             # The download monitor will pick it up
+
+            # Show overlay notification
+            streaming = request.app.state.streaming_controller
+            if streaming:
+                streaming.show_notification(
+                    f"{request_data.user_name} added a song",
+                    duration_seconds=5.0
+                )
 
             return {"id": item_id, "status": "added"}
         except Exception as e:
@@ -502,8 +520,11 @@ def create_app(
     # Configuration endpoints
     @app.get("/api/config")
     async def get_config(config: ConfigManager = Depends(get_config_manager)):
-        """Get all configuration."""
-        return config.get_all()
+        """Get all configuration with editable keys metadata."""
+        return {
+            "values": config.get_all(),
+            "editable_keys": config.get_editable_keys()
+        }
 
     @app.patch("/api/config")
     async def update_config(

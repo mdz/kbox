@@ -16,6 +16,7 @@ from .streaming import StreamingController
 from .playback import PlaybackController
 from .web.server import create_app
 from .platform import is_macos, run_with_gst_macos_main, run_uvicorn_in_thread
+from .overlay import generate_qr_code
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -79,6 +80,7 @@ class KboxServer:
             self.youtube_client,
             self.playback_controller,
             self.config_manager,
+            streaming_controller=self.streaming_controller,
             test_mode=self.test_mode,
         )
 
@@ -97,19 +99,43 @@ class KboxServer:
         # For now, don't start it automatically to avoid crashes during web server startup
         logger.info("Streaming controller ready (will start when needed)")
 
-        # Get network info
+        # Determine external URL for QR code
+        # Priority: 1) KBOX_EXTERNAL_URL env var, 2) external_url config, 3) auto-detect
+        import os
         import socket
 
-        hostname = socket.gethostname()
-        try:
-            local_ip = socket.gethostbyname(hostname)
-        except:
-            local_ip = "localhost"
+        external_url = os.environ.get("KBOX_EXTERNAL_URL")
+        if external_url:
+            web_url = external_url.rstrip("/")
+            logger.info("Using external URL from environment: %s", web_url)
+        else:
+            external_url = self.config_manager.get("external_url")
+            if external_url:
+                web_url = external_url.rstrip("/")
+                logger.info("Using external URL from config: %s", web_url)
+            else:
+                # Fall back to auto-detection
+                hostname = socket.gethostname()
+                try:
+                    local_ip = socket.gethostbyname(hostname)
+                except:
+                    local_ip = "localhost"
+                web_url = f"http://{local_ip}:8000"
+                logger.info("Using auto-detected URL: %s", web_url)
+
+        # Generate QR code for the web UI URL
+        cache_dir = self.config_manager.get("cache_directory")
+        qr_path = generate_qr_code(web_url, size=100, cache_dir=cache_dir)
+        if qr_path:
+            self.streaming_controller.update_qr_overlay(qr_path)
+            logger.info("QR code overlay configured")
+        else:
+            logger.warning("QR code generation failed, overlay disabled")
 
         logger.info("=" * 60)
         logger.info("kbox is running!")
-        logger.info("Web UI: http://%s:8000", local_ip)
-        logger.info("API: http://%s:8000/api", local_ip)
+        logger.info("Web UI: %s", web_url)
+        logger.info("API: %s/api", web_url)
         logger.info("=" * 60)
 
         # Use uvicorn Server API for better control over shutdown

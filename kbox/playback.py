@@ -59,6 +59,7 @@ class PlaybackController:
         # Start position tracking thread
         self._position_tracking_thread = None
         self._tracking_position = False
+        self._up_next_shown = False  # Track if "up next" notification was shown for current song
         self._start_position_tracking()
         
         # Check for songs to resume on startup
@@ -144,7 +145,7 @@ class PlaybackController:
             return
         
         def track_position():
-            """Periodically update playback position in database."""
+            """Periodically update playback position in database and check for "up next" notification."""
             import time
             while self._tracking_position:
                 try:
@@ -155,6 +156,9 @@ class PlaybackController:
                                 self.current_song['id'],
                                 position
                             )
+                            
+                            # Check if we should show "up next" notification
+                            self._check_up_next_notification(position)
                     time.sleep(2)  # Update every 2 seconds
                 except Exception as e:
                     self.logger.error('Error tracking position: %s', e, exc_info=True)
@@ -164,6 +168,34 @@ class PlaybackController:
         self._position_tracking_thread = threading.Thread(target=track_position, daemon=True, name='PositionTracker')
         self._position_tracking_thread.start()
         self.logger.info('Position tracking started')
+    
+    def _check_up_next_notification(self, current_position: int):
+        """
+        Check if song is ending and show "up next" notification.
+        
+        Args:
+            current_position: Current playback position in seconds
+        """
+        if self._up_next_shown:
+            return  # Already shown for this song
+        
+        if not self.current_song:
+            return
+        
+        duration = self.current_song.get('duration_seconds')
+        if not duration or duration <= 0:
+            return
+        
+        # Show notification when 15 seconds or less remain
+        time_remaining = duration - current_position
+        if time_remaining <= 15:
+            # Get next song
+            next_song = self.queue_manager.get_next_song_after(self.current_song['id'])
+            if next_song:
+                notification_text = f"Up next: {next_song['user_name']}"
+                self.streaming_controller.show_notification(notification_text, duration_seconds=10.0)
+                self._up_next_shown = True
+                self.logger.debug('Showed up next notification for: %s', next_song['user_name'])
     
     def _resume_interrupted_playback(self):
         """Check for songs with playback position and resume if needed."""
@@ -273,6 +305,9 @@ class PlaybackController:
             self.logger.warning('No download path for song %s', song['id'])
             self.state = PlaybackState.IDLE
             return False
+        
+        # Reset "up next" notification flag for new song
+        self._up_next_shown = False
         
         try:
             self.logger.info('Loading song: %s by %s', song['title'], song['user_name'])
