@@ -319,6 +319,59 @@ class PlaybackController:
                 self.logger.error('Error stopping playback: %s', e, exc_info=True)
                 return False
     
+    def _skip_internal(self) -> bool:
+        """
+        Skip to next song (internal version, assumes lock is held).
+        
+        Navigation-based: moves to next song in queue without marking current as played.
+        The current song remains in the queue and can be navigated back to.
+        
+        Returns:
+            True if skipped, False if no next song available
+        """
+        self.logger.info('Skipping current song')
+        
+        if not self.current_song_id:
+            self.logger.info('No current song, trying to start playback')
+            return self._load_and_play_next()
+        
+        # Get current song data
+        current_song = self.queue_manager.get_item(self.current_song_id)
+        if not current_song:
+            self.logger.error('Current song ID %s not found', self.current_song_id)
+            return False
+        
+        # Get next song after current
+        next_song = self.queue_manager.get_next_song_after(self.current_song_id)
+        
+        if not next_song:
+            self.logger.info('No next song available to skip to')
+            return False
+        
+        # Record history if threshold met
+        current_position = self.streaming_controller.get_position() or 0
+        if self._should_record_history(current_song.get('duration_seconds'), current_position):
+            completion_pct = self._calculate_completion_percentage(
+                current_position, 
+                current_song.get('duration_seconds')
+            )
+            self.queue_manager.record_history(
+                queue_item_id=self.current_song_id,
+                played_duration_seconds=current_position,
+                playback_end_position_seconds=current_position,
+                completion_percentage=completion_pct
+            )
+            # Mark as played in queue for current event tracking
+            self.queue_manager.mark_played(self.current_song_id)
+        
+        # Stop current playback (but do NOT mark as played)
+        self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
+        self.streaming_controller.stop_playback()
+        self.logger.debug('[DEBUG] skip: after stop_playback')
+        
+        # Load and play the next song
+        return self._play_song(next_song)
+    
     def skip(self) -> bool:
         """
         Skip to next song.
@@ -330,48 +383,7 @@ class PlaybackController:
             True if skipped, False if no next song available
         """
         with self.lock:
-            self.logger.info('Skipping current song')
-            
-            if not self.current_song_id:
-                self.logger.info('No current song, trying to start playback')
-                return self._load_and_play_next()
-            
-            # Get current song data
-            current_song = self.queue_manager.get_item(self.current_song_id)
-            if not current_song:
-                self.logger.error('Current song ID %s not found', self.current_song_id)
-                return False
-            
-            # Get next song after current
-            next_song = self.queue_manager.get_next_song_after(self.current_song_id)
-            
-            if not next_song:
-                self.logger.info('No next song available to skip to')
-                return False
-            
-            # Record history if threshold met
-            current_position = self.streaming_controller.get_position() or 0
-            if self._should_record_history(current_song.get('duration_seconds'), current_position):
-                completion_pct = self._calculate_completion_percentage(
-                    current_position, 
-                    current_song.get('duration_seconds')
-                )
-                self.queue_manager.record_history(
-                    queue_item_id=self.current_song_id,
-                    played_duration_seconds=current_position,
-                    playback_end_position_seconds=current_position,
-                    completion_percentage=completion_pct
-                )
-                # Mark as played in queue for current event tracking
-                self.queue_manager.mark_played(self.current_song_id)
-            
-            # Stop current playback (but do NOT mark as played)
-            self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
-            self.streaming_controller.stop_playback()
-            self.logger.debug('[DEBUG] skip: after stop_playback')
-            
-            # Load and play the next song
-            return self._play_song(next_song)
+            return self._skip_internal()
     
     def jump_to_song(self, item_id: int) -> bool:
         """
@@ -669,14 +681,16 @@ class PlaybackController:
         """
         Handle playback error.
         
+        Assumes lock is already held (called from _play_song which is called with lock held).
+        
         Args:
             item_id: ID of the queue item that failed
             error_message: Error message
         """
         self.logger.error('Playback error for item %s: %s', item_id, error_message)
         
-        # Try to skip to next song
-        if self.skip():
+        # Try to skip to next song (using internal version since lock is already held)
+        if self._skip_internal():
             self.logger.info('Skipped to next song after error')
         else:
             self.logger.warning('No next song available after error')
