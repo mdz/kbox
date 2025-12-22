@@ -46,3 +46,15 @@ When a fix attempt doesn't work:
 1. **Revert the failed change first** - Don't pile hacks on top of failed hacks
 2. **Return to the last known state** - Before trying a new approach
 3. **One change at a time** - So we know exactly what worked or didn't
+
+# Testing - E2E Before Committing Substantial Changes
+
+This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. The pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.
+
+Before committing substantial changes (especially to streaming, playback, queue, or pipeline code):
+
+1. Run pytest as a quick sanity check
+2. **Ask the user to test end-to-end** — run the actual app, play a song, verify it works
+3. Only commit after user confirms e2e testing passes
+
+Don't commit based on pytest alone for changes that could affect the real pipeline.
