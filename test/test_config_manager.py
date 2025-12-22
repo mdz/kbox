@@ -31,8 +31,8 @@ def test_get_default(config_manager):
     """Test getting default configuration values."""
     # Test default values
     assert config_manager.get('operator_pin') == '1234'
-    assert config_manager.get('midi_input_name') == 'MPK mini Play mk3'
     assert config_manager.get('default_mic_volume') == '0.8'
+    assert config_manager.get('transition_duration_seconds') == '5'
 
 
 def test_set_and_get(config_manager):
@@ -98,8 +98,8 @@ def test_get_all(config_manager):
     
     # Should include defaults
     assert 'operator_pin' in all_config
-    assert 'midi_input_name' in all_config
     assert 'default_mic_volume' in all_config
+    assert 'transition_duration_seconds' in all_config
     
     # Should include custom values
     assert all_config['operator_pin'] == '9999'

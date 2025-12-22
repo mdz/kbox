@@ -44,6 +44,7 @@ def full_system(temp_db, temp_cache_dir):
     config_manager = ConfigManager(temp_db)
     config_manager.set('youtube_api_key', 'test_key')
     config_manager.set('cache_directory', temp_cache_dir)
+    config_manager.set('transition_duration_seconds', '0')  # No transition delay in tests
     
     # Queue manager
     queue_manager = QueueManager(temp_db)
@@ -62,7 +63,13 @@ def full_system(temp_db, temp_cache_dir):
     mock_streaming.pause = Mock()
     mock_streaming.resume = Mock()
     mock_streaming.stop = Mock()
+    mock_streaming.stop_playback = Mock()
     mock_streaming.set_eos_callback = Mock()
+    mock_streaming.get_position = Mock(return_value=0)
+    mock_streaming.seek = Mock(return_value=True)
+    mock_streaming.show_notification = Mock()
+    mock_streaming.display_image = Mock()
+    mock_streaming.server = None
     
     # Playback controller
     playback_controller = PlaybackController(
@@ -114,7 +121,7 @@ def test_add_song_to_queue_and_play(full_system):
     
     # Verify streaming controller was called
     system['streaming'].set_pitch_shift.assert_called_once_with(2)
-    system['streaming'].load_file.assert_called_once_with('/fake/path/to/video.mp4')
+    system['streaming'].load_file.assert_called_once_with('/fake/path/to/video.mp4', start_position_seconds=0)
 
 
 def test_queue_persistence_across_restarts(temp_db):
@@ -191,6 +198,7 @@ def test_pitch_adjustment_during_playback(full_system):
 
 def test_song_transition_on_end(full_system):
     """Test automatic transition to next song on end."""
+    import time
     system = full_system
     
     # Add two songs
@@ -210,6 +218,9 @@ def test_song_transition_on_end(full_system):
     
     # Simulate end of song
     system['playback'].on_song_end()
+    
+    # Wait for transition timer (set to 0 seconds in fixture)
+    time.sleep(0.1)
     
     # Should transition to next song
     assert system['playback'].current_song is not None
