@@ -94,7 +94,8 @@ def test_add_song_to_queue_and_play(full_system):
     # Add song to queue
     item_id = system['queue'].add_song(
         user_name='Alice',
-        youtube_video_id='test123',
+        source='youtube',
+        source_id='test123',
         title='Test Song',
         duration_seconds=180,
         pitch_semitones=2
@@ -129,8 +130,8 @@ def test_queue_persistence_across_restarts(temp_db):
     queue1 = QueueManager(temp_db)
     
     # Add songs
-    id1 = queue1.add_song('Alice', 'vid1', 'Song 1')
-    id2 = queue1.add_song('Bob', 'vid2', 'Song 2')
+    id1 = queue1.add_song('Alice', 'youtube', 'vid1', 'Song 1')
+    id2 = queue1.add_song('Bob', 'youtube', 'vid2', 'Song 2')
     queue1.update_download_status(id1, QueueManager.STATUS_READY, download_path='/path1')
     
     # Create second system (simulating restart)
@@ -153,7 +154,7 @@ def test_playback_state_transitions(full_system):
     assert system['playback'].state == PlaybackState.IDLE
     
     # Add and mark ready
-    item_id = system['queue'].add_song('Alice', 'vid1', 'Song 1')
+    item_id = system['queue'].add_song('Alice', 'youtube', 'vid1', 'Song 1')
     system['queue'].update_download_status(
         item_id, QueueManager.STATUS_READY, download_path='/fake/path.mp4'
     )
@@ -176,7 +177,7 @@ def test_pitch_adjustment_during_playback(full_system):
     system = full_system
     
     # Add and play song
-    item_id = system['queue'].add_song('Alice', 'vid1', 'Song 1', pitch_semitones=0)
+    item_id = system['queue'].add_song('Alice', 'youtube', 'vid1', 'Song 1', pitch_semitones=0)
     system['queue'].update_download_status(
         item_id, QueueManager.STATUS_READY, download_path='/fake/path.mp4'
     )
@@ -200,8 +201,8 @@ def test_song_transition_on_end(full_system):
     system = full_system
     
     # Add two songs
-    id1 = system['queue'].add_song('Alice', 'vid1', 'Song 1')
-    id2 = system['queue'].add_song('Bob', 'vid2', 'Song 2')
+    id1 = system['queue'].add_song('Alice', 'youtube', 'vid1', 'Song 1')
+    id2 = system['queue'].add_song('Bob', 'youtube', 'vid2', 'Song 2')
     
     system['queue'].update_download_status(
         id1, QueueManager.STATUS_READY, download_path='/fake/path1.mp4'
@@ -231,8 +232,8 @@ def test_skip_to_next_song(full_system):
     system = full_system
     
     # Add two songs
-    id1 = system['queue'].add_song('Alice', 'vid1', 'Song 1')
-    id2 = system['queue'].add_song('Bob', 'vid2', 'Song 2')
+    id1 = system['queue'].add_song('Alice', 'youtube', 'vid1', 'Song 1')
+    id2 = system['queue'].add_song('Bob', 'youtube', 'vid2', 'Song 2')
     
     system['queue'].update_download_status(
         id1, QueueManager.STATUS_READY, download_path='/fake/path1.mp4'
@@ -256,9 +257,9 @@ def test_queue_reordering(full_system):
     system = full_system
     
     # Add three songs
-    id1 = system['queue'].add_song('Alice', 'vid1', 'Song 1')
-    id2 = system['queue'].add_song('Bob', 'vid2', 'Song 2')
-    id3 = system['queue'].add_song('Charlie', 'vid3', 'Song 3')
+    id1 = system['queue'].add_song('Alice', 'youtube', 'vid1', 'Song 1')
+    id2 = system['queue'].add_song('Bob', 'youtube', 'vid2', 'Song 2')
+    id3 = system['queue'].add_song('Charlie', 'youtube', 'vid3', 'Song 3')
     
     # Move last to first
     result = system['queue'].reorder_song(id3, 1)

@@ -4,6 +4,7 @@ Queue management for kbox.
 Handles song queue operations with persistence and download management.
 """
 
+import json
 import logging
 import threading
 from datetime import datetime, timedelta
@@ -22,6 +23,52 @@ class QueueManager:
     STATUS_DOWNLOADING = 'downloading'
     STATUS_READY = 'ready'
     STATUS_ERROR = 'error'
+    
+    # JSON utility methods
+    @staticmethod
+    def _encode_settings(settings: Dict[str, Any]) -> str:
+        """Encode settings dict to JSON string."""
+        return json.dumps(settings)
+    
+    @staticmethod
+    def _decode_settings(settings_json: str) -> Dict[str, Any]:
+        """Decode settings JSON string to dict."""
+        if not settings_json:
+            return {}
+        try:
+            return json.loads(settings_json)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    
+    @staticmethod
+    def _encode_metadata(metadata: Dict[str, Any]) -> str:
+        """Encode song metadata dict to JSON string."""
+        return json.dumps(metadata)
+    
+    @staticmethod
+    def _decode_metadata(metadata_json: str) -> Dict[str, Any]:
+        """Decode metadata JSON string to dict."""
+        if not metadata_json:
+            return {}
+        try:
+            return json.loads(metadata_json)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    
+    @staticmethod
+    def _encode_download_info(download_info: Dict[str, Any]) -> str:
+        """Encode download info dict to JSON string."""
+        return json.dumps(download_info)
+    
+    @staticmethod
+    def _decode_download_info(download_json: Optional[str]) -> Dict[str, Any]:
+        """Decode download info JSON string to dict."""
+        if not download_json:
+            return {}
+        try:
+            return json.loads(download_json)
+        except (json.JSONDecodeError, TypeError):
+            return {}
     
     def __init__(self, database: Database, youtube_client: Optional['YouTubeClient'] = None):
         """
@@ -91,11 +138,18 @@ class QueueManager:
         def on_status(status: str, path: Optional[str], error: Optional[str]):
             self._on_download_status(item_id, status, path, error)
         
-        self.youtube_client.download_video(
-            item['youtube_video_id'],
-            item['id'],
-            status_callback=on_status
-        )
+        # For YouTube source, use source_id (video ID)
+        if item['source'] == 'youtube':
+            self.youtube_client.download_video(
+                item['source_id'],
+                item['id'],
+                status_callback=on_status
+            )
+        else:
+            self.logger.error('Unsupported source type: %s', item['source'])
+            self.update_download_status(item['id'], self.STATUS_ERROR, 
+                                       error_message=f"Unsupported source: {item['source']}")
+            return
         
         # Update status to downloading
         self.update_download_status(item['id'], self.STATUS_DOWNLOADING)
@@ -103,16 +157,18 @@ class QueueManager:
     def _check_stuck_download(self, item: Dict[str, Any]):
         """Check if a download is stuck and recover if possible."""
         # First, check if file exists (download completed but callback failed)
-        download_path = self.youtube_client.get_download_path(item['youtube_video_id'])
-        if download_path and download_path.exists():
-            self.logger.info('Found completed download for %s (ID: %s), updating status', 
-                           item['title'], item['id'])
-            self.update_download_status(
-                item['id'],
-                self.STATUS_READY,
-                download_path=str(download_path)
-            )
-            return
+        # Only works for YouTube source currently
+        if item['source'] == 'youtube':
+            download_path = self.youtube_client.get_download_path(item['source_id'])
+            if download_path and download_path.exists():
+                self.logger.info('Found completed download for %s (ID: %s), updating status', 
+                               item['title'], item['id'])
+                self.update_download_status(
+                    item['id'],
+                    self.STATUS_READY,
+                    download_path=str(download_path)
+                )
+                return
         
         # Check if download has been stuck for too long
         try:
@@ -172,25 +228,26 @@ class QueueManager:
     def add_song(
         self,
         user_name: str,
-        youtube_video_id: str,
+        source: str,
+        source_id: str,
         title: str,
         duration_seconds: Optional[int] = None,
         thumbnail_url: Optional[str] = None,
-        pitch_semitones: Optional[int] = None
+        channel: Optional[str] = None,
+        pitch_semitones: int = 0
     ) -> int:
         """
         Add a song to the end of the queue.
         
-        If pitch_semitones is not provided (None), will check for a saved pitch setting
-        for this video and use it if available. Otherwise defaults to 0.
-        
         Args:
             user_name: Name of the user who requested the song
-            youtube_video_id: YouTube video ID
+            source: Source type (e.g., 'youtube')
+            source_id: Source-specific identifier (e.g., video ID)
             title: Song title
             duration_seconds: Duration in seconds (optional)
             thumbnail_url: Thumbnail URL (optional)
-            pitch_semitones: Pitch adjustment in semitones. Defaults to 0 if None.
+            channel: Channel/artist name (optional)
+            pitch_semitones: Pitch adjustment in semitones (default 0)
         
         Returns:
             ID of the created queue item
@@ -199,36 +256,44 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
-            # Use provided pitch or default to 0
-            if pitch_semitones is None:
-                pitch_semitones = 0
-            
             # Get the highest position
             cursor.execute('SELECT MAX(position) as max_pos FROM queue_items')
             result = cursor.fetchone()
             next_position = (result['max_pos'] or 0) + 1
             
+            # Build metadata JSON
+            metadata = {
+                'title': title,
+                'duration_seconds': duration_seconds,
+                'thumbnail_url': thumbnail_url,
+            }
+            if channel:
+                metadata['channel'] = channel
+            
+            # Build settings JSON
+            settings = {'pitch_semitones': pitch_semitones}
+            
             # Insert new item
             cursor.execute('''
                 INSERT INTO queue_items 
-                (position, user_name, youtube_video_id, title, duration_seconds, 
-                 thumbnail_url, pitch_semitones, download_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (position, user_name, source, source_id, song_metadata_json,
+                 settings_json, download_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (
                 next_position,
                 user_name,
-                youtube_video_id,
-                title,
-                duration_seconds,
-                thumbnail_url,
-                pitch_semitones,
+                source,
+                source_id,
+                self._encode_metadata(metadata),
+                self._encode_settings(settings),
                 self.STATUS_PENDING
             ))
             
             item_id = cursor.lastrowid
             conn.commit()
             
-            self.logger.info('Added song to queue: %s by %s (ID: %s, pitch: %s)', title, user_name, item_id, pitch_semitones)
+            self.logger.info('Added song to queue: %s by %s (ID: %s, source: %s, pitch: %s)', 
+                           title, user_name, item_id, source, pitch_semitones)
             return item_id
         finally:
             conn.close()
@@ -346,7 +411,7 @@ class QueueManager:
                            If False, only return unplayed songs.
         
         Returns:
-            List of queue items as dictionaries
+            List of queue items as dictionaries with JSON fields decoded
         """
         conn = self.database.get_connection()
         try:
@@ -354,19 +419,17 @@ class QueueManager:
             
             if include_played:
                 cursor.execute('''
-                    SELECT id, position, user_name, youtube_video_id, title, 
-                           duration_seconds, thumbnail_url, pitch_semitones,
-                           download_status, download_path, created_at, played_at,
-                           error_message
+                    SELECT id, position, user_name, source, source_id,
+                           song_metadata_json, settings_json, download_json,
+                           download_status, created_at, played_at
                     FROM queue_items
                     ORDER BY position
                 ''')
             else:
                 cursor.execute('''
-                    SELECT id, position, user_name, youtube_video_id, title, 
-                           duration_seconds, thumbnail_url, pitch_semitones,
-                           download_status, download_path, created_at, played_at,
-                           error_message
+                    SELECT id, position, user_name, source, source_id,
+                           song_metadata_json, settings_json, download_json,
+                           download_status, created_at, played_at
                     FROM queue_items
                     WHERE played_at IS NULL
                     ORDER BY position
@@ -374,7 +437,18 @@ class QueueManager:
             
             items = []
             for row in cursor.fetchall():
-                items.append(dict(row))
+                item = dict(row)
+                # Decode JSON fields and merge into item dict
+                metadata = self._decode_metadata(item.pop('song_metadata_json'))
+                settings = self._decode_settings(item.pop('settings_json'))
+                download_info = self._decode_download_info(item.pop('download_json'))
+                
+                # Merge all fields
+                item.update(metadata)
+                item.update(settings)
+                item.update(download_info)
+                
+                items.append(item)
             
             return items
         finally:
@@ -385,17 +459,16 @@ class QueueManager:
         Get the next ready song in the queue.
         
         Returns:
-            Queue item dictionary if found, None otherwise
+            Queue item dictionary with JSON fields decoded, or None if not found
         """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT id, position, user_name, youtube_video_id, title,
-                       duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at,
-                       error_message
+                SELECT id, position, user_name, source, source_id,
+                       song_metadata_json, settings_json, download_json,
+                       download_status, created_at, played_at
                 FROM queue_items
                 WHERE download_status = ? AND played_at IS NULL
                 ORDER BY position
@@ -403,7 +476,20 @@ class QueueManager:
             ''', (self.STATUS_READY,))
             
             result = cursor.fetchone()
-            return dict(result) if result else None
+            if not result:
+                return None
+            
+            item = dict(result)
+            # Decode JSON fields and merge
+            metadata = self._decode_metadata(item.pop('song_metadata_json'))
+            settings = self._decode_settings(item.pop('settings_json'))
+            download_info = self._decode_download_info(item.pop('download_json'))
+            
+            item.update(metadata)
+            item.update(settings)
+            item.update(download_info)
+            
+            return item
         finally:
             conn.close()
     
@@ -415,7 +501,7 @@ class QueueManager:
             current_song_id: ID of the current song
         
         Returns:
-            Queue item dictionary if found, None otherwise
+            Queue item dictionary with JSON fields decoded, or None if not found
         """
         conn = self.database.get_connection()
         try:
@@ -431,10 +517,9 @@ class QueueManager:
             
             # Get next ready song after current position
             cursor.execute('''
-                SELECT id, position, user_name, youtube_video_id, title,
-                       duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at,
-                       error_message
+                SELECT id, position, user_name, source, source_id,
+                       song_metadata_json, settings_json, download_json,
+                       download_status, created_at, played_at
                 FROM queue_items
                 WHERE position > ? AND download_status = ?
                 ORDER BY position
@@ -442,7 +527,20 @@ class QueueManager:
             ''', (current_position, self.STATUS_READY))
             
             result = cursor.fetchone()
-            return dict(result) if result else None
+            if not result:
+                return None
+            
+            item = dict(result)
+            # Decode JSON fields and merge
+            metadata = self._decode_metadata(item.pop('song_metadata_json'))
+            settings = self._decode_settings(item.pop('settings_json'))
+            download_info = self._decode_download_info(item.pop('download_json'))
+            
+            item.update(metadata)
+            item.update(settings)
+            item.update(download_info)
+            
+            return item
         finally:
             conn.close()
     
@@ -454,7 +552,7 @@ class QueueManager:
             current_song_id: ID of the current song
         
         Returns:
-            Queue item dictionary if found, None otherwise
+            Queue item dictionary with JSON fields decoded, or None if not found
         """
         conn = self.database.get_connection()
         try:
@@ -470,10 +568,9 @@ class QueueManager:
             
             # Get previous ready song before current position
             cursor.execute('''
-                SELECT id, position, user_name, youtube_video_id, title,
-                       duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at,
-                       error_message
+                SELECT id, position, user_name, source, source_id,
+                       song_metadata_json, settings_json, download_json,
+                       download_status, created_at, played_at
                 FROM queue_items
                 WHERE position < ? AND download_status = ?
                 ORDER BY position DESC
@@ -481,7 +578,20 @@ class QueueManager:
             ''', (current_position, self.STATUS_READY))
             
             result = cursor.fetchone()
-            return dict(result) if result else None
+            if not result:
+                return None
+            
+            item = dict(result)
+            # Decode JSON fields and merge
+            metadata = self._decode_metadata(item.pop('song_metadata_json'))
+            settings = self._decode_settings(item.pop('settings_json'))
+            download_info = self._decode_download_info(item.pop('download_json'))
+            
+            item.update(metadata)
+            item.update(settings)
+            item.update(download_info)
+            
+            return item
         finally:
             conn.close()
     
@@ -530,27 +640,30 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
-            updates = ['download_status = ?']
-            params = [status]
+            # Get current download_json to merge updates
+            cursor.execute('SELECT download_json FROM queue_items WHERE id = ?', (item_id,))
+            result = cursor.fetchone()
+            if not result:
+                self.logger.warning('Queue item %s not found for status update', item_id)
+                return False
             
+            download_info = self._decode_download_info(result['download_json'])
+            
+            # Update download info
             if download_path is not None:
-                updates.append('download_path = ?')
-                params.append(download_path)
-            
+                download_info['download_path'] = download_path
             if error_message is not None:
-                updates.append('error_message = ?')
-                params.append(error_message)
+                download_info['error_message'] = error_message
             elif status != self.STATUS_ERROR:
                 # Clear error message if status is not error
-                updates.append('error_message = NULL')
+                download_info.pop('error_message', None)
             
-            params.append(item_id)
-            
-            cursor.execute(f'''
+            # Update database
+            cursor.execute('''
                 UPDATE queue_items 
-                SET {', '.join(updates)}
+                SET download_status = ?, download_json = ?
                 WHERE id = ?
-            ''', params)
+            ''', (status, self._encode_download_info(download_info), item_id))
             
             updated = cursor.rowcount > 0
             conn.commit()
@@ -610,52 +723,14 @@ class QueueManager:
         """
         Record a song in playback history.
         
-        Args:
-            queue_item_id: ID of the queue item
-            user_name: Name of the user who requested the song
-            youtube_video_id: YouTube video ID
-            title: Song title
-            duration_seconds: Duration in seconds (optional)
-            pitch_semitones: Pitch adjustment used
-            playback_position_start: Position where playback started (for resume)
-            playback_position_end: Position where playback ended (None if completed)
+        PHASE 2: Playback history will be redesigned in Phase 2.
+        This is stubbed out for now to avoid breaking existing code.
         
         Returns:
-            ID of the created history record
+            Dummy history ID (0)
         """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO playback_history 
-                (queue_item_id, user_name, youtube_video_id, title, duration_seconds,
-                 pitch_semitones, playback_position_start, playback_position_end)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                queue_item_id,
-                user_name,
-                youtube_video_id,
-                title,
-                duration_seconds,
-                pitch_semitones,
-                playback_position_start,
-                playback_position_end
-            ))
-            
-            history_id = cursor.lastrowid
-            conn.commit()
-            
-            # Calculate duration for logging
-            playback_duration = None
-            if playback_position_end is not None:
-                playback_duration = max(0, playback_position_end - playback_position_start)
-            
-            self.logger.debug('Recorded playback history for item %s (history ID: %s, played: %s seconds)', 
-                            queue_item_id, history_id, playback_duration)
-            return history_id
-        finally:
-            conn.close()
+        self.logger.debug('Playback history recording disabled (Phase 2 feature)')
+        return 0
     
     def get_item(self, item_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -665,23 +740,36 @@ class QueueManager:
             item_id: ID of the queue item
         
         Returns:
-            Queue item dictionary if found, None otherwise
+            Queue item dictionary with JSON fields decoded, or None if not found
         """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT id, position, user_name, youtube_video_id, title,
-                       duration_seconds, thumbnail_url, pitch_semitones,
-                       download_status, download_path, created_at, played_at,
-                       error_message
+                SELECT id, position, user_name, source, source_id,
+                       song_metadata_json, settings_json, download_json,
+                       download_status, created_at, played_at
                 FROM queue_items
                 WHERE id = ?
             ''', (item_id,))
             
             result = cursor.fetchone()
-            return dict(result) if result else None
+            if not result:
+                return None
+            
+            item = dict(result)
+            # Decode JSON fields and merge into item dict
+            metadata = self._decode_metadata(item.pop('song_metadata_json'))
+            settings = self._decode_settings(item.pop('settings_json'))
+            download_info = self._decode_download_info(item.pop('download_json'))
+            
+            # Merge all fields
+            item.update(metadata)
+            item.update(settings)
+            item.update(download_info)
+            
+            return item
         finally:
             conn.close()
     
@@ -689,44 +777,18 @@ class QueueManager:
         """
         Get all last used settings for a song from playback history for a specific user.
         
-        Args:
-            youtube_video_id: YouTube video ID
-            user_name: Name of the user
+        PHASE 2: Playback history will be redesigned in Phase 2.
+        This is stubbed out for now to avoid breaking existing code.
         
         Returns:
-            Dictionary of settings from the most recent playback by this user, or empty dict if not found.
-            Currently includes: pitch_semitones (and can be extended for other settings)
+            Empty dict (no history available in Phase 1)
         """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            # Query playback history for the most recent entry with this video ID and user
-            # Get all settings-related columns
-            cursor.execute('''
-                SELECT pitch_semitones
-                FROM playback_history
-                WHERE youtube_video_id = ? AND user_name = ?
-                ORDER BY played_at DESC
-                LIMIT 1
-            ''', (youtube_video_id, user_name))
-            
-            result = cursor.fetchone()
-            if result:
-                settings = {
-                    'pitch_semitones': result['pitch_semitones']
-                }
-                return settings
-            return {}
-        finally:
-            conn.close()
+        self.logger.debug('Settings recall from history disabled (Phase 2 feature)')
+        return {}
     
     def update_pitch(self, item_id: int, pitch_semitones: int) -> bool:
         """
         Update pitch adjustment for a queue item.
-        
-        The pitch will be saved to playback history when the song ends.
-        This ensures the last used pitch (even if changed during playback) is recorded.
         
         Args:
             item_id: ID of the queue item
@@ -739,12 +801,22 @@ class QueueManager:
         try:
             cursor = conn.cursor()
             
-            # Update pitch in queue item
+            # Get current settings to merge
+            cursor.execute('SELECT settings_json FROM queue_items WHERE id = ?', (item_id,))
+            result = cursor.fetchone()
+            if not result:
+                self.logger.warning('Queue item %s not found', item_id)
+                return False
+            
+            settings = self._decode_settings(result['settings_json'])
+            settings['pitch_semitones'] = pitch_semitones
+            
+            # Update settings in queue item
             cursor.execute('''
                 UPDATE queue_items 
-                SET pitch_semitones = ?
+                SET settings_json = ?
                 WHERE id = ?
-            ''', (pitch_semitones, item_id))
+            ''', (self._encode_settings(settings), item_id))
             
             updated = cursor.rowcount > 0
             conn.commit()

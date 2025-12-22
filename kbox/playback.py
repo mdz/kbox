@@ -320,19 +320,10 @@ class PlaybackController:
                 self.logger.info('No next song available to skip to')
                 return False
             
-            # Record playback history for the song we're leaving (partial play)
-            current_position = self.streaming_controller.get_position() or 0
-            
-            self.queue_manager.record_playback_history(
-                queue_item_id=current_song['id'],
-                user_name=current_song['user_name'],
-                youtube_video_id=current_song['youtube_video_id'],
-                title=current_song['title'],
-                duration_seconds=current_song.get('duration_seconds'),
-                pitch_semitones=current_song.get('pitch_semitones', 0),
-                playback_position_start=0,
-                playback_position_end=current_position
-            )
+            # Phase 2: Playback history recording disabled for now
+            # current_position = self.streaming_controller.get_position() or 0
+            # self.queue_manager.record_playback_history(...)
+            pass
             
             # Stop current playback (but do NOT mark as played)
             self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
@@ -687,20 +678,10 @@ class PlaybackController:
                 if finished_song:
                     self.logger.info('Song ended: %s', finished_song['title'])
                     
-                    # Get final playback position for history
-                    final_position = self.streaming_controller.get_position() or 0
-                    
-                    # Record in playback history
-                    self.queue_manager.record_playback_history(
-                        queue_item_id=finished_song_id,
-                        user_name=finished_song['user_name'],
-                        youtube_video_id=finished_song['youtube_video_id'],
-                        title=finished_song['title'],
-                        duration_seconds=finished_song.get('duration_seconds'),
-                        pitch_semitones=finished_song.get('pitch_semitones', 0),
-                        playback_position_start=0,
-                        playback_position_end=final_position
-                    )
+                    # Phase 2: Playback history recording disabled for now
+                    # final_position = self.streaming_controller.get_position() or 0
+                    # self.queue_manager.record_playback_history(...)
+                    pass
                     
                     # Mark as played
                     self.queue_manager.mark_played(finished_song_id)

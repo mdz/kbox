@@ -25,11 +25,12 @@ logger = logging.getLogger(__name__)
 # Request models
 class AddSongRequest(BaseModel):
     user_name: str
-    youtube_video_id: str
+    youtube_video_id: str  # Keep for backward compatibility with frontend
     title: str
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
-    pitch_semitones: int = 0  # If 0, will check for saved setting; otherwise uses provided value
+    channel: Optional[str] = None
+    pitch_semitones: int = 0
 
 
 class ReorderRequest(BaseModel):
@@ -169,9 +170,12 @@ def create_app(
         user_name: str,
         queue_mgr: QueueManager = Depends(get_queue_manager),
     ):
-        """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
-        settings = queue_mgr.get_last_song_settings(youtube_video_id, user_name)
-        return {"settings": settings}
+        """Get saved settings (pitch, etc.) for a song from playback history for a specific user.
+        
+        Phase 2: History-based settings recall disabled for now.
+        """
+        # Phase 2 feature - return empty settings for now
+        return {"settings": {}}
 
     @app.post("/api/queue")
     async def add_song(
@@ -182,13 +186,15 @@ def create_app(
     ):
         """Add song to queue."""
         try:
-            # Use the pitch value provided by the frontend (which will have checked history if needed)
+            # Add song with source-agnostic schema
             item_id = queue_mgr.add_song(
                 user_name=request_data.user_name,
-                youtube_video_id=request_data.youtube_video_id,
+                source='youtube',
+                source_id=request_data.youtube_video_id,
                 title=request_data.title,
                 duration_seconds=request_data.duration_seconds,
                 thumbnail_url=request_data.thumbnail_url,
+                channel=request_data.channel,
                 pitch_semitones=request_data.pitch_semitones,
             )
 

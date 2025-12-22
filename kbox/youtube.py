@@ -33,7 +33,8 @@ class YouTubeClient:
             home = Path.home()
             cache_directory = str(home / '.kbox' / 'cache')
         
-        self.cache_directory = Path(cache_directory)
+        # Use source-specific subdirectory
+        self.cache_directory = Path(cache_directory) / 'youtube'
         self.cache_directory.mkdir(parents=True, exist_ok=True)
         
         # Semaphore to limit concurrent downloads to 1 (avoid abusing YouTube)

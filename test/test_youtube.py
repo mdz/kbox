@@ -176,8 +176,10 @@ def test_is_downloaded(youtube_client, temp_cache_dir):
     # Not downloaded
     assert youtube_client.is_downloaded('vid1') is False
     
-    # Create a fake downloaded file
-    fake_file = Path(temp_cache_dir) / 'vid1.mp4'
+    # Create a fake downloaded file in youtube subdirectory
+    youtube_dir = Path(temp_cache_dir) / 'youtube'
+    youtube_dir.mkdir(exist_ok=True)
+    fake_file = youtube_dir / 'vid1.mp4'
     fake_file.touch()
     
     assert youtube_client.is_downloaded('vid1') is True
@@ -188,8 +190,10 @@ def test_get_download_path(youtube_client, temp_cache_dir):
     # Not downloaded
     assert youtube_client.get_download_path('vid1') is None
     
-    # Create a fake downloaded file
-    fake_file = Path(temp_cache_dir) / 'vid1.mp4'
+    # Create a fake downloaded file in youtube subdirectory
+    youtube_dir = Path(temp_cache_dir) / 'youtube'
+    youtube_dir.mkdir(exist_ok=True)
+    fake_file = youtube_dir / 'vid1.mp4'
     fake_file.touch()
     
     path = youtube_client.get_download_path('vid1')
@@ -199,8 +203,10 @@ def test_get_download_path(youtube_client, temp_cache_dir):
 
 def test_download_video_already_cached(youtube_client, temp_cache_dir):
     """Test download when video is already cached."""
-    # Create a fake cached file
-    fake_file = Path(temp_cache_dir) / 'vid1.mp4'
+    # Create a fake cached file in youtube subdirectory
+    youtube_dir = Path(temp_cache_dir) / 'youtube'
+    youtube_dir.mkdir(exist_ok=True)
+    fake_file = youtube_dir / 'vid1.mp4'
     fake_file.touch()
     
     callback_calls = []
