@@ -158,12 +158,12 @@ f
     return server_thread, wait_for_shutdown
 
 
-def create_video_sink(test_mode: bool = False):
+def create_video_sink(use_fakesinks: bool = False):
     """
     Create appropriate video sink for the current platform.
     
     Args:
-        test_mode: If True, create a fakesink for headless testing
+        use_fakesinks: If True, create a fakesink for headless testing (internal use only)
         
     Returns:
         GStreamer video sink element
@@ -176,10 +176,10 @@ def create_video_sink(test_mode: bool = False):
     except ImportError:
         raise RuntimeError("GStreamer Python bindings not available")
     
-    if test_mode:
+    if use_fakesinks:
         sink = Gst.ElementFactory.make('fakesink', 'video_sink')
         if sink is None:
-            raise RuntimeError("Failed to create fakesink for test mode")
+            raise RuntimeError("Failed to create fakesink for headless testing")
         return sink
     
     if sys.platform == 'linux':
@@ -202,12 +202,12 @@ def create_video_sink(test_mode: bool = False):
         return sink
 
 
-def create_audio_sink(test_mode: bool = False, device: Optional[str] = None):
+def create_audio_sink(use_fakesinks: bool = False, device: Optional[str] = None):
     """
     Create appropriate audio sink for the current platform.
     
     Args:
-        test_mode: If True, create a fakesink for headless testing
+        use_fakesinks: If True, create a fakesink for headless testing (internal use only)
         device: ALSA device name (Linux only), e.g., 'plughw:CARD=USB,DEV=0'
         
     Returns:
@@ -221,10 +221,10 @@ def create_audio_sink(test_mode: bool = False, device: Optional[str] = None):
     except ImportError:
         raise RuntimeError("GStreamer Python bindings not available")
     
-    if test_mode:
+    if use_fakesinks:
         sink = Gst.ElementFactory.make('fakesink', 'audio_sink')
         if sink is None:
-            raise RuntimeError("Failed to create fakesink for test mode")
+            raise RuntimeError("Failed to create fakesink for headless testing")
         return sink
     
     if sys.platform == 'linux':

@@ -506,8 +506,7 @@
     {% include 'components/config_screen.html' %}
     
     <script>
-        // @ts-ignore - Jinja2 template syntax
-        let isOperator = {{ 'true' if test_mode else 'false' }};
+        let isOperator = false;
         let currentQueue = [];
         let userName = null;
         let userId = null;
@@ -748,24 +747,6 @@
         }
         
         // Initialize user identity
-        // @ts-ignore - Jinja2 template syntax
-        {% if test_mode %}
-        // In test mode, use a fixed identity and skip the prompt
-        userName = 'Test User';
-        userId = localStorage.getItem('kbox_user_id') || generateUUID();
-        localStorage.setItem('kbox_user_name', userName);
-        localStorage.setItem('kbox_user_id', userId);
-        // Register with server
-        registerUser(userId, userName);
-        // Ensure modal is hidden in test mode (run immediately)
-        (function() {
-            const modal = document.getElementById('name-modal');
-            if (modal) {
-                modal.classList.add('hidden');
-            }
-        })();
-        // @ts-ignore - Jinja2 template syntax
-        {% else %}
         // Check if user identity is stored
         userName = localStorage.getItem('kbox_user_name');
         userId = localStorage.getItem('kbox_user_id');
@@ -855,25 +836,8 @@
             }
         }
         
-        // Auto-enable operator mode in test mode
-        // @ts-ignore - Jinja2 template syntax
-        {% if test_mode %}
-        (function() {
-            function enableOperatorMode() {
-                isOperator = true;
-            }
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', enableOperatorMode);
-            } else {
-                enableOperatorMode();
-            }
-        })();
-        // @ts-ignore - Jinja2 template syntax
-        {% else %}
-        // Check operator status on load (non-test mode)
+        // Check operator status on load
         checkOperatorStatus();
-        // @ts-ignore - Jinja2 template syntax
-        {% endif %}
         
         // Store pending action to execute after PIN authentication
         let pendingOperatorAction = null;

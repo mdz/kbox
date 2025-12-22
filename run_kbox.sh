@@ -30,13 +30,6 @@ export GST_REGISTRY_FORK="no"
 # Disable segfault trap for GStreamer (known issue with Python plugin on macOS)
 export GST_DEBUG_NO_COLOR=1
 
-# Run kbox with GStreamer debug flags
-# Enable test mode by default (operator controls enabled)
-# Use --no-test-mode to disable
-if [[ "$*" == *"--no-test-mode"* ]]; then
-    exec uv run python -m kbox.main "$@"
-else
-    # Default: run in test mode for development convenience
-    exec uv run python -m kbox.main --test-mode "$@"
-fi
+# Run kbox
+exec uv run python -m kbox.main "$@"
 

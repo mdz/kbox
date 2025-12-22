@@ -29,17 +29,11 @@ logger = logging.getLogger(__name__)
 class KboxServer:
     """Main server class that orchestrates all components."""
 
-    def __init__(self, test_mode: bool = False):
+    def __init__(self):
         """
         Initialize all components.
-
-        Args:
-            test_mode: If True, enable test mode (operator controls enabled by default)
         """
-        self.test_mode = test_mode
-        logger.info(
-            "Initializing kbox server..." + (" (TEST MODE)" if test_mode else "")
-        )
+        logger.info("Initializing kbox server...")
 
         # Initialize database
         self.database = Database()
@@ -63,9 +57,8 @@ class KboxServer:
         self.user_manager = UserManager(self.database)
 
         # StreamingController uses ConfigManager for configuration
-        # Pass test_mode to use fakesinks for testing
         self.streaming_controller = StreamingController(
-            self.config_manager, self, test_mode=test_mode
+            self.config_manager, self
         )
 
         # PlaybackController
@@ -83,7 +76,6 @@ class KboxServer:
             self.config_manager,
             self.user_manager,
             streaming_controller=self.streaming_controller,
-            test_mode=self.test_mode,
         )
 
         # Uvicorn server instance (will be created in run())
@@ -184,15 +176,9 @@ def actual_main():
     import argparse
 
     parser = argparse.ArgumentParser(description="kbox - Self-contained karaoke system")
-    parser.add_argument(
-        "--test-mode",
-        "-t",
-        action="store_true",
-        help="Enable test mode (operator controls enabled by default)",
-    )
     args = parser.parse_args()
 
-    server = KboxServer(test_mode=args.test_mode)
+    server = KboxServer()
     try:
         server.run()
     except KeyboardInterrupt:

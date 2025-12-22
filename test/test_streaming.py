@@ -82,8 +82,8 @@ def mock_config_manager():
 
 @pytest.fixture
 def controller(mock_config_manager):
-    """Create a StreamingController in test mode."""
-    ctrl = StreamingController(mock_config_manager, None, test_mode=True)
+    """Create a StreamingController with fakesinks for headless testing."""
+    ctrl = StreamingController(mock_config_manager, None, use_fakesinks=True)
     yield ctrl
     # Cleanup after test
     ctrl.stop()
@@ -377,7 +377,7 @@ def test_legacy_streaming():
                       'ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo')
     
     server = create_autospec(MagicMock, instance=True)
-    streaming = StreamingController(config_manager, server, test_mode=True)
+    streaming = StreamingController(config_manager, server, use_fakesinks=True)
     
     # Verify it initialized
     assert streaming.get_pipeline_state() == 'ready'

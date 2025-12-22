@@ -184,7 +184,6 @@ This file tracks setup steps, gotchas, and improvements needed for a better onbo
 - [ ] Better error messages with fix suggestions
 - [ ] Guided audio device setup
 - [ ] API key validation on input
-- [ ] Test mode for setup verification
 - [ ] Backup/restore configuration
 - [ ] Configuration import/export
 

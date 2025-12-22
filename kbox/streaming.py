@@ -38,18 +38,18 @@ def _get_gst():
 class StreamingController:
     """Controls GStreamer pipeline for audio/video playback."""
     
-    def __init__(self, config_manager, server, test_mode: bool = False):
+    def __init__(self, config_manager, server, use_fakesinks: bool = False):
         """
         Initialize StreamingController with persistent pipeline.
         
         Args:
             config_manager: Configuration manager instance
             server: Server instance
-            test_mode: If True, use fakesinks for headless testing
+            use_fakesinks: If True, use fakesinks for headless testing (internal use only)
         """
         self.config_manager = config_manager
         self.server = server
-        self.test_mode = test_mode
+        self.use_fakesinks = use_fakesinks
         self.logger = logging.getLogger(__name__)
         
         # State tracking
@@ -78,7 +78,7 @@ class StreamingController:
         
         # Create the persistent pipeline
         self.logger.info('StreamingController initializing with %s', 
-                        'test sinks' if test_mode else 'hardware sinks')
+                        'fakesinks' if use_fakesinks else 'hardware sinks')
         self._create_persistent_pipeline()
         self.logger.info('StreamingController initialized, pipeline ready in idle state')
     
@@ -180,7 +180,7 @@ class StreamingController:
         # Create platform-appropriate audio sink
         from .platform import create_audio_sink
         audio_output_device = self.config_manager.get('audio_output_device')
-        sink = create_audio_sink(test_mode=self.test_mode, device=audio_output_device)
+        sink = create_audio_sink(use_fakesinks=self.use_fakesinks, device=audio_output_device)
         
         # Add all elements to bin
         for elem in [ac1, self.pitch_shift_element, ac2, sink]:
@@ -237,7 +237,7 @@ class StreamingController:
         
         # 5. Platform-appropriate video sink
         from .platform import create_video_sink
-        sink = create_video_sink(test_mode=self.test_mode)
+        sink = create_video_sink(use_fakesinks=self.use_fakesinks)
         elements.append(sink)
         
         # Add all elements to bin

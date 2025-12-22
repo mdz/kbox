@@ -329,23 +329,6 @@ GET  /                              - Web UI
 - PlaybackController: State transitions, error handling
 - Configuration: Loading, defaults, updates
 
-#### Test Mode
-- **Activation**: Command-line flag (`--test-mode` or `-t`)
-- End-to-end system test without manual intervention
-- Diagnostic display showing:
-  - Pipeline state
-  - Queue status
-  - Download progress
-  - Performance metrics (latency, CPU usage)
-  - Audio levels (mic, YouTube, mixed)
-- Automated feature testing:
-  - Queue operations
-  - Playback controls
-  - Pitch adjustment
-  - Volume/mixing (Phase 2)
-  - Error recovery
-- Can run alongside normal operation or as separate mode
-
 ### 6. Technology Stack
 
 **Core**:
@@ -392,7 +375,6 @@ kbox/
 │   └── templates/          # Web UI templates
 │       └── index.html
 ├── midi.py                 # MidiController (enhanced)
-└── test_mode.py            # Test mode implementation
 
 test/
 ├── test_queue.py
@@ -421,7 +403,6 @@ data/
 2. Volume controls (mic + YouTube)
 3. Reverb effect integration
 4. Web UI for mixing controls
-5. Test mode enhancements
 
 #### Phase 3: Polish & Optimization
 1. Performance optimization
