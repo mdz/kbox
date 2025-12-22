@@ -1150,9 +1150,9 @@
             
             // Save button is in the modal footer, handled separately
             
-            // Show/hide operator options based on operator status and controls visibility
+            // Show/hide operator options based on operator status
             const operatorOptions = document.getElementById('edit-queue-item-operator-options');
-            if (isOperator && arePlaybackControlsOpen()) {
+            if (isOperator) {
                 operatorOptions.style.display = 'block';
                 
                 // Enable/disable "Play Now" button based on download status
