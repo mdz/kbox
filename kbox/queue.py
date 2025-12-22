@@ -357,7 +357,7 @@ class QueueManager:
                     SELECT id, position, user_name, youtube_video_id, title, 
                            duration_seconds, thumbnail_url, pitch_semitones,
                            download_status, download_path, created_at, played_at,
-                           playback_position_seconds, error_message
+                           error_message
                     FROM queue_items
                     ORDER BY position
                 ''')
@@ -366,7 +366,7 @@ class QueueManager:
                     SELECT id, position, user_name, youtube_video_id, title, 
                            duration_seconds, thumbnail_url, pitch_semitones,
                            download_status, download_path, created_at, played_at,
-                           playback_position_seconds, error_message
+                           error_message
                     FROM queue_items
                     WHERE played_at IS NULL
                     ORDER BY position
@@ -395,7 +395,7 @@ class QueueManager:
                 SELECT id, position, user_name, youtube_video_id, title,
                        duration_seconds, thumbnail_url, pitch_semitones,
                        download_status, download_path, created_at, played_at,
-                       playback_position_seconds, error_message
+                       error_message
                 FROM queue_items
                 WHERE download_status = ? AND played_at IS NULL
                 ORDER BY position
@@ -434,7 +434,7 @@ class QueueManager:
                 SELECT id, position, user_name, youtube_video_id, title,
                        duration_seconds, thumbnail_url, pitch_semitones,
                        download_status, download_path, created_at, played_at,
-                       playback_position_seconds, error_message
+                       error_message
                 FROM queue_items
                 WHERE position > ? AND download_status = ?
                 ORDER BY position
@@ -473,7 +473,7 @@ class QueueManager:
                 SELECT id, position, user_name, youtube_video_id, title,
                        duration_seconds, thumbnail_url, pitch_semitones,
                        download_status, download_path, created_at, played_at,
-                       playback_position_seconds, error_message
+                       error_message
                 FROM queue_items
                 WHERE position < ? AND download_status = ?
                 ORDER BY position DESC
@@ -675,7 +675,7 @@ class QueueManager:
                 SELECT id, position, user_name, youtube_video_id, title,
                        duration_seconds, thumbnail_url, pitch_semitones,
                        download_status, download_path, created_at, played_at,
-                       playback_position_seconds, error_message
+                       error_message
                 FROM queue_items
                 WHERE id = ?
             ''', (item_id,))
