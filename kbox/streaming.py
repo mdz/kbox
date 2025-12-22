@@ -142,11 +142,12 @@ class StreamingController:
         self.video_bin = self._create_video_sink_bin()
         self.playbin.set_property('video-sink', self.video_bin)
         
-        # Connect bus handlers for EOS and errors
+        # Connect bus handlers for EOS, errors, and warnings
         bus = self.playbin.get_bus()
         bus.add_signal_watch()
         bus.connect('message::eos', self._on_eos)
         bus.connect('message::error', self._on_error)
+        bus.connect('message::warning', self._on_warning)
         
         # Start bus polling thread for EOS/error handling
         # (signal watch requires GLib main loop which may not be running)
@@ -788,6 +789,17 @@ class StreamingController:
         err, debug = message.parse_error()
         self.logger.error('GStreamer error: %s', err)
         self.logger.error('Debug info: %s', debug)
+    
+    def _on_warning(self, bus, message):
+        """Handle warning message."""
+        warn, debug = message.parse_warning()
+        self.logger.warning('GStreamer warning: %s', warn)
+        self.logger.warning('Debug info: %s', debug)
+        
+        # Check for critical audio device warnings
+        warn_str = str(warn).lower()
+        if 'unknown pcm' in warn_str or 'could not open audio device' in warn_str:
+            self.logger.error('CRITICAL: Audio device error detected - %s', warn)
     
     # =========================================================================
     # Bus Polling (for environments without GLib main loop)
