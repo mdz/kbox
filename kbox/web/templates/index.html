@@ -606,7 +606,7 @@
             // Build song info HTML
             let thumbnailHTML = '';
             if (showThumbnail && songData.thumbnail_url) {
-                thumbnailHTML = `<img src="${songData.thumbnail_url}" alt="${songData.title || ''}" style="width: 120px; height: 90px; object-fit: cover; border-radius: 4px;" />`;
+                thumbnailHTML = `<img src="${songData.thumbnail_url}" alt="${songData.title || ''}" style="width: 100%; max-width: 240px; height: auto; object-fit: cover; border-radius: 4px; display: block; margin: 0 auto 15px auto;" />`;
             }
             
             // Progress bar (only when playing)
@@ -620,7 +620,7 @@
                 : '';
             
             const infoHTML = `
-                <div style="flex: 1;">
+                <div>
                     <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${songData.title || 'Unknown'}</div>
                     ${showUser && userText ? `<div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${userText}</div>` : ''}
                     <div style="color: #888; font-size: 0.85em;" id="${context}-progress">${position !== undefined && position !== null ? '' : 'Duration: '}${durationText}</div>
@@ -633,7 +633,7 @@
             
             // Build song info section (only if we have info to show)
             const hasSongInfo = (thumbnailHTML || songData.title) && (showThumbnail || songData.title);
-            const songInfoSection = hasSongInfo ? `<div style="display: flex; gap: 15px; margin-bottom: 20px;">${thumbnailHTML}${infoHTML}</div>` : '';
+            const songInfoSection = hasSongInfo ? `<div style="margin-bottom: 20px;">${thumbnailHTML}${infoHTML}</div>` : '';
             
             // Build pitch control section (only if enabled)
             const pitchSection = showPitchControls ? `
