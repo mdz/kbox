@@ -13,7 +13,12 @@ from kbox.queue import QueueManager
 @pytest.fixture
 def mock_queue_manager():
     """Create a mock QueueManager."""
-    return Mock(spec=QueueManager)
+    qm = Mock(spec=QueueManager)
+    # Configure get_item to return None by default (tests override as needed)
+    qm.get_item.return_value = None
+    # Configure get_next_song_after to return None by default
+    qm.get_next_song_after.return_value = None
+    return qm
 
 
 @pytest.fixture
