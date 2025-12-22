@@ -397,8 +397,10 @@
             border-radius: 8px;
             padding: 30px;
             max-width: 400px;
+            max-height: 90vh;
             width: 90%;
             border: 2px solid #4a9eff;
+            overflow-y: auto;
         }
         
         .modal h2 {
@@ -1911,22 +1913,23 @@
                 // Toggle based on current state
                 const action = (currentState === 'playing') ? 'pause' : 'play';
                 
-                // Show buffering indicator when starting playback
-                if (action === 'play') {
+                // Only show buffering when starting fresh playback, not resuming from pause
+                const isStartingFresh = action === 'play' && (currentState === 'idle' || currentState === 'stopped');
+                if (isStartingFresh) {
                     showBufferingIndicator(true);
                 }
                 
                 const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
                 if (!response.ok) {
-                    showBufferingIndicator(false);
+                    if (isStartingFresh) showBufferingIndicator(false);
                     alert('Error: ' + (await response.json()).detail);
                 } else {
                     // Update button immediately for better UX
                     updatePlayPauseButton(action === 'play' ? 'playing' : 'paused');
                     
                     // Hide buffering indicator and refresh queue after a short delay
-                    // to allow playback to start
-                    if (action === 'play') {
+                    // to allow playback to start (only if we showed it)
+                    if (isStartingFresh) {
                         setTimeout(() => {
                             showBufferingIndicator(false);
                             loadQueue();
