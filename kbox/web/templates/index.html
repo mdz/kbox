@@ -900,8 +900,18 @@
                 }
             }
             
-            // Re-render now playing to update UI
-            loadQueue();
+            // Show/hide controls and update button without destroying them
+            const pitchSection = document.getElementById('now-playing-pitch-section');
+            const playbackSection = document.getElementById('now-playing-playback-section');
+            const lockButton = document.getElementById('now-playing-lock-button');
+            
+            if (pitchSection) pitchSection.style.display = controlsLocked ? 'none' : 'block';
+            if (playbackSection) playbackSection.style.display = controlsLocked ? 'none' : 'block';
+            
+            if (lockButton) {
+                lockButton.innerHTML = controlsLocked ? '🔒 Unlock Controls' : '🔓 Lock Controls';
+                lockButton.style.background = controlsLocked ? '#555' : '#666';
+            }
         }
         
         // Reset the auto-lock timer
@@ -916,8 +926,17 @@
                 autoLockTimer = setTimeout(() => {
                     controlsLocked = true;
                     autoLockTimer = null;
-                    // Re-render to show locked state
-                    loadQueue();
+                    // Hide controls and update button
+                    const pitchSection = document.getElementById('now-playing-pitch-section');
+                    const playbackSection = document.getElementById('now-playing-playback-section');
+                    const lockButton = document.getElementById('now-playing-lock-button');
+                    
+                    if (pitchSection) pitchSection.style.display = 'none';
+                    if (playbackSection) playbackSection.style.display = 'none';
+                    if (lockButton) {
+                        lockButton.innerHTML = '🔒 Unlock Controls';
+                        lockButton.style.background = '#555';
+                    }
                 }, AUTO_LOCK_TIMEOUT);
             }
         }
@@ -929,12 +948,10 @@
                 alert('You are authenticated as operator');
                 return;
             }
-            // Show PIN modal, refresh UI on success
+            // Show PIN modal, refresh page on success
             showOperatorPinModal(() => {
-                // Update button text to show authenticated state
-                updateOperatorButton();
-                // Refresh the now playing section to show controls
-                loadQueue();
+                // Reload page to show operator controls everywhere
+                location.reload();
             });
         }
         
@@ -1607,6 +1624,32 @@
             // Check if user can access controls (their song or operator)
             const hasControlAccess = (currentSong.user_name === userName) || isOperator;
             
+            // Check if we already have controls rendered
+            const hasExistingControls = document.getElementById('now-playing-lock-button') !== null;
+            
+            // Only do full render if controls state changed
+            if (hasExistingControls && hasControlAccess) {
+                // Controls already exist - just update values and visibility without destroying buttons
+                updateNowPlayingSongInfo(currentSong, statusData.position_seconds);
+                updateNowPlayingPitchValue(currentSong.pitch_semitones || 0);
+                updatePlayPauseButton(statusData.state);
+                
+                // Update visibility based on lock state
+                const pitchSection = document.getElementById('now-playing-pitch-section');
+                const playbackSection = document.getElementById('now-playing-playback-section');
+                if (pitchSection) pitchSection.style.display = controlsLocked ? 'none' : 'block';
+                if (playbackSection) playbackSection.style.display = controlsLocked ? 'none' : 'block';
+                
+                // Update lock button
+                const lockButton = document.getElementById('now-playing-lock-button');
+                if (lockButton) {
+                    lockButton.innerHTML = controlsLocked ? '🔒 Unlock Controls' : '🔓 Lock Controls';
+                    lockButton.style.background = controlsLocked ? '#555' : '#666';
+                }
+                return;
+            }
+            
+            // Full render needed (first render or controls access changed)
             // Render song info (always visible)
             renderSongSettings('now-playing-content', {
                 title: currentSong.title,
@@ -1626,54 +1669,54 @@
             
             // Add controls and lock button if user has access
             if (hasControlAccess) {
-                // When unlocked: show all controls together
-                if (!controlsLocked) {
-                    // Pitch controls section
-                    const pitchControls = document.createElement('div');
-                    pitchControls.style.cssText = 'margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;';
-                    pitchControls.innerHTML = `
-                        <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Adjust Pitch (Live)</h3>
-                        <div id="now-playing-pitch-control-container"></div>
-                    `;
-                    container.appendChild(pitchControls);
-                    
-                    // Initialize pitch control
-                    const pitchValue = currentSong.pitch_semitones || 0;
-                    const pitchControlContainer = document.getElementById('now-playing-pitch-control-container');
-                    if (pitchControlContainer) {
-                        pitchControlContainer.innerHTML = createPitchControlHTML('now-playing', pitchValue, 24);
-                        updatePitchButtons('now-playing', pitchValue);
-                    }
-                    
-                    // Playback controls section
-                    const playbackControls = document.createElement('div');
-                    playbackControls.style.cssText = 'margin-top: 15px;';
-                    playbackControls.innerHTML = `
-                        <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Playback Controls</h3>
-                        <div class="controls">
-                            <div class="controls-row">
-                                <button id="play-pause-toggle-np" onclick="togglePlayPause(); resetAutoLockTimer();">▶ Play</button>
-                                <button onclick="stopPlayback(); resetAutoLockTimer();">⏹ Stop</button>
-                            </div>
-                            <div class="controls-row">
-                                <button onclick="playback('previous'); resetAutoLockTimer();">⏮ Previous</button>
-                                <button onclick="playback('skip'); resetAutoLockTimer();">⏭ Skip</button>
-                            </div>
-                            <div class="controls-row" style="grid-template-columns: 1fr 1fr 1fr;">
-                                <button onclick="seekBackward(); resetAutoLockTimer();">⏪ -10s</button>
-                                <button onclick="restartSong(); resetAutoLockTimer();">↺ Restart</button>
-                                <button onclick="seekForward(); resetAutoLockTimer();">+10s ⏩</button>
-                            </div>
-                        </div>
-                    `;
-                    container.appendChild(playbackControls);
-                    
-                    // Update play/pause button state
-                    updatePlayPauseButton(statusData.state);
+                // Pitch controls section (hidden when locked)
+                const pitchControls = document.createElement('div');
+                pitchControls.id = 'now-playing-pitch-section';
+                pitchControls.style.cssText = `margin-top: 15px; padding-top: 15px; border-top: 1px solid #444; display: ${controlsLocked ? 'none' : 'block'};`;
+                pitchControls.innerHTML = `
+                    <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Adjust Pitch (Live)</h3>
+                    <div id="now-playing-pitch-control-container"></div>
+                `;
+                container.appendChild(pitchControls);
+                
+                // Initialize pitch control
+                const pitchValue = currentSong.pitch_semitones || 0;
+                const pitchControlContainer = document.getElementById('now-playing-pitch-control-container');
+                if (pitchControlContainer) {
+                    pitchControlContainer.innerHTML = createPitchControlHTML('now-playing', pitchValue, 24);
+                    updatePitchButtons('now-playing', pitchValue);
                 }
+                
+                // Playback controls section (hidden when locked)
+                const playbackControls = document.createElement('div');
+                playbackControls.id = 'now-playing-playback-section';
+                playbackControls.style.cssText = `margin-top: 15px; display: ${controlsLocked ? 'none' : 'block'};`;
+                playbackControls.innerHTML = `
+                    <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Playback Controls</h3>
+                    <div class="controls">
+                        <div class="controls-row">
+                            <button id="play-pause-toggle-np" onclick="togglePlayPause(); resetAutoLockTimer();">▶ Play</button>
+                            <button onclick="stopPlayback(); resetAutoLockTimer();">⏹ Stop</button>
+                        </div>
+                        <div class="controls-row">
+                            <button onclick="playback('previous'); resetAutoLockTimer();">⏮ Previous</button>
+                            <button onclick="playback('skip'); resetAutoLockTimer();">⏭ Skip</button>
+                        </div>
+                        <div class="controls-row" style="grid-template-columns: 1fr 1fr 1fr;">
+                            <button onclick="seekBackward(); resetAutoLockTimer();">⏪ -10s</button>
+                            <button onclick="restartSong(); resetAutoLockTimer();">↺ Restart</button>
+                            <button onclick="seekForward(); resetAutoLockTimer();">+10s ⏩</button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(playbackControls);
+                
+                // Update play/pause button state
+                updatePlayPauseButton(statusData.state);
                 
                 // Lock button (always visible if user has access)
                 const lockButton = document.createElement('button');
+                lockButton.id = 'now-playing-lock-button';
                 lockButton.onclick = toggleControlsLock;
                 lockButton.style.cssText = 'width: 100%; margin-top: 15px; padding: 12px; font-size: 16px;';
                 
@@ -1686,6 +1729,30 @@
                 }
                 
                 container.appendChild(lockButton);
+            }
+        }
+        
+        // Update song info without destroying controls
+        function updateNowPlayingSongInfo(currentSong, positionSeconds) {
+            // Update progress text
+            const progressEl = document.getElementById('now-playing-progress');
+            if (progressEl && currentSong.duration_seconds) {
+                function formatTime(secs) {
+                    const m = Math.floor(secs / 60);
+                    const s = secs % 60;
+                    return `${m}:${s.toString().padStart(2, '0')}`;
+                }
+                progressEl.textContent = `${formatTime(positionSeconds)} / ${formatTime(currentSong.duration_seconds)}`;
+            }
+        }
+        
+        // Update pitch value display without destroying buttons
+        function updateNowPlayingPitchValue(pitchValue) {
+            const input = document.getElementById('now-playing-pitch-input');
+            if (input && parseInt(input.value) !== pitchValue) {
+                input.value = pitchValue;
+                updatePitchDisplay('now-playing-pitch-display', pitchValue);
+                updatePitchButtons('now-playing', pitchValue);
             }
         }
         
