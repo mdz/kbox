@@ -8,9 +8,7 @@ import logging
 import threading
 from enum import Enum
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
 from .queue import QueueManager
-from .youtube import YouTubeClient
 
 class PlaybackState(Enum):
     """Playback state enumeration."""
@@ -26,7 +24,6 @@ class PlaybackController:
     def __init__(
         self,
         queue_manager: QueueManager,
-        youtube_client: YouTubeClient,
         streaming_controller,  # StreamingController - avoid circular import
         config_manager
     ):
@@ -35,12 +32,10 @@ class PlaybackController:
         
         Args:
             queue_manager: QueueManager instance
-            youtube_client: YouTubeClient instance
             streaming_controller: StreamingController instance
             config_manager: ConfigManager instance
         """
         self.queue_manager = queue_manager
-        self.youtube_client = youtube_client
         self.streaming_controller = streaming_controller
         self.config_manager = config_manager
         
@@ -53,16 +48,8 @@ class PlaybackController:
         self._transition_timer = None
         self._next_song_pending = None  # Song to play after transition
         
-        # Download timeout (10 minutes) - reset stuck downloads after this time
-        self._download_timeout = timedelta(minutes=10)
-        
         # Interstitial generator (lazy-initialized)
         self._interstitial_generator = None
-        
-        # Start download monitor thread
-        self._download_monitor_thread = None
-        self._monitoring = True
-        self._start_download_monitor()
         
         # Start position tracking thread
         self._position_tracking_thread = None
@@ -70,82 +57,11 @@ class PlaybackController:
         self._up_next_shown = False  # Track if "up next" notification was shown for current song
         self._start_position_tracking()
         
-        # Check for songs to resume on startup
-        self._resume_interrupted_playback()
-    
-    def _start_download_monitor(self):
-        """Start background thread to monitor queue and trigger downloads."""
-        def monitor():
-            while self._monitoring:
-                try:
-                    # Check for pending downloads
-                    queue = self.queue_manager.get_queue()
-                    for item in queue:
-                        if item['download_status'] == QueueManager.STATUS_PENDING:
-                            # Start download
-                            self.logger.info('Starting download for %s (ID: %s)', 
-                                           item['title'], item['id'])
-                            self.youtube_client.download_video(
-                                item['youtube_video_id'],
-                                item['id'],
-                                status_callback=lambda status, path, error: self._on_download_status(
-                                    item['id'], status, path, error
-                                )
-                            )
-                            # Update status to downloading
-                            self.queue_manager.update_download_status(
-                                item['id'],
-                                QueueManager.STATUS_DOWNLOADING
-                            )
-                        elif item['download_status'] == QueueManager.STATUS_DOWNLOADING:
-                            # Check if download is stuck
-                            # First, check if file exists (download completed but callback failed)
-                            download_path = self.youtube_client.get_download_path(item['youtube_video_id'])
-                            if download_path and download_path.exists():
-                                self.logger.info('Found completed download for %s (ID: %s), updating status', 
-                                               item['title'], item['id'])
-                                self.queue_manager.update_download_status(
-                                    item['id'],
-                                    QueueManager.STATUS_READY,
-                                    download_path=str(download_path)
-                                )
-                                # Note: Playback will start when operator presses play button
-                            else:
-                                # Check if download has been stuck for too long
-                                # Parse created_at timestamp
-                                try:
-                                    created_at_str = item.get('created_at')
-                                    if created_at_str:
-                                        if isinstance(created_at_str, str):
-                                            created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                                        else:
-                                            created_at = created_at_str
-                                        
-                                        # Check if it's been more than timeout since creation
-                                        # (assuming download started shortly after creation)
-                                        if datetime.now(created_at.tzinfo) - created_at > self._download_timeout:
-                                            self.logger.warning('Download stuck for %s (ID: %s) for more than %s, resetting to pending', 
-                                                              item['title'], item['id'], self._download_timeout)
-                                            self.queue_manager.update_download_status(
-                                                item['id'],
-                                                QueueManager.STATUS_PENDING
-                                            )
-                                except (ValueError, TypeError) as e:
-                                    # If we can't parse the timestamp, just log and continue
-                                    self.logger.debug('Could not parse created_at for item %s: %s', item['id'], e)
-                    
-                    # Sleep before next check
-                    threading.Event().wait(2.0)  # Check every 2 seconds
-                except Exception as e:
-                    self.logger.error('Error in download monitor: %s', e, exc_info=True)
-                    threading.Event().wait(5.0)  # Wait longer on error
-        
-        self._download_monitor_thread = threading.Thread(target=monitor, daemon=True)
-        self._download_monitor_thread.start()
-        self.logger.debug('Download monitor started')
-        
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
+        
+        # Check for songs to resume on startup
+        self._resume_interrupted_playback()
     
     def _start_position_tracking(self):
         """Start background thread to track playback position."""
@@ -236,24 +152,6 @@ class PlaybackController:
                 self.jump_to_song(song['id'], resume_position=song['playback_position_seconds'])
         except Exception as e:
             self.logger.error('Error resuming interrupted playback: %s', e, exc_info=True)
-    
-    def _on_download_status(self, item_id: int, status: str, path: Optional[str], error: Optional[str]):
-        """Callback for download status updates."""
-        if status == 'ready' and path:
-            self.queue_manager.update_download_status(
-                item_id,
-                QueueManager.STATUS_READY,
-                download_path=path
-            )
-            self.logger.info('Download complete for queue item %s: %s', item_id, path)
-            # Note: Playback will start when operator presses play button
-        elif status == 'error' and error:
-            self.queue_manager.update_download_status(
-                item_id,
-                QueueManager.STATUS_ERROR,
-                error_message=error
-            )
-            self.logger.error('Download failed for queue item %s: %s', item_id, error)
     
     def play(self) -> bool:
         """
@@ -872,19 +770,12 @@ class PlaybackController:
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""
         self.logger.info('Shutting down playback controller')
-        self._monitoring = False
         self._tracking_position = False
         
         # Cancel transition timer
         if self._transition_timer:
             self._transition_timer.cancel()
             self._transition_timer = None
-        
-        # Stop download monitor thread
-        if self._download_monitor_thread and self._download_monitor_thread.is_alive():
-            self._download_monitor_thread.join(timeout=2.0)
-            if self._download_monitor_thread.is_alive():
-                self.logger.warning('Download monitor thread did not stop within timeout')
         
         # Stop position tracking thread
         if self._position_tracking_thread and self._position_tracking_thread.is_alive():

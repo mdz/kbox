@@ -1,16 +1,21 @@
 """
 Queue management for kbox.
 
-Handles song queue operations with persistence.
+Handles song queue operations with persistence and download management.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any, TYPE_CHECKING
+
 from .database import Database
 
+if TYPE_CHECKING:
+    from .youtube import YouTubeClient
+
 class QueueManager:
-    """Manages the song queue with persistence."""
+    """Manages the song queue with persistence and downloads."""
     
     # Download status constants
     STATUS_PENDING = 'pending'
@@ -18,15 +23,151 @@ class QueueManager:
     STATUS_READY = 'ready'
     STATUS_ERROR = 'error'
     
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, youtube_client: Optional['YouTubeClient'] = None):
         """
         Initialize QueueManager.
         
         Args:
             database: Database instance for persistence
+            youtube_client: YouTubeClient for downloading videos (optional)
         """
         self.database = database
+        self.youtube_client = youtube_client
         self.logger = logging.getLogger(__name__)
+        
+        # Download monitoring
+        self._download_timeout = timedelta(minutes=10)
+        self._download_monitor_thread = None
+        self._monitoring = False
+        
+        # Start download monitor if youtube_client provided
+        if self.youtube_client:
+            self._start_download_monitor()
+    
+    # =========================================================================
+    # Download Monitoring
+    # =========================================================================
+    
+    def _start_download_monitor(self):
+        """Start background thread to monitor queue and trigger downloads."""
+        if self._monitoring:
+            return
+        
+        self._monitoring = True
+        
+        def monitor():
+            while self._monitoring:
+                try:
+                    self._process_download_queue()
+                    # Sleep before next check
+                    threading.Event().wait(2.0)
+                except Exception as e:
+                    self.logger.error('Error in download monitor: %s', e, exc_info=True)
+                    threading.Event().wait(5.0)  # Wait longer on error
+        
+        self._download_monitor_thread = threading.Thread(
+            target=monitor, daemon=True, name='DownloadMonitor'
+        )
+        self._download_monitor_thread.start()
+        self.logger.info('Download monitor started')
+    
+    def _process_download_queue(self):
+        """Process pending and stuck downloads."""
+        queue = self.get_queue()
+        
+        for item in queue:
+            if item['download_status'] == self.STATUS_PENDING:
+                self._start_download(item)
+            elif item['download_status'] == self.STATUS_DOWNLOADING:
+                self._check_stuck_download(item)
+    
+    def _start_download(self, item: Dict[str, Any]):
+        """Start downloading a queue item."""
+        self.logger.info('Starting download for %s (ID: %s)', 
+                        item['title'], item['id'])
+        
+        item_id = item['id']
+        
+        def on_status(status: str, path: Optional[str], error: Optional[str]):
+            self._on_download_status(item_id, status, path, error)
+        
+        self.youtube_client.download_video(
+            item['youtube_video_id'],
+            item['id'],
+            status_callback=on_status
+        )
+        
+        # Update status to downloading
+        self.update_download_status(item['id'], self.STATUS_DOWNLOADING)
+    
+    def _check_stuck_download(self, item: Dict[str, Any]):
+        """Check if a download is stuck and recover if possible."""
+        # First, check if file exists (download completed but callback failed)
+        download_path = self.youtube_client.get_download_path(item['youtube_video_id'])
+        if download_path and download_path.exists():
+            self.logger.info('Found completed download for %s (ID: %s), updating status', 
+                           item['title'], item['id'])
+            self.update_download_status(
+                item['id'],
+                self.STATUS_READY,
+                download_path=str(download_path)
+            )
+            return
+        
+        # Check if download has been stuck for too long
+        try:
+            created_at_str = item.get('created_at')
+            if created_at_str:
+                if isinstance(created_at_str, str):
+                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                else:
+                    created_at = created_at_str
+                
+                # Check if it's been more than timeout since creation
+                if datetime.now(created_at.tzinfo) - created_at > self._download_timeout:
+                    self.logger.warning(
+                        'Download stuck for %s (ID: %s) for more than %s, resetting to pending', 
+                        item['title'], item['id'], self._download_timeout
+                    )
+                    self.update_download_status(item['id'], self.STATUS_PENDING)
+        except (ValueError, TypeError) as e:
+            self.logger.debug('Could not parse created_at for item %s: %s', item['id'], e)
+    
+    def _on_download_status(self, item_id: int, status: str, path: Optional[str], error: Optional[str]):
+        """Callback for download status updates."""
+        if status == 'ready' and path:
+            self.update_download_status(
+                item_id,
+                self.STATUS_READY,
+                download_path=path
+            )
+            self.logger.info('Download complete for queue item %s: %s', item_id, path)
+        elif status == 'error' and error:
+            self.update_download_status(
+                item_id,
+                self.STATUS_ERROR,
+                error_message=error
+            )
+            self.logger.error('Download failed for queue item %s: %s', item_id, error)
+    
+    def stop_download_monitor(self):
+        """Stop the download monitor thread."""
+        if not self._monitoring:
+            return
+        
+        self.logger.info('Stopping download monitor...')
+        self._monitoring = False
+        
+        if self._download_monitor_thread and self._download_monitor_thread.is_alive():
+            self._download_monitor_thread.join(timeout=2.0)
+            if self._download_monitor_thread.is_alive():
+                self.logger.warning('Download monitor thread did not stop within timeout')
+        
+        self.logger.info('Download monitor stopped')
+    
+    # =========================================================================
+    # Queue Operations
+    # =========================================================================
     
     def add_song(
         self,

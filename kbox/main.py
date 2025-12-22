@@ -55,10 +55,10 @@ class KboxServer:
             sys.exit(1)
 
         # Initialize components
-        self.queue_manager = QueueManager(self.database)
         self.youtube_client = YouTubeClient(
             youtube_api_key, cache_directory=self.config_manager.get("cache_directory")
         )
+        self.queue_manager = QueueManager(self.database, youtube_client=self.youtube_client)
 
         # StreamingController uses ConfigManager for configuration
         # Pass test_mode to use fakesinks for testing
@@ -69,7 +69,6 @@ class KboxServer:
         # PlaybackController
         self.playback_controller = PlaybackController(
             self.queue_manager,
-            self.youtube_client,
             self.streaming_controller,
             self.config_manager,
         )
@@ -164,6 +163,9 @@ class KboxServer:
 
         if self.playback_controller:
             self.playback_controller.shutdown()
+
+        if self.queue_manager:
+            self.queue_manager.stop_download_monitor()
 
         if self.streaming_controller:
             self.streaming_controller.stop()

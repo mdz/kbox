@@ -46,15 +46,15 @@ def full_system(temp_db, temp_cache_dir):
     config_manager.set('cache_directory', temp_cache_dir)
     config_manager.set('transition_duration_seconds', '0')  # No transition delay in tests
     
-    # Queue manager
-    queue_manager = QueueManager(temp_db)
-    
     # YouTube client (mocked)
     with patch('kbox.youtube.build') as mock_build:
         mock_youtube = Mock()
         mock_build.return_value = mock_youtube
         youtube_client = YouTubeClient('test_key', cache_directory=temp_cache_dir)
         youtube_client.youtube = mock_youtube
+    
+    # Queue manager (with mocked youtube client, but no download monitor for tests)
+    queue_manager = QueueManager(temp_db)  # No youtube_client = no download monitor
     
     # Streaming controller (mocked)
     mock_streaming = Mock()
@@ -74,11 +74,9 @@ def full_system(temp_db, temp_cache_dir):
     # Playback controller
     playback_controller = PlaybackController(
         queue_manager,
-        youtube_client,
         mock_streaming,
         config_manager
     )
-    playback_controller._monitoring = False  # Stop download monitor
     
     return {
         'config': config_manager,

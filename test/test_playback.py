@@ -17,12 +17,6 @@ def mock_queue_manager():
 
 
 @pytest.fixture
-def mock_youtube_client():
-    """Create a mock YouTubeClient."""
-    return Mock()
-
-
-@pytest.fixture
 def mock_streaming_controller():
     """Create a mock StreamingController."""
     controller = Mock()
@@ -52,8 +46,7 @@ def mock_config_manager():
 
 
 @pytest.fixture
-def playback_controller(mock_queue_manager, mock_youtube_client, 
-                       mock_streaming_controller, mock_config_manager):
+def playback_controller(mock_queue_manager, mock_streaming_controller, mock_config_manager):
     """Create a PlaybackController instance."""
     # Mock get_queue to return empty list to avoid thread issues
     mock_queue_manager.get_queue.return_value = []
@@ -62,12 +55,9 @@ def playback_controller(mock_queue_manager, mock_youtube_client,
     
     controller = PlaybackController(
         mock_queue_manager,
-        mock_youtube_client,
         mock_streaming_controller,
         mock_config_manager
     )
-    # Stop the download monitor thread immediately
-    controller._monitoring = False
     # Stop position tracking thread
     controller._tracking_position = False
     # Wait a moment for threads to stop
@@ -330,38 +320,6 @@ def test_get_status(playback_controller):
     
     assert status['state'] == 'playing'
     assert status['current_song'] == {'id': 1, 'title': 'Test Song'}
-
-
-def test_download_status_callback(playback_controller, mock_queue_manager):
-    """Test download status callback."""
-    item_id = 1
-    download_path = '/path/to/video.mp4'
-    
-    # Mock get_next_song to return None (not the next song)
-    mock_queue_manager.get_next_song.return_value = None
-    
-    # Simulate download completion
-    playback_controller._on_download_status(item_id, 'ready', download_path, None)
-    
-    mock_queue_manager.update_download_status.assert_called_once_with(
-        item_id,
-        QueueManager.STATUS_READY,
-        download_path=download_path
-    )
-
-
-def test_download_status_error(playback_controller, mock_queue_manager):
-    """Test download status callback with error."""
-    item_id = 1
-    error_message = 'Download failed'
-    
-    playback_controller._on_download_status(item_id, 'error', None, error_message)
-    
-    mock_queue_manager.update_download_status.assert_called_once_with(
-        item_id,
-        QueueManager.STATUS_ERROR,
-        error_message=error_message
-    )
 
 
 def test_play_with_resume_position(playback_controller, mock_queue_manager, 
