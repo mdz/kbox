@@ -55,6 +55,7 @@ class PlaybackController:
         self._notification_thread = None
         self._monitoring_notifications = False
         self._up_next_shown = False  # Track if "up next" notification was shown for current song
+        self._current_singer_shown = False  # Track if "current singer" notification was shown for current song
         self._start_notification_monitor()
         
         # Set EOS callback
@@ -66,14 +67,16 @@ class PlaybackController:
             return
         
         def monitor_notifications():
-            """Periodically check if we should show 'up next' notification."""
+            """Periodically check if we should show notifications."""
             import time
             while self._monitoring_notifications:
                 try:
                     if self.state == PlaybackState.PLAYING and self.current_song_id:
                         position = self.streaming_controller.get_position()
                         if position is not None:
-                            # Check if we should show "up next" notification
+                            # Check if we should show "current singer" notification at start
+                            self._check_current_singer_notification(position)
+                            # Check if we should show "up next" notification near end
                             self._check_up_next_notification(position)
                     time.sleep(2)  # Check every 2 seconds
                 except Exception as e:
@@ -85,9 +88,33 @@ class PlaybackController:
         self._notification_thread.start()
         self.logger.info('Notification monitor started')
     
+    def _check_current_singer_notification(self, current_position: int):
+        """
+        Check if song just started and show "current singer" persistent overlay.
+        
+        Args:
+            current_position: Current playback position in seconds
+        """
+        if self._current_singer_shown:
+            return  # Already shown for this song
+        
+        if not self.current_song_id:
+            return
+        
+        # Show persistent overlay at the very start of the song (within first 3 seconds)
+        # This allows the singer to see their name even if they missed the interstitial
+        # and lets the audience learn their name
+        if current_position <= 3:
+            current_song = self.queue_manager.get_item(self.current_song_id)
+            if current_song:
+                overlay_text = f"Now singing: {current_song['user_name']}"
+                self.streaming_controller.set_overlay_text(overlay_text)
+                self._current_singer_shown = True
+                self.logger.debug('Set current singer overlay for: %s', current_song['user_name'])
+    
     def _check_up_next_notification(self, current_position: int):
         """
-        Check if song is ending and show "up next" notification.
+        Check if song is ending and update overlay to show "up next".
         
         Args:
             current_position: Current playback position in seconds
@@ -107,16 +134,16 @@ class PlaybackController:
         if not duration or duration <= 0:
             return
         
-        # Show notification when 15 seconds or less remain
+        # Update overlay text when 15 seconds or less remain
         time_remaining = duration - current_position
         if time_remaining <= 15:
             # Get next song
             next_song = self.queue_manager.get_next_song_after(self.current_song_id)
             if next_song:
-                notification_text = f"Up next: {next_song['user_name']}"
-                self.streaming_controller.show_notification(notification_text, duration_seconds=10.0)
+                overlay_text = f"Up next: {next_song['user_name']}"
+                self.streaming_controller.set_overlay_text(overlay_text)
                 self._up_next_shown = True
-                self.logger.debug('Showed up next notification for: %s', next_song['user_name'])
+                self.logger.debug('Updated overlay to up next for: %s', next_song['user_name'])
     
     def play(self) -> bool:
         """
@@ -188,8 +215,9 @@ class PlaybackController:
             self.state = PlaybackState.IDLE
             return False
         
-        # Reset "up next" notification flag for new song
+        # Reset notification flags for new song
         self._up_next_shown = False
+        self._current_singer_shown = False
         
         try:
             self.logger.info('Loading song: %s by %s', song['title'], song['user_name'])
@@ -258,6 +286,7 @@ class PlaybackController:
         This is the ONLY place (besides _play_song) where current_song_id should be mutated.
         """
         self.streaming_controller.stop_playback()
+        self.streaming_controller.set_overlay_text('')  # Clear the singer/up next overlay
         self.current_song_id = None
         self.state = PlaybackState.IDLE
         self.show_idle_screen()
@@ -692,6 +721,9 @@ class PlaybackController:
             
             # Reset pitch
             self.streaming_controller.set_pitch_shift(0)
+            
+            # Clear the singer/up next overlay
+            self.streaming_controller.set_overlay_text('')
             
             # Clear current song ID (natural end of song, transitioning to next or idle)
             # NOTE: This is one of only 3 places current_song_id is mutated:

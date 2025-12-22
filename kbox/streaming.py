@@ -270,7 +270,7 @@ class StreamingController:
             
             # Store config for later use when positioning
             self._qr_position = self.config_manager.get('overlay_qr_position') or 'bottom-left'
-            self._qr_size = 80  # Small, unobtrusive size
+            self._qr_size = 53  # Small, unobtrusive size (2/3 of original 80px)
             self._qr_padding = 15
             
             # Set size and alpha - positioning will be done when we know video dimensions
@@ -298,13 +298,13 @@ class StreamingController:
                 self.logger.warning('textoverlay not available, text notifications disabled')
                 return None
             
-            # Configure text overlay - subtle, top-left corner
+            # Configure text overlay - subtle, top-right corner
             text.set_property('text', '')  # Start with no text
             text.set_property('valignment', 'top')
-            text.set_property('halignment', 'left')
+            text.set_property('halignment', 'right')
             text.set_property('xpad', 20)
             text.set_property('ypad', 20)
-            text.set_property('font-desc', 'Sans 18')
+            text.set_property('font-desc', 'Sans 9')  # Half of original 18pt
             text.set_property('shaded-background', True)
             text.set_property('silent', True)  # No text initially
             
@@ -649,6 +649,39 @@ class StreamingController:
                 self.logger.debug('Notification hidden')
             except Exception as e:
                 self.logger.warning('Failed to hide notification: %s', e)
+    
+    def set_overlay_text(self, text: str):
+        """
+        Set persistent overlay text (does not auto-hide).
+        Use empty string to clear the overlay.
+        
+        Args:
+            text: Text to display, or empty string to hide
+        """
+        if not self.text_overlay:
+            self.logger.debug('Text overlay not available, skipping')
+            return
+        
+        if not self._notification_lock:
+            return
+        
+        with self._notification_lock:
+            # Cancel any pending auto-hide timer
+            if self._notification_timer:
+                self._notification_timer.cancel()
+                self._notification_timer = None
+            
+            try:
+                if text:
+                    self.text_overlay.set_property('text', text)
+                    self.text_overlay.set_property('silent', False)
+                    self.logger.debug('Set persistent overlay text: %s', text)
+                else:
+                    self.text_overlay.set_property('text', '')
+                    self.text_overlay.set_property('silent', True)
+                    self.logger.debug('Cleared overlay text')
+            except Exception as e:
+                self.logger.warning('Failed to set overlay text: %s', e)
     
     def update_qr_overlay(self, image_path: str):
         """
