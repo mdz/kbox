@@ -83,14 +83,16 @@ def test_get_file_path_touches_file(cache_manager, temp_cache_dir):
     test_file = youtube_dir / "vid1.mp4"
     test_file.touch()
 
+    # Set mtime to 10 seconds ago
+    _set_mtime(test_file, 10)
     original_mtime = test_file.stat().st_mtime
 
-    time.sleep(0.1)
     path = cache_manager.get_file_path("youtube", "vid1", touch=True)
 
     assert path is not None
     new_mtime = path.stat().st_mtime
-    assert new_mtime > original_mtime
+    # Touch should have updated mtime to now (at least 5 seconds newer)
+    assert new_mtime > original_mtime + 5
 
 
 def test_get_file_path_no_touch(cache_manager, temp_cache_dir):
@@ -100,13 +102,15 @@ def test_get_file_path_no_touch(cache_manager, temp_cache_dir):
     test_file = youtube_dir / "vid1.mp4"
     test_file.touch()
 
+    # Set mtime to 10 seconds ago
+    _set_mtime(test_file, 10)
     original_mtime = test_file.stat().st_mtime
 
-    time.sleep(0.1)
     path = cache_manager.get_file_path("youtube", "vid1", touch=False)
 
     assert path is not None
     new_mtime = path.stat().st_mtime
+    # Should not have been touched - mtime unchanged
     assert new_mtime == original_mtime
 
 
