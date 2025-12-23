@@ -115,6 +115,16 @@ CONFIG_SCHEMA = {
         "control": "text",
         "placeholder": "~/.kbox/cache",
     },
+    "cache_max_size_gb": {
+        "group": "api",
+        "label": "Cache Size Limit",
+        "description": "Maximum disk space for cached videos in GB. Oldest unused videos are removed when limit is reached.",
+        "control": "slider",
+        "min": 1,
+        "max": 100,
+        "step": 1,
+        "display_format": "gb",
+    },
 }
 
 
@@ -155,6 +165,7 @@ class ConfigManager:
         "rubberband_plugin": None,  # Overridden by platform defaults
         "youtube_api_key": None,
         "cache_directory": None,  # Will default to ~/.kbox/cache
+        "cache_max_size_gb": "10",  # Max cache size in GB (oldest unused videos evicted when exceeded)
         "video_max_resolution": "480",  # Max video height for downloads (480, 720, 1080, etc.)
         "operator_pin": "1234",
         "default_youtube_volume": "0.8",

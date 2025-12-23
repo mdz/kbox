@@ -300,3 +300,67 @@ def test_config_persistence(temp_db):
     # Verify persistence
     assert config2.get("operator_pin") == "9999"
     assert config2.get("custom_key") == "custom_value"
+
+
+def test_cache_cleanup_integration(temp_db, temp_cache_dir):
+    """Test cache cleanup integration between QueueManager and CacheManager."""
+    import time
+    from pathlib import Path
+
+    from kbox.cache import CacheManager
+
+    # Setup config with very small cache limit
+    config_manager = ConfigManager(temp_db)
+    config_manager.set("youtube_api_key", "test_key")
+    config_manager.set("cache_directory", temp_cache_dir)
+    config_manager.set("cache_max_size_gb", "0")  # 0 GB limit forces eviction
+
+    # Create CacheManager
+    cache_manager = CacheManager(config_manager)
+
+    # Create YouTube client with cache manager
+    with patch("kbox.youtube.build") as mock_build:
+        mock_youtube = Mock()
+        mock_build.return_value = mock_youtube
+        youtube_client = YouTubeClient(config_manager, cache_manager=cache_manager)
+        youtube_client._youtube = mock_youtube
+        youtube_client._last_api_key = "test_key"
+
+    # Create cache directory with some files
+    youtube_dir = Path(temp_cache_dir) / "youtube"
+    youtube_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create old cached file (should be evicted)
+    old_file = youtube_dir / "old_video.mp4"
+    old_file.write_bytes(b"x" * 1000)
+    # Set mtime to 1 hour ago to ensure it's older
+    old_mtime = time.time() - 3600
+    os.utime(old_file, (old_mtime, old_mtime))
+
+    # Create file that will be in queue (should be protected)
+    queued_file = youtube_dir / "queued_video.mp4"
+    queued_file.write_bytes(b"x" * 1000)
+
+    # Setup user and queue
+    user_manager = UserManager(temp_db)
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+
+    # Create queue manager with cache manager
+    queue_manager = QueueManager(
+        temp_db, youtube_client=youtube_client, cache_manager=cache_manager
+    )
+
+    # Add song to queue (this protects queued_video)
+    queue_manager.add_song(alice, "youtube", "queued_video", "Queued Song")
+
+    # Manually trigger cache cleanup with protected keys from queue
+    protected = queue_manager._get_protected_cache_keys()
+    deleted_count = cache_manager.cleanup(protected)
+
+    # Old file should be deleted, queued file should remain
+    assert deleted_count == 1
+    assert not old_file.exists()
+    assert queued_file.exists()
+
+    # Stop the download monitor to clean up
+    queue_manager.stop_download_monitor()
