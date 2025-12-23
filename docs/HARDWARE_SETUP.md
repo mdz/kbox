@@ -139,12 +139,19 @@ flowchart TB
    
    > **Tip**: Use `plughw:` (not `hw:`) to let ALSA handle sample format conversion automatically.
 
-4. **Connect your microphone (single mic setup)**
-   - Plug XLR cable from your mic into the Solo's **Input 1** (the XLR/combo jack)
-   - If using a condenser mic, press the **48V** button to enable phantom power
-   - Dynamic mics (like SM58, XM8500) don't need phantom power
+4. **Connect your microphone(s)**
+
+   **Option A: Single wired mic** → use **Input 1** (XLR)
+   - Plug XLR cable from your mic into Input 1 (the combo jack)
+   - If using a condenser mic, press the **48V** button for phantom power
+   - Dynamic mics (SM58, XM8500) don't need phantom power
    
-   > **Input 1** is the mic preamp input - it provides gain for low-level microphone signals. Use this for any mic connected directly via XLR.
+   **Option B: Wireless mic system** → use **Input 2** (1/4" line)
+   - Connect receiver's 1/4" output to Input 2 using a 1/4" TS cable
+   - Leave the **INST** button OFF (wireless receivers output line level)
+   - This works great for dual-mic systems like the TONOR TW-820
+   
+   > **Why different inputs?** Input 1 has a mic preamp for low-level XLR signals. Input 2 expects line-level signals - wireless receivers already have internal preamps, so using Input 1 would double-amplify and cause distortion.
 
 5. **Enable Direct Monitor**
    - Flip the Direct Monitor switch to ON (front panel)
@@ -156,15 +163,18 @@ flowchart TB
    - HDMI from computer to your monitor/TV
 
 8. **Balance the mix**
-   - **Mic level**: Adjust the **Input 1 Gain** knob (the large knob on top) while singing
-     - Watch the LED ring around the knob: green = good, red = too hot (clipping)
-     - Aim for the signal to peak in the green, occasionally touching yellow
+   - **Mic level**: Adjust the gain knob for your input while singing:
+     - *Wired mic (Input 1)*: Use the large **Input 1 Gain** knob on top
+     - *Wireless (Input 2)*: Use the smaller **Input 2 Gain** knob on top
+     - Watch the LED ring: green = good, yellow = okay, red = too hot (clipping)
    - **Music level**: Adjust in kbox web UI (YouTube volume slider)
    - **Overall level**: Use the **Monitor** knob to control output to speakers/headphones
 
-### Using a Single Wired Microphone
+### Microphone Options
 
-This is the simplest setup - one XLR microphone into Input 1.
+#### Option A: Single Wired Microphone
+
+The simplest setup - one XLR mic into Input 1.
 
 ```mermaid
 flowchart TB
@@ -184,27 +194,14 @@ flowchart TB
     style DM fill:#e1f5fe
 ```
 
-**Recommended microphones:**
+**Recommended wired microphones:**
 - **Budget**: Behringer XM8500 (~$20) - dynamic, no phantom power needed
 - **Mid-range**: Shure SM58 (~$100) - industry standard, very durable
 - **Condenser**: Audio-Technica AT2020 (~$100) - requires 48V phantom power
 
-### Using Two Microphones with Solo
+#### Option B: Wireless Microphone System
 
-The Solo only has one mic preamp, but you can still support two singers using a **wireless microphone system** with a combined output.
-
-Systems like the [TONOR TW-820](https://www.amazon.com/dp/B07RJLKBRD) (~$100) include:
-- 2 wireless handheld microphones
-- A receiver with a combined 1/4" output (both mics mixed together)
-- UHF transmission with good range (~200ft)
-
-Connect the receiver's 1/4" output to the Solo's **Input 2 (line/instrument input)** using a standard 1/4" TS cable.
-
-> **Why Input 2, not Input 1?** The wireless receiver already has an internal preamp and outputs line-level signal. If you connect to Input 1 (mic input with XLR), you'd be double-amplifying through the Solo's mic preamp, causing distortion. Input 2 expects line-level signals and won't add extra gain.
->
-> **INST button**: Leave it **off** (not pressed). The INST mode is for high-impedance sources like guitars; wireless receivers output low-impedance line level.
-
-Both singers will be mixed together with the backing track via Direct Monitor.
+For two singers, use a wireless system with a combined output into Input 2.
 
 ```mermaid
 flowchart TB
@@ -220,7 +217,7 @@ flowchart TB
     
     MIC1 -.->|wireless| RX
     MIC2 -.->|wireless| RX
-    RX -->|1/4 inch combined| solo
+    RX -->|1/4 inch| solo
     
     subgraph kbox["kbox"]
         SW[Software]
@@ -232,6 +229,9 @@ flowchart TB
     
     style DM fill:#e1f5fe
 ```
+
+**Recommended wireless system:**
+- [TONOR TW-820](https://www.amazon.com/dp/B07RJLKBRD) (~$100) - 2 handheld mics, UHF, ~200ft range, individual volume controls on receiver
 
 ### Limitations
 
