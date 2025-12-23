@@ -7,6 +7,7 @@ Handles YouTube search via Data API v3 and video download via yt-dlp.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -280,6 +281,12 @@ class YouTubeClient:
 
         # Download in background thread
         def download_thread():
+            # Lower thread priority to avoid interfering with GStreamer playback
+            try:
+                os.nice(10)  # Increase niceness = lower scheduling priority
+            except (OSError, AttributeError):
+                pass  # Windows doesn't support nice(), or permission denied
+
             # Acquire semaphore to limit concurrent downloads to 1
             self._download_semaphore.acquire()
             try:
