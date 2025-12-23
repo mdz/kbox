@@ -244,6 +244,8 @@ def create_app(
                 )
 
             return {"id": item_id, "status": "added"}
+        except HTTPException:
+            raise  # Let HTTP exceptions pass through
         except Exception as e:
             logger.error("Error adding song: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
@@ -268,7 +270,7 @@ def create_app(
 
         # Check permissions: operator can remove any, users can only remove their own
         if not is_operator:
-            if not user_id or user_id != item["user_id"]:
+            if not user_id or user_id != item.user_id:
                 raise HTTPException(
                     status_code=403, detail="You can only remove songs you added"
                 )
@@ -320,7 +322,7 @@ def create_app(
         if not is_operator:
             if (
                 not request_data.user_id
-                or request_data.user_id != item["user_id"]
+                or request_data.user_id != item.user_id
             ):
                 raise HTTPException(
                     status_code=403, detail="You can only edit songs you added"
@@ -701,7 +703,7 @@ def create_app(
     async def index(request: Request):
         """Serve web UI."""
         return templates.TemplateResponse(
-            "index.html", {"request": request}
+            request, "index.html"
         )
 
     return app
