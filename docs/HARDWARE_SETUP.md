@@ -268,10 +268,20 @@ flowchart TB
 With multiple volume controls in the signal chain, it's important to set each one correctly. The goal is to get a strong, clean signal at each stage without clipping.
 
 **The signal chain:**
-```
-Wireless Mic → Receiver → Solo Input 2 → Solo Monitor Mix → Speaker/Amp
-                                    ↑
-kbox → USB Audio ─────────────────────┘
+
+```mermaid
+flowchart LR
+    subgraph mic["Microphone"]
+        WM[🎤 Wireless Mic] --> RX[Receiver]
+    end
+    
+    subgraph solo["Scarlett Solo"]
+        MIX[Direct Monitor Mix]
+    end
+    
+    RX -->|1/4 inch| MIX
+    KBOX[kbox] -->|USB Audio| MIX
+    MIX --> SPK[🔊 Speaker]
 ```
 
 **Step-by-step level setup:**
