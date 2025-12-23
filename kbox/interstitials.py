@@ -79,7 +79,7 @@ class InterstitialGenerator:
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
             ] + font_names
 
-        font = None
+        font: Any = None
         for font_path in font_names:
             if os.path.exists(font_path):
                 try:

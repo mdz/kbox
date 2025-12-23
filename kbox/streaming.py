@@ -56,7 +56,7 @@ class StreamingController:
 
         # State tracking
         self.state = "idle"  # 'idle', 'playing', 'paused'
-        self.current_file = None
+        self.current_file: Optional[str] = None
         self.pitch_shift_semitones = 0
         self.eos_callback = None
 

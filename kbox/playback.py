@@ -52,7 +52,7 @@ class PlaybackController:
         self.lock = threading.Lock()
 
         # Transition/interstitial state
-        self._transition_timer = None
+        self._transition_timer: Optional[threading.Timer] = None
         self._next_song_pending = None  # Song to play after transition
 
         # Interstitial generator (lazy-initialized)
