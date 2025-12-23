@@ -101,7 +101,7 @@ flowchart TB
     MIC[🎤 Microphone] -->|XLR| solo
     kbox -->|USB Audio| solo
     kbox -->|HDMI| MON[🖥️ Display]
-    solo -->|1/4" TRS| SPK[🔊 Powered Speaker]
+    solo -->|1/4 inch TRS| SPK[🔊 Powered Speaker]
     
     style DM fill:#e1f5fe
 ```
@@ -161,7 +161,7 @@ flowchart TB
     
     MIC1 -.->|wireless| RX
     MIC2 -.->|wireless| RX
-    RX -->|1/4" combined| solo
+    RX -->|1/4 inch combined| solo
     
     subgraph kbox["kbox"]
         SW[Software]
@@ -169,7 +169,7 @@ flowchart TB
     
     kbox -->|USB Audio| solo
     kbox -->|HDMI| MON[🖥️ Display]
-    solo -->|1/4" TRS| SPK[🔊 Speaker]
+    solo -->|1/4 inch TRS| SPK[🔊 Speaker]
     
     style DM fill:#e1f5fe
 ```
@@ -216,7 +216,7 @@ flowchart TB
         INJ[HDMI Audio Injector]
     end
     
-    subgraph audio["Audio Path"]  
+    subgraph audio["Audio Path"]
         MIX[Mixer]
     end
     
@@ -330,26 +330,30 @@ On the mixer:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
+│                    BACK OF ROOM                         │
+│                                                         │
+│   ┌───────────────────────────────────────────────┐     │
+│   │              PROJECTION SCREEN                │     │
+│   │          (ultra-short-throw projector)        │     │
+│   └───────────────────────────────────────────────┘     │
+│                                                         │
+│   🔊 Speaker                              Speaker 🔊    │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│                    🎤 PERFORMER 🎤                       │
+│                    (facing audience)                    │
+│                                                         │
+│              ┌──────────────────────┐                   │
+│              │  CONFIDENCE MONITOR  │                   │
+│              │   (facing performer) │                   │
+│              └──────────────────────┘                   │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
 │                      AUDIENCE                           │
+│                    (facing screen)                      │
 │                                                         │
-│   ┌───────────────────────────────────────────────┐    │
-│   │              PROJECTION SCREEN                 │    │
-│   │          (ultra-short-throw projector)        │    │
-│   └───────────────────────────────────────────────┘    │
-│                                                         │
-│                    🎤 PERFORMER 🎤                      │
-│                                                         │
-│              ┌──────────────────────┐                  │
-│              │  CONFIDENCE MONITOR  │                  │
-│              │   (facing performer) │                  │
-│              └──────────────────────┘                  │
-│                                                         │
-│   🔊 Speaker                              Speaker 🔊   │
-│                                                         │
-│                    ┌─────────────┐                     │
-│                    │   MIXER     │  ← Operator sits    │
-│                    │  (ProFX)    │    here             │
-│                    └─────────────┘                     │
 └─────────────────────────────────────────────────────────┘
 ```
 
