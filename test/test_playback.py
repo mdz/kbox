@@ -102,12 +102,8 @@ def playback_controller(mock_queue_manager, mock_streaming_controller, mock_conf
     controller = PlaybackController(
         mock_queue_manager, mock_streaming_controller, mock_config_manager
     )
-    # Stop position tracking thread
-    controller._tracking_position = False
-    # Wait a moment for threads to stop
-    import time
-
-    time.sleep(0.1)
+    # Stop monitor thread to avoid interference in tests
+    controller._monitoring = False
     return controller
 
 
@@ -655,3 +651,63 @@ def test_on_song_end_plays_next_in_queue_order(
 
     # Should have started playing the next song
     assert playback_controller._next_song_pending == song_at_position_3
+
+
+def test_auto_start_when_idle_with_ready_songs(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that _check_auto_start_when_idle starts playback when idle with ready songs.
+
+    This is the "that's all" screen behavior - if someone adds a song
+    when the queue is empty, it should start playing automatically once
+    the download completes, without requiring the operator to press play.
+    """
+    # Set state to IDLE (simulating "that's all" screen)
+    playback_controller.state = PlaybackState.IDLE
+    assert playback_controller.current_song_id is None
+
+    # Create a ready song
+    ready_song = create_mock_queue_item(
+        id=42,
+        position=1,
+        title="Auto-play Song",
+        user_name="TestUser",
+        download_status=QueueManager.STATUS_READY,
+        download_path="/path/to/song.mp4",
+    )
+
+    # Mock queue to return the ready song
+    mock_queue_manager.get_queue.return_value = [ready_song]
+
+    # Call the check method (this is called by the monitor thread)
+    playback_controller._check_auto_start_when_idle()
+
+    # Should have started playback automatically
+    mock_streaming_controller.load_file.assert_called_once_with("/path/to/song.mp4")
+    assert playback_controller.current_song_id == 42
+    assert playback_controller.state == PlaybackState.PLAYING
+
+
+def test_auto_start_when_idle_no_ready_songs(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that _check_auto_start_when_idle does nothing when no ready songs."""
+    # Set state to IDLE
+    playback_controller.state = PlaybackState.IDLE
+
+    # Mock queue to return no ready songs (only pending)
+    pending_song = create_mock_queue_item(
+        id=42,
+        position=1,
+        title="Pending Song",
+        download_status=QueueManager.STATUS_PENDING,
+        download_path=None,
+    )
+    mock_queue_manager.get_queue.return_value = [pending_song]
+
+    # Call the check method
+    playback_controller._check_auto_start_when_idle()
+
+    # Should NOT have started playback
+    mock_streaming_controller.load_file.assert_not_called()
+    assert playback_controller.state == PlaybackState.IDLE

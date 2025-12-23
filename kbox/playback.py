@@ -58,28 +58,28 @@ class PlaybackController:
         # Interstitial generator (lazy-initialized)
         self._interstitial_generator = None
 
-        # Start "up next" notification monitoring thread
-        self._notification_thread = None
-        self._monitoring_notifications = False
+        # Background monitor thread (handles notifications, auto-start, etc.)
+        self._monitor_thread = None
+        self._monitoring = False
         self._up_next_shown = False  # Track if "up next" notification was shown for current song
         self._current_singer_shown = (
             False  # Track if "current singer" notification was shown for current song
         )
-        self._start_notification_monitor()
+        self._start_monitor()
 
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
 
-    def _start_notification_monitor(self):
-        """Start background thread to monitor playback and show 'up next' notifications."""
-        if self._notification_thread and self._notification_thread.is_alive():
+    def _start_monitor(self):
+        """Start background thread to monitor playback state and react accordingly."""
+        if self._monitor_thread and self._monitor_thread.is_alive():
             return
 
-        def monitor_notifications():
-            """Periodically check if we should show notifications."""
+        def monitor():
+            """Periodically check playback state and handle notifications, auto-start, etc."""
             import time
 
-            while self._monitoring_notifications:
+            while self._monitoring:
                 try:
                     if self.state == PlaybackState.PLAYING and self.current_song_id:
                         position = self.streaming_controller.get_position()
@@ -88,17 +88,35 @@ class PlaybackController:
                             self._check_current_singer_notification(position)
                             # Check if we should show "up next" notification near end
                             self._check_up_next_notification(position)
+                    elif self.state == PlaybackState.IDLE:
+                        # Auto-start playback if we're idle and there are ready songs
+                        # This handles the "that's all" screen -> someone adds a song case
+                        self._check_auto_start_when_idle()
                     time.sleep(2)  # Check every 2 seconds
                 except Exception as e:
-                    self.logger.error("Error in notification monitor: %s", e, exc_info=True)
+                    self.logger.error("Error in monitor: %s", e, exc_info=True)
                     time.sleep(5)  # Wait longer on error
 
-        self._monitoring_notifications = True
-        self._notification_thread = threading.Thread(
-            target=monitor_notifications, daemon=True, name="NotificationMonitor"
-        )
-        self._notification_thread.start()
-        self.logger.info("Notification monitor started")
+        self._monitoring = True
+        self._monitor_thread = threading.Thread(target=monitor, daemon=True, name="PlaybackMonitor")
+        self._monitor_thread.start()
+        self.logger.info("Playback monitor started")
+
+    def _check_auto_start_when_idle(self):
+        """
+        Check if we're idle but have ready songs, and auto-start playback.
+
+        This handles the case where we're on the "that's all" screen and
+        someone adds a song - once it finishes downloading, playback
+        should start automatically without requiring operator intervention.
+        """
+        # Check if there are any ready songs
+        queue = self.queue_manager.get_queue(include_played=False)
+        ready_songs = [item for item in queue if item.download_status == QueueManager.STATUS_READY]
+
+        if ready_songs:
+            self.logger.info("Idle with ready songs, auto-starting playback")
+            self.play()
 
     def _check_current_singer_notification(self, current_position: int):
         """
@@ -1123,18 +1141,18 @@ class PlaybackController:
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""
         self.logger.info("Shutting down playback controller")
-        self._monitoring_notifications = False
+        self._monitoring = False
 
         # Cancel transition timer
         if self._transition_timer:
             self._transition_timer.cancel()
             self._transition_timer = None
 
-        # Stop notification monitor thread
-        if self._notification_thread and self._notification_thread.is_alive():
-            self._notification_thread.join(timeout=2.0)
-            if self._notification_thread.is_alive():
-                self.logger.warning("Notification monitor thread did not stop within timeout")
+        # Stop monitor thread
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            self._monitor_thread.join(timeout=2.0)
+            if self._monitor_thread.is_alive():
+                self.logger.warning("Monitor thread did not stop within timeout")
 
         # Stop streaming
         if self.streaming_controller:

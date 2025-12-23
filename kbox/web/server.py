@@ -231,6 +231,7 @@ def create_app(
 
             # Trigger download (PlaybackController will handle this)
             # The download monitor will pick it up
+            # When download completes, PlaybackController auto-starts if idle
 
             # Show overlay notification
             streaming = request.app.state.streaming_controller
