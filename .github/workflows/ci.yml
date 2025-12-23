@@ -33,7 +33,12 @@ jobs:
             gstreamer1.0-plugins-good
 
       - name: Install dependencies
-        run: uv sync
+        run: |
+          # Create venv with system-site-packages to access apt-installed GStreamer
+          uv venv --system-site-packages
+          uv sync
+          # Fix: uv sync may reset system-site-packages flag
+          sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' .venv/pyvenv.cfg
 
       - name: Lint with ruff
         run: uv run ruff check .
