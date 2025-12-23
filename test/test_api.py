@@ -1,26 +1,27 @@
 """
 API endpoint tests for kbox.
 
-Tests all 30 API endpoints with:
+Tests all API endpoints with:
 - Smoke tests for basic request/response verification
 - Detailed tests for critical endpoints (queue, playback, auth)
 """
 
 import os
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from kbox.cache import CacheManager
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
 from kbox.user import UserManager
+from kbox.video_source import VideoManager
 from kbox.web.server import create_app
-from kbox.youtube import YouTubeClient
 
 # Test user IDs
 ALICE_ID = "alice-uuid-1234"
@@ -105,45 +106,48 @@ def mock_playback():
 
 
 @pytest.fixture
-def mock_youtube(temp_cache_dir):
-    """Create a mock YouTubeClient."""
+def mock_video_manager(temp_cache_dir):
+    """Create a mock VideoManager with YouTube source."""
     # Create a mock config manager
     mock_config = Mock()
     mock_config.get.side_effect = lambda key, default=None: {
         "youtube_api_key": "test_key",
         "cache_directory": temp_cache_dir,
         "video_max_resolution": "480",
+        "cache_max_size_gb": "10",
     }.get(key, default)
     mock_config.get_int.side_effect = lambda key, default=None: {
         "video_max_resolution": 480,
+        "cache_max_size_gb": 10,
     }.get(key, default)
 
-    with patch("kbox.youtube.build") as mock_build:
-        mock_yt = Mock()
-        mock_build.return_value = mock_yt
-        client = YouTubeClient(mock_config)
-        # Force initialization of the lazy client
-        client._youtube = mock_yt
-        client._last_api_key = "test_key"
+    # Create cache manager
+    cache_manager = CacheManager(mock_config)
 
-        # Mock search results
-        client.search = Mock(
-            return_value=[{"video_id": "test123", "title": "Test Song", "duration_seconds": 180}]
-        )
-        client.get_video_info = Mock(
-            return_value={
-                "video_id": "test123",
-                "title": "Test Song",
-                "duration_seconds": 180,
-                "thumbnail_url": "https://example.com/thumb.jpg",
-                "channel": "Test Channel",
-            }
-        )
-        yield client
+    # Create video manager (pass config_manager to let it create sources)
+    # But we'll override with mocks for testing
+    video_manager = VideoManager(mock_config, cache_manager)
+
+    # Get the YouTube source that was auto-registered and mock its methods
+    youtube_source = video_manager.get_source("youtube")
+    youtube_source.search = Mock(
+        return_value=[{"id": "test123", "title": "Test Song", "duration_seconds": 180}]
+    )
+    youtube_source.get_video_info = Mock(
+        return_value={
+            "id": "test123",
+            "title": "Test Song",
+            "duration_seconds": 180,
+            "thumbnail_url": "https://example.com/thumb.jpg",
+            "channel": "Test Channel",
+        }
+    )
+
+    yield video_manager
 
 
 @pytest.fixture
-def app_components(temp_db, temp_cache_dir, mock_streaming, mock_youtube, mock_playback):
+def app_components(temp_db, temp_cache_dir, mock_streaming, mock_video_manager, mock_playback):
     """Create all app components with mocked dependencies.
 
     Uses mock playback controller since API tests focus on the HTTP layer,
@@ -164,7 +168,7 @@ def app_components(temp_db, temp_cache_dir, mock_streaming, mock_youtube, mock_p
         "config": config_manager,
         "queue": queue_manager,
         "user": user_manager,
-        "youtube": mock_youtube,
+        "video_manager": mock_video_manager,
         "streaming": mock_streaming,
         "playback": mock_playback,
         "history": history_manager,
@@ -176,7 +180,7 @@ def client(app_components):
     """Create test client with all components."""
     app = create_app(
         queue_manager=app_components["queue"],
-        youtube_client=app_components["youtube"],
+        video_manager=app_components["video_manager"],
         playback_controller=app_components["playback"],
         config_manager=app_components["config"],
         user_manager=app_components["user"],
@@ -226,7 +230,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
                 "duration_seconds": 180,
                 "pitch_semitones": 0,
@@ -243,7 +248,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": "nonexistent-user",
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -257,7 +263,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "song1",
+                "source": "youtube",
+                "source_id": "song1",
                 "title": "Alice's Song",
             },
         )
@@ -265,7 +272,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": BOB_ID,
-                "youtube_video_id": "song2",
+                "source": "youtube",
+                "source_id": "song2",
                 "title": "Bob's Song",
             },
         )
@@ -282,7 +290,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -300,7 +309,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -317,7 +327,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -334,7 +345,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -349,7 +361,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
                 "pitch_semitones": 0,
             },
@@ -369,7 +382,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -383,7 +397,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -394,8 +409,8 @@ class TestQueueEndpoints:
         assert response.json()["status"] == "cleared"
 
     def test_get_song_settings(self, client, alice):
-        """GET /api/queue/settings/{video_id} - get saved settings."""
-        response = client.get(f"/api/queue/settings/test123?user_id={ALICE_ID}")
+        """GET /api/queue/settings/{source}/{source_id} - get saved settings."""
+        response = client.get(f"/api/queue/settings/youtube/test123?user_id={ALICE_ID}")
         assert response.status_code == 200
         # No history yet, so settings should be None
         assert response.json()["settings"] is None
@@ -406,7 +421,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -421,7 +437,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -436,7 +453,8 @@ class TestQueueEndpoints:
             "/api/queue",
             json={
                 "user_id": ALICE_ID,
-                "youtube_video_id": "test123",
+                "source": "youtube",
+                "source_id": "test123",
                 "title": "Test Song",
             },
         )
@@ -581,25 +599,25 @@ class TestAuthEndpoints:
 
 
 # =============================================================================
-# YouTube Endpoints - Smoke Tests
+# Video Search Endpoints - Smoke Tests
 # =============================================================================
 
 
-class TestYouTubeEndpoints:
-    """Smoke tests for YouTube endpoints."""
+class TestVideoSearchEndpoints:
+    """Smoke tests for video search endpoints."""
 
     def test_search(self, client):
-        """GET /api/youtube/search - search YouTube."""
-        response = client.get("/api/youtube/search?q=test")
+        """GET /api/search - search videos."""
+        response = client.get("/api/search?q=test")
         assert response.status_code == 200
         assert "results" in response.json()
 
     def test_get_video_info(self, client):
-        """GET /api/youtube/video/{id} - get video info."""
-        response = client.get("/api/youtube/video/test123")
+        """GET /api/video/{source}/{id} - get video info."""
+        response = client.get("/api/video/youtube/test123")
         assert response.status_code == 200
         data = response.json()
-        assert "video_id" in data
+        assert "id" in data
 
 
 # =============================================================================

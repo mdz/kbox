@@ -18,7 +18,7 @@ from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..streaming import StreamingController
 from ..user import UserManager
-from ..youtube import YouTubeClient
+from ..video_source import VideoManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 # Request models
 class AddSongRequest(BaseModel):
     user_id: str  # UUID for identity
-    youtube_video_id: str
+    source: str = "youtube"  # Video source (default youtube for compatibility)
+    source_id: str  # Source-specific video ID
     title: str
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
@@ -76,9 +77,9 @@ def get_queue_manager(request: Request) -> QueueManager:
     return request.app.state.queue_manager
 
 
-def get_youtube_client(request: Request) -> YouTubeClient:
-    """Get YouTubeClient from app state."""
-    return request.app.state.youtube_client
+def get_video_manager(request: Request) -> VideoManager:
+    """Get VideoManager from app state."""
+    return request.app.state.video_manager
 
 
 def get_playback_controller(request: Request) -> PlaybackController:
@@ -115,7 +116,7 @@ def check_operator(request: Request) -> bool:
 
 def create_app(
     queue_manager: QueueManager,
-    youtube_client: YouTubeClient,
+    video_manager: VideoManager,
     playback_controller: PlaybackController,
     config_manager: ConfigManager,
     user_manager: UserManager,
@@ -127,7 +128,7 @@ def create_app(
 
     Args:
         queue_manager: QueueManager instance
-        youtube_client: YouTubeClient instance
+        video_manager: VideoManager instance
         playback_controller: PlaybackController instance
         config_manager: ConfigManager instance
         user_manager: UserManager instance
@@ -143,7 +144,7 @@ def create_app(
 
     # Store components in app state
     app.state.queue_manager = queue_manager
-    app.state.youtube_client = youtube_client
+    app.state.video_manager = video_manager
     app.state.playback_controller = playback_controller
     app.state.config_manager = config_manager
     app.state.user_manager = user_manager
@@ -187,15 +188,15 @@ def create_app(
 
         return {"queue": queue, "current_song_id": current_song_id}
 
-    @app.get("/api/queue/settings/{youtube_video_id}")
+    @app.get("/api/queue/settings/{source}/{source_id:path}")
     async def get_song_settings(
-        youtube_video_id: str,
+        source: str,
+        source_id: str,
         user_id: str,
         history_mgr=Depends(get_history_manager),
     ):
         """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
-        # Get settings from history (assumes YouTube source)
-        settings = history_mgr.get_last_settings("youtube", youtube_video_id, user_id)
+        settings = history_mgr.get_last_settings(source, source_id, user_id)
         if settings:
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
@@ -205,7 +206,6 @@ def create_app(
         request_data: AddSongRequest,
         request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
-        youtube: YouTubeClient = Depends(get_youtube_client),
         user_mgr: UserManager = Depends(get_user_manager),
     ):
         """Add song to queue."""
@@ -220,18 +220,14 @@ def create_app(
             # Add song with source-agnostic schema
             item_id = queue_mgr.add_song(
                 user=user,
-                source="youtube",
-                source_id=request_data.youtube_video_id,
+                source=request_data.source,
+                source_id=request_data.source_id,
                 title=request_data.title,
                 duration_seconds=request_data.duration_seconds,
                 thumbnail_url=request_data.thumbnail_url,
                 channel=request_data.channel,
                 pitch_semitones=request_data.pitch_semitones,
             )
-
-            # Trigger download (PlaybackController will handle this)
-            # The download monitor will pick it up
-            # When download completes, PlaybackController auto-starts if idle
 
             # Show overlay notification
             streaming = request.app.state.streaming_controller
@@ -387,21 +383,25 @@ def create_app(
         count = queue_mgr.clear_queue()
         return {"status": "cleared", "items_removed": count}
 
-    # YouTube endpoints
-    @app.get("/api/youtube/search")
-    async def search_youtube(
+    # Video search endpoints (source-agnostic)
+    @app.get("/api/search")
+    async def search_videos(
         q: str,
         max_results: int = 10,
-        youtube: YouTubeClient = Depends(get_youtube_client),
+        video_mgr: VideoManager = Depends(get_video_manager),
     ):
-        """Search YouTube for karaoke videos."""
-        results = youtube.search(q, max_results)
+        """Search for videos across all configured sources."""
+        results = video_mgr.search(q, max_results)
         return {"results": results}
 
-    @app.get("/api/youtube/video/{video_id}")
-    async def get_video_info(video_id: str, youtube: YouTubeClient = Depends(get_youtube_client)):
-        """Get video information."""
-        info = youtube.get_video_info(video_id)
+    @app.get("/api/video/{source}/{video_id:path}")
+    async def get_video_info(
+        source: str,
+        video_id: str,
+        video_mgr: VideoManager = Depends(get_video_manager),
+    ):
+        """Get video information from a specific source."""
+        info = video_mgr.get_video_info(source, video_id)
         if not info:
             raise HTTPException(status_code=404, detail="Video not found")
         return info

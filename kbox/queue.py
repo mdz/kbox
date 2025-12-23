@@ -13,8 +13,7 @@ from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
-    from .cache import CacheManager
-    from .youtube import YouTubeClient
+    from .video_source import VideoManager
 
 
 class QueueManager:
@@ -29,22 +28,19 @@ class QueueManager:
     def __init__(
         self,
         database: Database,
-        youtube_client: Optional["YouTubeClient"] = None,
-        cache_manager: Optional["CacheManager"] = None,
+        video_manager: Optional["VideoManager"] = None,
     ):
         """
         Initialize QueueManager.
 
         Args:
             database: Database instance for persistence
-            youtube_client: YouTubeClient for downloading videos (optional)
-            cache_manager: CacheManager for cache cleanup (optional)
+            video_manager: VideoManager for video search/download (optional)
         """
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
-        self.youtube_client = youtube_client
-        self.cache_manager = cache_manager
+        self.video_manager = video_manager
         self.logger = logging.getLogger(__name__)
 
         # Download monitoring
@@ -52,8 +48,8 @@ class QueueManager:
         self._download_monitor_thread = None
         self._monitoring = False
 
-        # Start download monitor if youtube_client provided
-        if self.youtube_client:
+        # Start download monitor if video_manager provided
+        if self.video_manager:
             self._start_download_monitor()
 
     # =========================================================================
@@ -95,6 +91,13 @@ class QueueManager:
 
     def _start_download(self, item: QueueItem):
         """Start downloading a queue item."""
+        if not self.video_manager:
+            self.logger.error("Video manager not available")
+            self.update_download_status(
+                item.id, self.STATUS_ERROR, error_message="Video manager not configured"
+            )
+            return
+
         self.logger.info("Starting download for %s (ID: %s)", item.metadata.title, item.id)
 
         item_id = item.id
@@ -102,43 +105,27 @@ class QueueManager:
         def on_status(status: str, path: Optional[str], error: Optional[str]):
             self._on_download_status(item_id, status, path, error)
 
-        # For YouTube source, use source_id (video ID)
-        if item.source == "youtube":
-            if not self.youtube_client:
-                self.logger.error("YouTube client not available")
-                self.update_download_status(
-                    item.id, self.STATUS_ERROR, error_message="YouTube client not configured"
-                )
-                return
-            self.youtube_client.download_video(item.source_id, item.id, status_callback=on_status)
-        else:
-            self.logger.error("Unsupported source type: %s", item.source)
-            self.update_download_status(
-                item.id, self.STATUS_ERROR, error_message=f"Unsupported source: {item.source}"
-            )
-            return
+        # Use video manager to download (routes to correct source)
+        self.video_manager.download(item.source, item.source_id, item.id, status_callback=on_status)
 
         # Update status to downloading
         self.update_download_status(item.id, self.STATUS_DOWNLOADING)
 
     def _check_stuck_download(self, item: QueueItem):
         """Check if a download is stuck and recover if possible."""
-        # First, check if file exists (download completed but callback failed)
-        # Only works for YouTube source currently
-        if item.source == "youtube":
-            if not self.youtube_client:
-                return
-            download_path = self.youtube_client.get_download_path(item.source_id)
-            if download_path and download_path.exists():
-                self.logger.info(
-                    "Found completed download for %s (ID: %s), updating status",
-                    item.metadata.title,
-                    item.id,
-                )
-                self.update_download_status(
-                    item.id, self.STATUS_READY, download_path=str(download_path)
-                )
-                return
+        if not self.video_manager:
+            return
+
+        # Check if file exists (download completed but callback failed)
+        cached_path = self.video_manager.get_cached_path(item.source, item.source_id)
+        if cached_path and cached_path.exists():
+            self.logger.info(
+                "Found completed download for %s (ID: %s), updating status",
+                item.metadata.title,
+                item.id,
+            )
+            self.update_download_status(item.id, self.STATUS_READY, download_path=str(cached_path))
+            return
 
         # Check if download has been stuck for too long
         if item.created_at:
@@ -191,12 +178,12 @@ class QueueManager:
 
     def _cleanup_cache(self) -> None:
         """Trigger cache cleanup with queue items protected from eviction."""
-        if not self.cache_manager:
+        if not self.video_manager:
             return
 
         try:
             protected = self._get_protected_cache_keys()
-            self.cache_manager.cleanup(protected)
+            self.video_manager.cleanup_cache(protected)
         except Exception as e:
             self.logger.error("Error during cache cleanup: %s", e, exc_info=True)
 

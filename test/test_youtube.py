@@ -1,5 +1,5 @@
 """
-Unit tests for YouTubeClient.
+Unit tests for YouTubeSource.
 
 Uses mocks to avoid actual API calls.
 """
@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from kbox.cache import CacheManager
-from kbox.youtube import YouTubeClient
+from kbox.youtube import YouTubeSource
 
 
 @pytest.fixture
@@ -49,19 +49,24 @@ def cache_manager(mock_config_manager):
 
 
 @pytest.fixture
-def youtube_client(temp_cache_dir, mock_config_manager, cache_manager):
-    """Create a YouTubeClient instance with mocked API and CacheManager."""
+def youtube_source(temp_cache_dir, mock_config_manager, cache_manager):
+    """Create a YouTubeSource instance with mocked API and CacheManager."""
     with patch("kbox.youtube.build") as mock_build:
         mock_youtube = Mock()
         mock_build.return_value = mock_youtube
-        client = YouTubeClient(mock_config_manager, cache_manager=cache_manager)
+        source = YouTubeSource(mock_config_manager, cache_manager=cache_manager)
         # Force initialization of the lazy client
-        client._youtube = mock_youtube
-        client._last_api_key = "fake_api_key"
-        yield client
+        source._youtube = mock_youtube
+        source._last_api_key = "fake_api_key"
+        yield source
 
 
-def test_search_success(youtube_client):
+def test_source_id(youtube_source):
+    """Test source_id property."""
+    assert youtube_source.source_id == "youtube"
+
+
+def test_search_success(youtube_source):
     """Test successful YouTube search."""
     # Mock search response
     mock_search_response = {
@@ -118,14 +123,14 @@ def test_search_success(youtube_client):
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_videos_response
 
-    youtube_client._youtube.search.return_value = mock_search
-    youtube_client._youtube.videos.return_value = mock_videos
+    youtube_source._youtube.search.return_value = mock_search
+    youtube_source._youtube.videos.return_value = mock_videos
 
     # Test search
-    results = youtube_client.search("test query")
+    results = youtube_source.search("test query")
 
     # Verify search was called with "karaoke" appended
-    call_args = youtube_client._youtube.search.return_value.list.call_args
+    call_args = youtube_source._youtube.search.return_value.list.call_args
     assert "karaoke" in call_args[1]["q"].lower()
 
     # Verify results
@@ -136,29 +141,29 @@ def test_search_success(youtube_client):
     assert results[1]["duration_seconds"] == 255  # 4:15
 
 
-def test_search_no_results(youtube_client):
+def test_search_no_results(youtube_source):
     """Test search with no results."""
     mock_search_response = {"items": []}
 
     mock_search = Mock()
     mock_search.list.return_value.execute.return_value = mock_search_response
-    youtube_client._youtube.search.return_value = mock_search
+    youtube_source._youtube.search.return_value = mock_search
 
-    results = youtube_client.search("nonexistent")
+    results = youtube_source.search("nonexistent")
     assert len(results) == 0
 
 
-def test_parse_duration(youtube_client):
+def test_parse_duration(youtube_source):
     """Test duration parsing."""
-    assert youtube_client._parse_duration("PT3M30S") == 210  # 3:30
-    assert youtube_client._parse_duration("PT1H5M30S") == 3930  # 1:05:30
-    assert youtube_client._parse_duration("PT45S") == 45
-    assert youtube_client._parse_duration("PT2H") == 7200
-    assert youtube_client._parse_duration("") is None
-    assert youtube_client._parse_duration("invalid") is None
+    assert youtube_source._parse_duration("PT3M30S") == 210  # 3:30
+    assert youtube_source._parse_duration("PT1H5M30S") == 3930  # 1:05:30
+    assert youtube_source._parse_duration("PT45S") == 45
+    assert youtube_source._parse_duration("PT2H") == 7200
+    assert youtube_source._parse_duration("") is None
+    assert youtube_source._parse_duration("invalid") is None
 
 
-def test_get_video_info(youtube_client):
+def test_get_video_info(youtube_source):
     """Test getting video information."""
     mock_response = {
         "items": [
@@ -177,9 +182,9 @@ def test_get_video_info(youtube_client):
 
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_response
-    youtube_client._youtube.videos.return_value = mock_videos
+    youtube_source._youtube.videos.return_value = mock_videos
 
-    info = youtube_client.get_video_info("vid1")
+    info = youtube_source.get_video_info("vid1")
 
     assert info is not None
     assert info["id"] == "vid1"
@@ -187,49 +192,49 @@ def test_get_video_info(youtube_client):
     assert info["duration_seconds"] == 210
 
 
-def test_get_video_info_not_found(youtube_client):
+def test_get_video_info_not_found(youtube_source):
     """Test getting info for non-existent video."""
     mock_response = {"items": []}
 
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_response
-    youtube_client._youtube.videos.return_value = mock_videos
+    youtube_source._youtube.videos.return_value = mock_videos
 
-    info = youtube_client.get_video_info("nonexistent")
+    info = youtube_source.get_video_info("nonexistent")
     assert info is None
 
 
-def test_is_downloaded(youtube_client, temp_cache_dir):
-    """Test checking if video is downloaded."""
-    # Not downloaded
-    assert youtube_client.is_downloaded("vid1") is False
+def test_is_cached(youtube_source, temp_cache_dir):
+    """Test checking if video is cached."""
+    # Not cached
+    assert youtube_source.is_cached("vid1") is False
 
-    # Create a fake downloaded file in youtube subdirectory
+    # Create a fake cached file in youtube subdirectory
     youtube_dir = Path(temp_cache_dir) / "youtube"
     youtube_dir.mkdir(exist_ok=True)
     fake_file = youtube_dir / "vid1.mp4"
     fake_file.touch()
 
-    assert youtube_client.is_downloaded("vid1") is True
+    assert youtube_source.is_cached("vid1") is True
 
 
-def test_get_download_path(youtube_client, temp_cache_dir):
-    """Test getting download path."""
-    # Not downloaded
-    assert youtube_client.get_download_path("vid1") is None
+def test_get_cached_path(youtube_source, temp_cache_dir):
+    """Test getting cached path."""
+    # Not cached
+    assert youtube_source.get_cached_path("vid1") is None
 
-    # Create a fake downloaded file in youtube subdirectory
+    # Create a fake cached file in youtube subdirectory
     youtube_dir = Path(temp_cache_dir) / "youtube"
     youtube_dir.mkdir(exist_ok=True)
     fake_file = youtube_dir / "vid1.mp4"
     fake_file.touch()
 
-    path = youtube_client.get_download_path("vid1")
+    path = youtube_source.get_cached_path("vid1")
     assert path is not None
     assert path.exists()
 
 
-def test_download_video_already_cached(youtube_client, temp_cache_dir):
+def test_download_already_cached(youtube_source, temp_cache_dir):
     """Test download when video is already cached."""
     # Create a fake cached file in youtube subdirectory
     youtube_dir = Path(temp_cache_dir) / "youtube"
@@ -242,7 +247,7 @@ def test_download_video_already_cached(youtube_client, temp_cache_dir):
     def status_callback(status, path, error):
         callback_calls.append((status, path, error))
 
-    result = youtube_client.download_video("vid1", 1, status_callback)
+    result = youtube_source.download("vid1", 1, status_callback)
 
     # Should return path immediately
     assert result == str(fake_file)

@@ -6,16 +6,17 @@ Tests the integration between components without external dependencies.
 
 import os
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
+from kbox.cache import CacheManager
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
 from kbox.user import UserManager
-from kbox.youtube import YouTubeClient
+from kbox.video_source import VideoManager
 
 # Test user IDs
 ALICE_ID = "alice-uuid-1234"
@@ -53,14 +54,11 @@ def full_system(temp_db, temp_cache_dir):
     config_manager.set("cache_directory", temp_cache_dir)
     config_manager.set("transition_duration_seconds", "0")  # No transition delay in tests
 
-    # YouTube client (mocked) - uses config_manager for API key
-    with patch("kbox.youtube.build") as mock_build:
-        mock_youtube = Mock()
-        mock_build.return_value = mock_youtube
-        youtube_client = YouTubeClient(config_manager)
-        # Force initialization of the lazy client
-        youtube_client._youtube = mock_youtube
-        youtube_client._last_api_key = "test_key"
+    # Cache manager
+    cache_manager = CacheManager(config_manager)
+
+    # Video manager (auto-registers sources)
+    video_manager = VideoManager(config_manager, cache_manager)
 
     # User manager
     user_manager = UserManager(temp_db)
@@ -69,8 +67,8 @@ def full_system(temp_db, temp_cache_dir):
     bob = user_manager.get_or_create_user(BOB_ID, "Bob")
     charlie = user_manager.get_or_create_user(CHARLIE_ID, "Charlie")
 
-    # Queue manager (with mocked youtube client, but no download monitor for tests)
-    queue_manager = QueueManager(temp_db)  # No youtube_client = no download monitor
+    # Queue manager (without video_manager to avoid download monitor in tests)
+    queue_manager = QueueManager(temp_db)
 
     # Streaming controller (mocked)
     mock_streaming = Mock()
@@ -92,10 +90,11 @@ def full_system(temp_db, temp_cache_dir):
 
     return {
         "config": config_manager,
+        "cache": cache_manager,
         "queue": queue_manager,
         "user": user_manager,
         "users": {"alice": alice, "bob": bob, "charlie": charlie},
-        "youtube": youtube_client,
+        "video_manager": video_manager,
         "streaming": mock_streaming,
         "playback": playback_controller,
     }
@@ -307,8 +306,6 @@ def test_cache_cleanup_integration(temp_db, temp_cache_dir):
     import time
     from pathlib import Path
 
-    from kbox.cache import CacheManager
-
     # Setup config with very small cache limit
     config_manager = ConfigManager(temp_db)
     config_manager.set("youtube_api_key", "test_key")
@@ -318,13 +315,8 @@ def test_cache_cleanup_integration(temp_db, temp_cache_dir):
     # Create CacheManager
     cache_manager = CacheManager(config_manager)
 
-    # Create YouTube client with cache manager
-    with patch("kbox.youtube.build") as mock_build:
-        mock_youtube = Mock()
-        mock_build.return_value = mock_youtube
-        youtube_client = YouTubeClient(config_manager, cache_manager=cache_manager)
-        youtube_client._youtube = mock_youtube
-        youtube_client._last_api_key = "test_key"
+    # Create VideoManager (auto-registers sources)
+    video_manager = VideoManager(config_manager, cache_manager)
 
     # Create cache directory with some files
     youtube_dir = Path(temp_cache_dir) / "youtube"
@@ -345,10 +337,8 @@ def test_cache_cleanup_integration(temp_db, temp_cache_dir):
     user_manager = UserManager(temp_db)
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
 
-    # Create queue manager with cache manager
-    queue_manager = QueueManager(
-        temp_db, youtube_client=youtube_client, cache_manager=cache_manager
-    )
+    # Create queue manager with video manager and cache manager
+    queue_manager = QueueManager(temp_db, video_manager=video_manager)
 
     # Add song to queue (this protects queued_video)
     queue_manager.add_song(alice, "youtube", "queued_video", "Queued Song")
