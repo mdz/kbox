@@ -27,18 +27,18 @@ WORKDIR /app
 # Create venv with access to system site-packages (for gi module)
 RUN uv venv --system-site-packages
 
-# Install dependencies using the lockfile
+# Install dependencies using the lockfile (include dev deps for testing in container)
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --locked --no-install-project --no-dev
+    uv sync --locked --no-install-project
 
 # Copy the project into the image
 COPY . /app
 
 # Install the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev
+    uv sync --locked
 
 # Fix: uv sync recreates venv without system-site-packages; restore it
 RUN sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' /app/.venv/pyvenv.cfg
