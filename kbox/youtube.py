@@ -4,29 +4,41 @@ YouTube integration for kbox.
 Handles YouTube search via Data API v3 and video download via yt-dlp.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import yt_dlp
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+if TYPE_CHECKING:
+    from .config_manager import ConfigManager
+
 
 class YouTubeClient:
     """Handles YouTube search and video download."""
 
-    def __init__(self, api_key: str, cache_directory: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: str,
+        cache_directory: Optional[str] = None,
+        config_manager: Optional[ConfigManager] = None,
+    ):
         """
         Initialize YouTubeClient.
 
         Args:
             api_key: YouTube Data API v3 key
             cache_directory: Directory for cached videos (defaults to ~/.kbox/cache)
+            config_manager: ConfigManager for runtime config access (optional)
         """
         self.logger = logging.getLogger(__name__)
         self.api_key = api_key
+        self.config_manager = config_manager
         self.youtube = build("youtube", "v3", developerKey=api_key)
 
         if cache_directory is None:
@@ -276,18 +288,21 @@ class YouTubeClient:
 
                 # Configure yt-dlp options
                 output_template = str(self.cache_directory / f"{video_id}.%(ext)s")
+
+                # Get max resolution from config (allows runtime changes)
+                max_res = 480  # default
+                if self.config_manager:
+                    max_res = self.config_manager.get_int("video_max_resolution", 480)
+
                 ydl_opts = {
-                    "format": "bestvideo+bestaudio/best",
+                    "format": f"bestvideo[height<={max_res}]+bestaudio/best",
                     "outtmpl": output_template,
                     "quiet": False,
                     "no_warnings": False,
-                    # Better compatibility with YouTube
+                    # Try multiple clients for better compatibility
                     "extractor_args": {
                         "youtube": {
-                            "player_client": [
-                                "android",
-                                "web",
-                            ],  # Try android first, fallback to web
+                            "player_client": ["android", "web"],
                         }
                     },
                     # Retry on errors

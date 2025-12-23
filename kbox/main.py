@@ -53,7 +53,9 @@ class KboxServer:
 
         # Initialize components
         self.youtube_client = YouTubeClient(
-            youtube_api_key, cache_directory=self.config_manager.get("cache_directory")
+            youtube_api_key,
+            cache_directory=self.config_manager.get("cache_directory"),
+            config_manager=self.config_manager,
         )
         self.queue_manager = QueueManager(self.database, youtube_client=self.youtube_client)
         self.user_manager = UserManager(self.database)

@@ -56,6 +56,7 @@ class ConfigManager:
         "rubberband_plugin": None,  # Overridden by platform defaults
         "youtube_api_key": None,
         "cache_directory": None,  # Will default to ~/.kbox/cache
+        "video_max_resolution": "480",  # Max video height for downloads (480, 720, 1080, etc.)
         "operator_pin": "1234",
         "default_mic_volume": "0.8",
         "default_youtube_volume": "0.8",
@@ -75,6 +76,7 @@ class ConfigManager:
         "operator_pin",
         "youtube_api_key",
         "cache_directory",
+        "video_max_resolution",
         "external_url",
         "overlay_qr_position",
         "overlay_qr_size_percent",
