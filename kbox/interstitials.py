@@ -96,7 +96,7 @@ class InterstitialGenerator:
         self._font_cache[cache_key] = font
         return font
 
-    def _create_base_image(self) -> Tuple["Image.Image", "ImageDraw.Draw"]:
+    def _create_base_image(self) -> Tuple[Any, Any]:  # Returns (Image, ImageDraw)
         """Create a base image with background color."""
         img = Image.new("RGB", (self.width, self.height), BACKGROUND_COLOR)
         draw = ImageDraw.Draw(img)
@@ -104,7 +104,7 @@ class InterstitialGenerator:
 
     def _center_text(
         self,
-        draw: "ImageDraw.Draw",
+        draw: Any,  # ImageDraw.Draw
         text: str,
         y: int,
         font: "ImageFont.FreeTypeFont",
