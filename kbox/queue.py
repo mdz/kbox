@@ -96,6 +96,12 @@ class QueueManager:
 
         # For YouTube source, use source_id (video ID)
         if item.source == "youtube":
+            if not self.youtube_client:
+                self.logger.error("YouTube client not available")
+                self.update_download_status(
+                    item.id, self.STATUS_ERROR, error_message="YouTube client not configured"
+                )
+                return
             self.youtube_client.download_video(item.source_id, item.id, status_callback=on_status)
         else:
             self.logger.error("Unsupported source type: %s", item.source)
@@ -112,6 +118,8 @@ class QueueManager:
         # First, check if file exists (download completed but callback failed)
         # Only works for YouTube source currently
         if item.source == "youtube":
+            if not self.youtube_client:
+                return
             download_path = self.youtube_client.get_download_path(item.source_id)
             if download_path and download_path.exists():
                 self.logger.info(
