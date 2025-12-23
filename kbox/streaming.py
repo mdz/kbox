@@ -755,6 +755,17 @@ class StreamingController:
                 self.text_overlay.set_property("silent", False)
                 self.logger.info("Showing notification: %s", text)
 
+                # If showing an interstitial (static image), force a seek to
+                # regenerate the frame so the text overlay appears
+                if self._is_interstitial:
+                    Gst = _get_gst()
+                    self.playbin.seek_simple(
+                        Gst.Format.TIME,
+                        Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                        0,
+                    )
+                    self.logger.debug("Forced seek to refresh interstitial frame")
+
                 # Schedule hide after duration
                 def hide_notification():
                     self._hide_notification()
@@ -779,6 +790,16 @@ class StreamingController:
                 self.text_overlay.set_property("text", "")
                 self.text_overlay.set_property("silent", True)
                 self._notification_timer = None
+
+                # If showing an interstitial, force a seek to refresh the frame
+                if self._is_interstitial:
+                    Gst = _get_gst()
+                    self.playbin.seek_simple(
+                        Gst.Format.TIME,
+                        Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                        0,
+                    )
+
                 self.logger.debug("Notification hidden")
             except Exception as e:
                 self.logger.warning("Failed to hide notification: %s", e)
