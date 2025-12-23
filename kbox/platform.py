@@ -11,9 +11,96 @@ import os
 import subprocess
 import sys
 import threading
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def list_audio_output_devices() -> List[dict]:
+    """
+    List available audio output devices using GStreamer DeviceMonitor.
+
+    Returns:
+        List of device dictionaries with 'value' (device identifier) and 'label' (display name).
+        Always includes a "System Default" option, even if GStreamer is unavailable.
+    """
+    devices = []
+    gstreamer_available = False
+
+    try:
+        import gi
+
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst
+
+        # Ensure GStreamer is initialized
+        if not Gst.is_initialized():
+            Gst.init(None)
+        gstreamer_available = True
+    except (ImportError, ValueError) as e:
+        logger.warning("GStreamer not available for device enumeration: %s", e)
+
+    if gstreamer_available:
+        monitor = None
+        try:
+            monitor = Gst.DeviceMonitor.new()
+            # Filter for audio sinks (output devices)
+            monitor.add_filter("Audio/Sink", None)
+            monitor.start()
+
+            for device in monitor.get_devices():
+                display_name = device.get_display_name()
+                props = device.get_properties()
+
+                # Get the device identifier - try different property names
+                device_id = None
+                if props:
+                    # On Linux/ALSA, look for the ALSA device string
+                    if sys.platform == "linux":
+                        # Check if this is an ALSA device
+                        device_api = props.get_string("device.api")
+                        if device_api == "alsa":
+                            # Get the actual ALSA device path (e.g., "plughw:CARD=USB,DEV=0")
+                            card = props.get_string("alsa.card")
+                            device_num = props.get_string("alsa.device") or "0"
+                            card_name = props.get_string("alsa.card_name")
+                            if card is not None:
+                                device_id = f"plughw:CARD={card},DEV={device_num}"
+                            elif card_name:
+                                # Some devices only expose the card name
+                                device_id = f"plughw:CARD={card_name},DEV={device_num}"
+                        # For non-ALSA devices (e.g., PulseAudio), device_id stays None
+                        # and falls through to the generic fallbacks below
+
+                    # On macOS, devices are typically auto-selected
+                    if device_id is None:
+                        device_id = props.get_string("device.name")
+                    if device_id is None:
+                        device_id = props.get_string("object.id")
+
+                # Skip devices we can't identify
+                if not device_id:
+                    logger.debug("Skipping device without identifier: %s", display_name)
+                    continue
+
+                devices.append({"value": device_id, "label": display_name})
+
+        except Exception as e:
+            logger.warning("Error enumerating audio devices: %s", e)
+        finally:
+            if monitor is not None:
+                monitor.stop()
+
+    # Always include a "System Default" option
+    if sys.platform == "darwin":
+        # On macOS, empty/None means use system default via autoaudiosink
+        devices.insert(0, {"value": "", "label": "System Default"})
+    else:
+        # On Linux, we can suggest common defaults
+        if not any(d["value"] == "default" for d in devices):
+            devices.insert(0, {"value": "", "label": "System Default"})
+
+    return devices
 
 
 def is_macos() -> bool:

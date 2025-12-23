@@ -590,8 +590,15 @@ def create_app(
     # Configuration endpoints
     @app.get("/api/config")
     async def get_config(config: ConfigManager = Depends(get_config_manager)):
-        """Get all configuration with editable keys metadata."""
-        return {"values": config.get_all(), "editable_keys": config.get_editable_keys()}
+        """
+        Get all configuration with rich schema metadata.
+
+        Returns:
+            - values: Current configuration values
+            - schema: Metadata for each editable key (control type, options, description)
+            - groups: Group definitions for organizing the config UI
+        """
+        return config.get_full_config()
 
     @app.patch("/api/config")
     async def update_config(

@@ -611,12 +611,19 @@ class TestConfigEndpoints:
     """Smoke tests for configuration endpoints."""
 
     def test_get_config(self, client):
-        """GET /api/config - get configuration."""
+        """GET /api/config - get configuration with schema metadata."""
         response = client.get("/api/config")
         assert response.status_code == 200
         data = response.json()
         assert "values" in data
-        assert "editable_keys" in data
+        assert "schema" in data
+        assert "groups" in data
+        # Verify schema contains expected keys
+        assert "audio_output_device" in data["schema"]
+        assert "operator_pin" in data["schema"]
+        # Verify groups are defined
+        assert "audio" in data["groups"]
+        assert "security" in data["groups"]
 
     def test_update_config_requires_operator(self, client):
         """PATCH /api/config - requires operator."""

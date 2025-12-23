@@ -494,6 +494,219 @@
             display: none;
         }
         
+        /* Configuration Screen Styles */
+        .config-container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #444;
+        }
+        
+        .config-header h2 {
+            color: #4a9eff;
+            margin: 0;
+        }
+        
+        .config-group {
+            background: #2a2a2a;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        
+        .config-group-header {
+            background: #333;
+            padding: 12px 15px;
+            font-weight: 600;
+            color: #4a9eff;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .config-group-content {
+            padding: 15px;
+        }
+        
+        .config-field {
+            margin-bottom: 20px;
+        }
+        
+        .config-field:last-child {
+            margin-bottom: 0;
+        }
+        
+        .config-field-label {
+            display: block;
+            font-weight: 500;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+        
+        .config-field-description {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+        
+        .config-field input[type="text"],
+        .config-field input[type="password"],
+        .config-field select {
+            width: 100%;
+            padding: 10px 12px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 14px;
+        }
+        
+        .config-field input[type="text"]:focus,
+        .config-field input[type="password"]:focus,
+        .config-field select:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+        
+        .config-field select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 35px;
+        }
+        
+        /* Custom option input for select with allow_custom */
+        .config-select-wrapper {
+            position: relative;
+        }
+        
+        .config-custom-input {
+            margin-top: 8px;
+        }
+        
+        /* Slider styles */
+        .config-slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .config-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            background: #444;
+            border-radius: 3px;
+            outline: none;
+        }
+        
+        .config-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #4a9eff;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .config-slider::-webkit-slider-thumb:hover {
+            background: #6bb6ff;
+        }
+        
+        .config-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #4a9eff;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .config-slider-value {
+            min-width: 50px;
+            text-align: right;
+            font-weight: 500;
+            color: #4a9eff;
+        }
+        
+        /* Position picker (4 corners) */
+        .config-position-picker {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            max-width: 200px;
+        }
+        
+        .config-position-option {
+            padding: 12px;
+            background: #1a1a1a;
+            border: 2px solid #444;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: center;
+            font-size: 0.85em;
+            color: #aaa;
+            transition: all 0.2s;
+        }
+        
+        .config-position-option:hover {
+            border-color: #666;
+            color: #fff;
+        }
+        
+        .config-position-option.selected {
+            border-color: #4a9eff;
+            background: #1a2a3a;
+            color: #4a9eff;
+        }
+        
+        /* Config actions */
+        .config-actions {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #444;
+        }
+        
+        .config-actions button {
+            margin-bottom: 10px;
+        }
+        
+        .config-message {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .config-message.success {
+            background: rgba(39, 174, 96, 0.2);
+            color: #27ae60;
+        }
+        
+        .config-message.error {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+        }
+        
+        .config-message.info {
+            background: rgba(74, 158, 255, 0.2);
+            color: #4a9eff;
+        }
+        
     </style>
 </head>
 <body>
@@ -1092,6 +1305,9 @@
             }
         }
         
+        // Store current config data for saving
+        let currentConfigData = null;
+        
         // Load configuration from server
         async function loadConfiguration() {
             const container = document.getElementById('config-form-container');
@@ -1106,34 +1322,43 @@
                 }
                 
                 const data = await response.json();
-                const config = data.values;
-                const editableKeys = data.editable_keys;
+                currentConfigData = data;
+                const { values, schema, groups } = data;
                 
-                let html = '<div style="display: flex; flex-direction: column; gap: 15px;">';
+                // Sort groups by order
+                const sortedGroups = Object.entries(groups)
+                    .sort((a, b) => a[1].order - b[1].order);
                 
-                for (const key of editableKeys) {
-                    const value = config[key] || '';
-                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                    
-                    // Special handling for sensitive fields
-                    const isPassword = key === 'operator_pin' || key === 'youtube_api_key';
-                    const inputType = isPassword ? 'password' : 'text';
-                    const displayValue = isPassword && value ? '••••••••' : value;
+                // Group schema entries by their group
+                const groupedSchema = {};
+                for (const [key, fieldSchema] of Object.entries(schema)) {
+                    const group = fieldSchema.group || 'other';
+                    if (!groupedSchema[group]) {
+                        groupedSchema[group] = [];
+                    }
+                    groupedSchema[group].push({ key, ...fieldSchema });
+                }
+                
+                // Build HTML for each group
+                let html = '<div class="config-container">';
+                
+                for (const [groupId, groupInfo] of sortedGroups) {
+                    const fields = groupedSchema[groupId];
+                    if (!fields || fields.length === 0) continue;
                     
                     html += `
-                        <div style="display: flex; flex-direction: column; gap: 5px;">
-                            <label style="color: #aaa; font-size: 0.9em;">${label}</label>
-                            <input 
-                                type="${inputType}" 
-                                id="config-${key}" 
-                                value="${isPassword ? '' : displayValue}" 
-                                placeholder="${isPassword ? (value ? '•••••••• (leave blank to keep current)' : 'Enter value') : ''}"
-                                data-original-value="${value}"
-                                data-is-password="${isPassword}"
-                                style="background: #333; border: 1px solid #555; color: #fff; padding: 8px; border-radius: 4px; font-size: 14px;"
-                                onfocus="${isPassword ? `if(this.value === '') this.placeholder = 'Enter new value';` : ''}"
-                            />
-                            ${isPassword ? `<small style="color: #888; font-size: 0.8em;">Leave blank to keep current value</small>` : ''}
+                        <div class="config-group">
+                            <div class="config-group-header">${escapeHtml(groupInfo.label)}</div>
+                            <div class="config-group-content">
+                    `;
+                    
+                    for (const field of fields) {
+                        const value = values[field.key] || '';
+                        html += renderConfigField(field.key, field, value);
+                    }
+                    
+                    html += `
+                            </div>
                         </div>
                     `;
                 }
@@ -1142,12 +1367,17 @@
                 
                 container.innerHTML = html;
                 
+                // Initialize slider value displays
+                initializeSliders();
+                
                 // Add Save and Close buttons to actions container
                 const actionsContainer = document.getElementById('config-actions-container');
                 if (actionsContainer) {
                     actionsContainer.innerHTML = `
-                        <button onclick="saveConfiguration()" style="width: 100%; padding: 12px; background: #4a9eff; color: #fff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer;">Save Configuration</button>
-                        <button onclick="toggleConfigScreen()" style="width: 100%; margin-top: 15px; background: #444; padding: 12px; border: none; border-radius: 4px; color: #fff; font-size: 16px; cursor: pointer;">✕ Close</button>
+                        <div class="config-actions">
+                            <button onclick="saveConfiguration()">Save Configuration</button>
+                            <button onclick="toggleConfigScreen()" class="secondary">Close</button>
+                        </div>
                     `;
                 }
                 
@@ -1160,26 +1390,256 @@
             }
         }
         
+        // Render a single config field based on its schema
+        function renderConfigField(key, schema, value) {
+            const description = schema.description ? 
+                `<div class="config-field-description">${escapeHtml(schema.description)}</div>` : '';
+            
+            let control = '';
+            
+            switch (schema.control) {
+                case 'select':
+                    control = renderSelectControl(key, schema, value);
+                    break;
+                case 'slider':
+                    control = renderSliderControl(key, schema, value);
+                    break;
+                case 'position_picker':
+                    control = renderPositionPicker(key, schema, value);
+                    break;
+                case 'password':
+                    control = renderPasswordControl(key, schema, value);
+                    break;
+                case 'text':
+                default:
+                    control = renderTextControl(key, schema, value);
+                    break;
+            }
+            
+            return `
+                <div class="config-field">
+                    <label class="config-field-label">${escapeHtml(schema.label)}</label>
+                    ${description}
+                    ${control}
+                </div>
+            `;
+        }
+        
+        // Render select (dropdown) control
+        function renderSelectControl(key, schema, value) {
+            const options = schema.options || [];
+            const allowCustom = schema.allow_custom || false;
+            
+            // Check if current value matches any option
+            const valueInOptions = options.some(opt => opt.value === value);
+            const showCustom = allowCustom && value && !valueInOptions;
+            
+            let optionsHtml = options.map(opt => 
+                `<option value="${escapeHtml(opt.value)}" ${opt.value === value ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`
+            ).join('');
+            
+            if (allowCustom) {
+                optionsHtml += `<option value="__custom__" ${showCustom ? 'selected' : ''}>Custom...</option>`;
+            }
+            
+            let html = `
+                <div class="config-select-wrapper">
+                    <select id="config-${key}" data-original-value="${escapeHtml(value || '')}" 
+                            ${allowCustom ? `onchange="toggleCustomInput('${key}')"` : ''}>
+                        ${optionsHtml}
+                    </select>
+            `;
+            
+            if (allowCustom) {
+                html += `
+                    <input type="text" 
+                           id="config-${key}-custom" 
+                           class="config-custom-input" 
+                           placeholder="Enter custom value..."
+                           value="${showCustom ? escapeHtml(value) : ''}"
+                           style="display: ${showCustom ? 'block' : 'none'};"
+                    />
+                `;
+            }
+            
+            html += '</div>';
+            return html;
+        }
+        
+        // Toggle custom input visibility for select with allow_custom
+        function toggleCustomInput(key) {
+            const select = document.getElementById(`config-${key}`);
+            const customInput = document.getElementById(`config-${key}-custom`);
+            if (!select || !customInput) return;
+            
+            if (select.value === '__custom__') {
+                customInput.style.display = 'block';
+                customInput.focus();
+            } else {
+                customInput.style.display = 'none';
+                customInput.value = '';
+            }
+        }
+        
+        // Render slider control
+        function renderSliderControl(key, schema, value) {
+            const min = schema.min !== undefined ? schema.min : 0;
+            const max = schema.max !== undefined ? schema.max : 100;
+            const step = schema.step !== undefined ? schema.step : 1;
+            const numValue = parseFloat(value) || min;
+            
+            return `
+                <div class="config-slider-container">
+                    <input type="range" 
+                           id="config-${key}" 
+                           class="config-slider"
+                           min="${min}" 
+                           max="${max}" 
+                           step="${step}" 
+                           value="${numValue}"
+                           data-original-value="${value || ''}"
+                           data-display-format="${schema.display_format || ''}"
+                           oninput="updateSliderDisplay('${key}')"
+                    />
+                    <span class="config-slider-value" id="config-${key}-display">
+                        ${formatSliderValue(numValue, schema.display_format)}
+                    </span>
+                </div>
+            `;
+        }
+        
+        // Format slider value for display
+        function formatSliderValue(value, format) {
+            switch (format) {
+                case 'percent':
+                    return Math.round(value * 100) + '%';
+                case 'percent_int':
+                    return Math.round(value) + '%';
+                case 'seconds':
+                    return value + 's';
+                default:
+                    return String(value);
+            }
+        }
+        
+        // Update slider display when value changes
+        function updateSliderDisplay(key) {
+            const slider = document.getElementById(`config-${key}`);
+            const display = document.getElementById(`config-${key}-display`);
+            if (!slider || !display) return;
+            
+            const format = slider.getAttribute('data-display-format') || '';
+            display.textContent = formatSliderValue(parseFloat(slider.value), format);
+        }
+        
+        // Initialize all sliders
+        function initializeSliders() {
+            document.querySelectorAll('.config-slider').forEach(slider => {
+                const key = slider.id.replace('config-', '');
+                updateSliderDisplay(key);
+            });
+        }
+        
+        // Render position picker (4 corners)
+        function renderPositionPicker(key, schema, value) {
+            const options = schema.options || [
+                { value: 'top-left', label: 'TL' },
+                { value: 'top-right', label: 'TR' },
+                { value: 'bottom-left', label: 'BL' },
+                { value: 'bottom-right', label: 'BR' }
+            ];
+            
+            const optionsHtml = options.map(opt => `
+                <div class="config-position-option ${opt.value === value ? 'selected' : ''}"
+                     data-value="${escapeHtml(opt.value)}"
+                     onclick="selectPosition('${key}', '${opt.value}')">
+                    ${escapeHtml(opt.label)}
+                </div>
+            `).join('');
+            
+            return `
+                <input type="hidden" id="config-${key}" value="${escapeHtml(value || '')}" data-original-value="${escapeHtml(value || '')}" />
+                <div class="config-position-picker">
+                    ${optionsHtml}
+                </div>
+            `;
+        }
+        
+        // Select position in position picker
+        function selectPosition(key, value) {
+            const input = document.getElementById(`config-${key}`);
+            if (!input) return;
+            
+            input.value = value;
+            
+            // Update visual selection
+            const container = input.nextElementSibling;
+            if (container) {
+                container.querySelectorAll('.config-position-option').forEach(opt => {
+                    opt.classList.toggle('selected', opt.dataset.value === value);
+                });
+            }
+        }
+        
+        // Render password control
+        function renderPasswordControl(key, schema, value) {
+            const hasValue = value && value.length > 0;
+            return `
+                <input type="password" 
+                       id="config-${key}" 
+                       value=""
+                       placeholder="${hasValue ? '•••••••• (leave blank to keep)' : 'Enter value'}"
+                       data-original-value="${escapeHtml(value || '')}"
+                       data-is-password="true"
+                />
+            `;
+        }
+        
+        // Render text control
+        function renderTextControl(key, schema, value) {
+            const placeholder = schema.placeholder || '';
+            return `
+                <input type="text" 
+                       id="config-${key}" 
+                       value="${escapeHtml(value || '')}"
+                       placeholder="${escapeHtml(placeholder)}"
+                       data-original-value="${escapeHtml(value || '')}"
+                />
+            `;
+        }
+        
         // Save configuration to server
         async function saveConfiguration() {
             const container = document.getElementById('config-form-container');
             const messageDiv = document.getElementById('config-message');
             
-            if (!container) return;
+            if (!container || !currentConfigData) return;
             
-            // Get all config inputs
-            const inputs = container.querySelectorAll('input[id^="config-"]');
             const updates = [];
             
-            for (const input of inputs) {
-                const key = input.id.replace('config-', '');
-                const newValue = input.value.trim();
+            // Iterate through schema to find all config fields
+            for (const [key, schema] of Object.entries(currentConfigData.schema)) {
+                const input = document.getElementById(`config-${key}`);
+                if (!input) continue;
+                
+                let newValue = input.value;
                 const originalValue = input.getAttribute('data-original-value') || '';
                 const isPassword = input.getAttribute('data-is-password') === 'true';
                 
-                // For password fields, only update if a new value was entered (not empty)
+                // Handle select with custom option
+                if (schema.allow_custom && newValue === '__custom__') {
+                    const customInput = document.getElementById(`config-${key}-custom`);
+                    newValue = customInput ? customInput.value.trim() : '';
+                }
+                
+                // For password fields, only update if a new value was entered
                 if (isPassword && newValue === '') {
-                    continue; // Skip unchanged password fields (left blank)
+                    continue;
+                }
+                
+                // Trim string values
+                if (typeof newValue === 'string') {
+                    newValue = newValue.trim();
                 }
                 
                 if (newValue !== originalValue) {
@@ -1188,19 +1648,13 @@
             }
             
             if (updates.length === 0) {
-                if (messageDiv) {
-                    messageDiv.innerHTML = '<div style="color: #888; padding: 10px; background: #333; border-radius: 4px;">No changes to save</div>';
-                }
+                showConfigMessage('No changes to save', 'info');
                 return;
             }
             
-            // Show saving message
-            if (messageDiv) {
-                messageDiv.innerHTML = '<div style="color: #4a9eff; padding: 10px; background: #333; border-radius: 4px;">Saving...</div>';
-            }
+            showConfigMessage('Saving...', 'info');
             
             try {
-                // Save each updated config value
                 for (const update of updates) {
                     const response = await fetch('/api/config', {
                         method: 'PATCH',
@@ -1214,18 +1668,19 @@
                     }
                 }
                 
-                // Show success message
-                if (messageDiv) {
-                    messageDiv.innerHTML = '<div style="color: #4f4; padding: 10px; background: #333; border-radius: 4px;">Configuration saved successfully</div>';
-                }
-                
-                // Reload configuration to update display
-                setTimeout(loadConfiguration, 1000);
+                showConfigMessage('Configuration saved successfully!', 'success');
+                setTimeout(loadConfiguration, 1500);
             } catch (e) {
                 console.error('Error saving configuration:', e);
-                if (messageDiv) {
-                    messageDiv.innerHTML = `<div style="color: #f44; padding: 10px; background: #333; border-radius: 4px;">Error: ${e.message}</div>`;
-                }
+                showConfigMessage('Error: ' + e.message, 'error');
+            }
+        }
+        
+        // Show config message
+        function showConfigMessage(message, type) {
+            const messageDiv = document.getElementById('config-message');
+            if (messageDiv) {
+                messageDiv.innerHTML = `<div class="config-message ${type}">${escapeHtml(message)}</div>`;
             }
         }
         
