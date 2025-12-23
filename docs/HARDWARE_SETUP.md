@@ -69,6 +69,54 @@ The mixing can happen in different places:
 
 ---
 
+## Basic Setup: HDMI to TV (No Microphones)
+
+The simplest possible setup - just a computer and a TV. Perfect for casual home karaoke where singers just sing along without amplification.
+
+### What You Need
+
+| Item | Example | Purpose |
+|------|---------|---------|
+| Computer | Raspberry Pi 5, laptop, or mini PC | Runs kbox |
+| TV | Any TV with HDMI input | Display + sound |
+| HDMI Cable | Standard HDMI cable | Connects computer to TV |
+
+That's it!
+
+### How It Works
+
+```mermaid
+flowchart LR
+    KBOX[kbox] -->|HDMI| TV[📺 TV]
+    TV --> VID[Video: Lyrics]
+    TV --> AUD[Audio: Backing Track]
+```
+
+The TV's built-in speakers play the backing track. Singers just sing into the room - no microphone, no mixing, no equipment to manage.
+
+### Setup Steps
+
+1. Connect computer to TV via HDMI
+2. Configure kbox audio output to HDMI (e.g., `plughw:CARD=vc4hdmi0`)
+3. Open kbox web UI, queue a song, and sing!
+
+### When This Works Well
+
+- **Small rooms** - Singers can be heard naturally over TV speakers
+- **Kids' parties** - Simple, nothing to break
+- **Practice sessions** - Just learning songs, no need for amplification
+- **Casual gatherings** - Low-key, no setup hassle
+
+### Limitations
+
+- No vocal amplification (fine for small spaces)
+- TV speakers may lack bass
+- Can't adjust vocal/music balance
+
+> **Tip**: If TV speakers sound thin, connect a soundbar or Bluetooth speaker to the TV for better audio quality.
+
+---
+
 ## Simple Setup: Scarlett Solo
 
 This is the most accessible setup for casual karaoke. It uses a USB audio interface to handle both audio output and microphone mixing.
