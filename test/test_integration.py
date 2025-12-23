@@ -53,12 +53,14 @@ def full_system(temp_db, temp_cache_dir):
     config_manager.set("cache_directory", temp_cache_dir)
     config_manager.set("transition_duration_seconds", "0")  # No transition delay in tests
 
-    # YouTube client (mocked)
+    # YouTube client (mocked) - uses config_manager for API key
     with patch("kbox.youtube.build") as mock_build:
         mock_youtube = Mock()
         mock_build.return_value = mock_youtube
-        youtube_client = YouTubeClient("test_key", cache_directory=temp_cache_dir)
-        youtube_client.youtube = mock_youtube
+        youtube_client = YouTubeClient(config_manager)
+        # Force initialization of the lazy client
+        youtube_client._youtube = mock_youtube
+        youtube_client._last_api_key = "test_key"
 
     # User manager
     user_manager = UserManager(temp_db)

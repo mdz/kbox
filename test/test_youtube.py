@@ -25,13 +25,30 @@ def temp_cache_dir():
 
 
 @pytest.fixture
-def youtube_client(temp_cache_dir):
+def mock_config_manager(temp_cache_dir):
+    """Create a mock ConfigManager for tests."""
+    config = Mock()
+    config.get.side_effect = lambda key, default=None: {
+        "youtube_api_key": "fake_api_key",
+        "cache_directory": temp_cache_dir,
+        "video_max_resolution": "480",
+    }.get(key, default)
+    config.get_int.side_effect = lambda key, default=None: {
+        "video_max_resolution": 480,
+    }.get(key, default)
+    return config
+
+
+@pytest.fixture
+def youtube_client(temp_cache_dir, mock_config_manager):
     """Create a YouTubeClient instance with mocked API."""
     with patch("kbox.youtube.build") as mock_build:
         mock_youtube = Mock()
         mock_build.return_value = mock_youtube
-        client = YouTubeClient("fake_api_key", cache_directory=temp_cache_dir)
-        client.youtube = mock_youtube
+        client = YouTubeClient(mock_config_manager)
+        # Force initialization of the lazy client
+        client._youtube = mock_youtube
+        client._last_api_key = "fake_api_key"
         yield client
 
 
@@ -92,14 +109,14 @@ def test_search_success(youtube_client):
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_videos_response
 
-    youtube_client.youtube.search.return_value = mock_search
-    youtube_client.youtube.videos.return_value = mock_videos
+    youtube_client._youtube.search.return_value = mock_search
+    youtube_client._youtube.videos.return_value = mock_videos
 
     # Test search
     results = youtube_client.search("test query")
 
     # Verify search was called with "karaoke" appended
-    call_args = youtube_client.youtube.search.return_value.list.call_args
+    call_args = youtube_client._youtube.search.return_value.list.call_args
     assert "karaoke" in call_args[1]["q"].lower()
 
     # Verify results
@@ -116,7 +133,7 @@ def test_search_no_results(youtube_client):
 
     mock_search = Mock()
     mock_search.list.return_value.execute.return_value = mock_search_response
-    youtube_client.youtube.search.return_value = mock_search
+    youtube_client._youtube.search.return_value = mock_search
 
     results = youtube_client.search("nonexistent")
     assert len(results) == 0
@@ -151,7 +168,7 @@ def test_get_video_info(youtube_client):
 
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_response
-    youtube_client.youtube.videos.return_value = mock_videos
+    youtube_client._youtube.videos.return_value = mock_videos
 
     info = youtube_client.get_video_info("vid1")
 
@@ -167,7 +184,7 @@ def test_get_video_info_not_found(youtube_client):
 
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_response
-    youtube_client.youtube.videos.return_value = mock_videos
+    youtube_client._youtube.videos.return_value = mock_videos
 
     info = youtube_client.get_video_info("nonexistent")
     assert info is None

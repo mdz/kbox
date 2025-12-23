@@ -107,11 +107,24 @@ def mock_playback():
 @pytest.fixture
 def mock_youtube(temp_cache_dir):
     """Create a mock YouTubeClient."""
+    # Create a mock config manager
+    mock_config = Mock()
+    mock_config.get.side_effect = lambda key, default=None: {
+        "youtube_api_key": "test_key",
+        "cache_directory": temp_cache_dir,
+        "video_max_resolution": "480",
+    }.get(key, default)
+    mock_config.get_int.side_effect = lambda key, default=None: {
+        "video_max_resolution": 480,
+    }.get(key, default)
+
     with patch("kbox.youtube.build") as mock_build:
         mock_yt = Mock()
         mock_build.return_value = mock_yt
-        client = YouTubeClient("test_key", cache_directory=temp_cache_dir)
-        client.youtube = mock_yt
+        client = YouTubeClient(mock_config)
+        # Force initialization of the lazy client
+        client._youtube = mock_yt
+        client._last_api_key = "test_key"
 
         # Mock search results
         client.search = Mock(

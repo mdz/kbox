@@ -111,28 +111,48 @@ flowchart TB
 1. **Connect the Scarlett Solo to your computer via USB**
    - The Solo will appear as an audio device
 
-2. **Configure kbox to use the Scarlett as audio output**
+2. **Disable MSD Mode (Linux only - IMPORTANT!)**
+   
+   The Scarlett Solo 3rd gen ships with "MSD Mode" (Mass Storage Device mode) enabled by default. This mode is meant for initial setup on Windows/Mac but causes **distorted/clipped audio on Linux**.
+   
+   Check if MSD mode is on:
+   ```bash
+   amixer -c USB sget 'MSD Mode'
+   ```
+   
+   If it shows `[on]`, disable it:
+   ```bash
+   amixer -c USB sset 'MSD Mode' off
+   ```
+   
+   **Then unplug and replug the Scarlett Solo.** The mode change only takes effect after re-enumeration.
+   
+   > **Note**: This setting persists in the Scarlett's firmware - you only need to do this once.
+
+3. **Configure kbox to use the Scarlett as audio output**
    - On Raspberry Pi, find the device name:
      ```bash
      aplay -l
      ```
    - Look for the Scarlett (usually `hw:CARD=USB` or similar)
-   - Set `audio_output_device` in kbox config
+   - Set `audio_output_device` in kbox config to `plughw:CARD=USB,DEV=0`
+   
+   > **Tip**: Use `plughw:` (not `hw:`) to let ALSA handle sample format conversion automatically.
 
-3. **Connect your microphone**
+4. **Connect your microphone**
    - Plug XLR cable into the Solo's Input 1
    - If using a condenser mic, enable 48V phantom power
 
-4. **Enable Direct Monitor**
+5. **Enable Direct Monitor**
    - Flip the Direct Monitor switch to ON (front panel)
 
-5. **Connect speaker**
+6. **Connect speaker**
    - Run 1/4" TRS cable from Solo's output to your powered speaker
 
-6. **Connect display**
+7. **Connect display**
    - HDMI from computer to your monitor/TV
 
-7. **Balance the mix**
+8. **Balance the mix**
    - **Mic level**: Adjust the Gain knob on the Solo (aim for green, avoid red)
    - **Music level**: Adjust in kbox web UI or system volume
 
@@ -145,7 +165,13 @@ Systems like the [TONOR TW-820](https://www.amazon.com/dp/B07RJLKBRD) (~$100) in
 - A receiver with a combined 1/4" output (both mics mixed together)
 - UHF transmission with good range (~200ft)
 
-Connect the receiver's 1/4" output to the Solo's Input 2 (instrument input), and both singers will be mixed together with the backing track via Direct Monitor.
+Connect the receiver's 1/4" output to the Solo's **Input 2 (line/instrument input)** using a standard 1/4" TS cable.
+
+> **Why Input 2, not Input 1?** The wireless receiver already has an internal preamp and outputs line-level signal. If you connect to Input 1 (mic input with XLR), you'd be double-amplifying through the Solo's mic preamp, causing distortion. Input 2 expects line-level signals and won't add extra gain.
+>
+> **INST button**: Leave it **off** (not pressed). The INST mode is for high-impedance sources like guitars; wireless receivers output low-impedance line level.
+
+Both singers will be mixed together with the backing track via Direct Monitor.
 
 ```mermaid
 flowchart TB
@@ -180,6 +206,64 @@ flowchart TB
 - **Fixed mix ratio** - 3rd gen Solo doesn't have blend control (4th gen does via software)
 
 > **Note**: When using a wireless system like the TONOR TW-820, the receiver has individual volume controls for each microphone, so you can still balance levels between singers.
+
+### Balancing Levels (Gain Staging)
+
+With multiple volume controls in the signal chain, it's important to set each one correctly. The goal is to get a strong, clean signal at each stage without clipping.
+
+**The signal chain:**
+```
+Wireless Mic → Receiver → Solo Input 2 → Solo Monitor Mix → Speaker/Amp
+                                    ↑
+kbox → USB Audio ─────────────────────┘
+```
+
+**Step-by-step level setup:**
+
+1. **Speaker/Amp: Start at low volume**
+   - Turn your powered speaker or amp to ~25% volume
+   - This protects your ears while you adjust upstream levels
+
+2. **kbox: Set to moderate level**
+   - In the kbox web UI, set YouTube volume to **0.7-0.8** (70-80%)
+   - This leaves headroom for the Solo to mix without clipping
+
+3. **Solo Monitor knob: Set to 12 o'clock**
+   - This controls the overall output level (headphones + line out)
+   - Start at the middle position
+
+4. **Start a backing track in kbox**
+   - Queue a song and let it play
+   - You should hear it through the speakers at a comfortable level
+   - If too quiet/loud, adjust the **speaker/amp volume** (not the Solo yet)
+
+5. **Wireless receiver: Set individual mic levels**
+   - Have each singer speak/sing into their mic at performance level
+   - Adjust each mic's level on the receiver so the signal is strong but not clipping
+   - Most receivers have LED indicators - aim for green, occasional yellow, no red
+
+6. **Solo Input 2 gain: Match mic level to backing track**
+   - While the backing track plays, have someone sing
+   - Adjust the Input 2 gain knob until vocals sit nicely with the music
+   - Vocals should be clearly audible but not overpower the track
+
+7. **Final balance adjustments:**
+   - **Vocals too quiet overall?** Turn up Solo Input 2 gain
+   - **Backing track too quiet?** Increase kbox volume or Solo Monitor knob
+   - **Everything too quiet?** Turn up speaker/amp
+   - **Clipping/distortion?** Reduce the level at the stage where it's occurring
+
+**Quick reference - what each control does:**
+
+| Control | Location | Affects |
+|---------|----------|---------|
+| Mic volume knobs | Wireless receiver | Individual mic levels before they reach the Solo |
+| Input 2 gain | Scarlett Solo (top) | Mic input level into the Solo's mix |
+| Monitor knob | Scarlett Solo (front) | Overall output level (headphones + line out) |
+| YouTube volume | kbox web UI | Backing track level sent to Solo via USB |
+| Speaker volume | Powered speaker/amp | Final output loudness |
+
+> **Tip**: If you're getting distortion, work backwards through the chain to find where it's happening. Each stage should have a clean signal - if one stage is too hot, reduce it there rather than compensating downstream.
 
 ---
 
@@ -376,7 +460,18 @@ On the mixer:
 
 1. Check `audio_output_device` setting in kbox config
 2. Run `aplay -l` to verify the device is recognized
-3. Test with `speaker-test -D hw:CARD=USB -c 2`
+3. Test with `speaker-test -D plughw:CARD=USB -c 2`
+
+### Distorted/clipped audio on Scarlett Solo (Linux)
+
+This is almost always caused by **MSD Mode** being enabled. The Scarlett Solo 3rd gen ships with this mode on by default.
+
+1. Check MSD mode: `amixer -c USB sget 'MSD Mode'`
+2. If it shows `[on]`, disable it: `amixer -c USB sset 'MSD Mode' off`
+3. **Unplug and replug the Scarlett** - the change requires re-enumeration
+4. Test again: `aplay -D plughw:CARD=USB,DEV=0 /usr/share/sounds/alsa/Front_Center.wav`
+
+This setting persists in firmware - you only need to do it once.
 
 ### Microphone too quiet
 

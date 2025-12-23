@@ -5,7 +5,6 @@ Initializes all components and starts the server.
 """
 
 import logging
-import sys
 
 import uvicorn
 
@@ -43,20 +42,14 @@ class KboxServer:
         # Initialize configuration manager
         self.config_manager = ConfigManager(self.database)
 
-        # Load YouTube API key
-        youtube_api_key = self.config_manager.get("youtube_api_key")
-        if not youtube_api_key:
-            logger.error(
-                "YouTube API key not configured. Please set it via the web UI or database."
+        # Initialize YouTube client (API key is loaded dynamically from config)
+        # If API key is missing, YouTube features will be unavailable but app will still run
+        self.youtube_client = YouTubeClient(self.config_manager)
+        if not self.youtube_client.is_configured():
+            logger.warning(
+                "YouTube API key not configured. YouTube search will be unavailable. "
+                "Please set the API key via the web UI (/config)."
             )
-            sys.exit(1)
-
-        # Initialize components
-        self.youtube_client = YouTubeClient(
-            youtube_api_key,
-            cache_directory=self.config_manager.get("cache_directory"),
-            config_manager=self.config_manager,
-        )
         self.queue_manager = QueueManager(self.database, youtube_client=self.youtube_client)
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database)

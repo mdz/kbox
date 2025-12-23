@@ -23,37 +23,67 @@ if TYPE_CHECKING:
 class YouTubeClient:
     """Handles YouTube search and video download."""
 
-    def __init__(
-        self,
-        api_key: str,
-        cache_directory: Optional[str] = None,
-        config_manager: Optional[ConfigManager] = None,
-    ):
+    def __init__(self, config_manager: "ConfigManager"):
         """
         Initialize YouTubeClient.
 
         Args:
-            api_key: YouTube Data API v3 key
-            cache_directory: Directory for cached videos (defaults to ~/.kbox/cache)
-            config_manager: ConfigManager for runtime config access (optional)
+            config_manager: ConfigManager for runtime config access
         """
         self.logger = logging.getLogger(__name__)
-        self.api_key = api_key
         self.config_manager = config_manager
-        self.youtube = build("youtube", "v3", developerKey=api_key)
 
-        if cache_directory is None:
-            home = Path.home()
-            cache_directory = str(home / ".kbox" / "cache")
-
-        # Use source-specific subdirectory
-        self.cache_directory = Path(cache_directory) / "youtube"
-        self.cache_directory.mkdir(parents=True, exist_ok=True)
+        # Lazy-initialized YouTube API client
+        self._youtube = None
+        self._last_api_key: Optional[str] = None
 
         # Semaphore to limit concurrent downloads to 1 (avoid abusing YouTube)
         self._download_semaphore = threading.Semaphore(1)
 
-        self.logger.info("YouTubeClient initialized, cache: %s", self.cache_directory)
+        self.logger.info("YouTubeClient initialized")
+
+    @property
+    def cache_directory(self) -> Path:
+        """Get cache directory from config, creating it if needed."""
+        cache_dir = self.config_manager.get("cache_directory")
+        if cache_dir is None:
+            cache_dir = str(Path.home() / ".kbox" / "cache")
+
+        # Use source-specific subdirectory
+        cache_path = Path(cache_dir) / "youtube"
+        cache_path.mkdir(parents=True, exist_ok=True)
+        return cache_path
+
+    def _get_youtube_client(self):
+        """
+        Get or create YouTube API client.
+
+        Returns None if API key is not configured.
+        Reinitializes client if API key has changed (allowing runtime updates).
+        """
+        api_key = self.config_manager.get("youtube_api_key")
+
+        if not api_key:
+            self._youtube = None
+            self._last_api_key = None
+            return None
+
+        # Reinitialize if API key changed
+        if api_key != self._last_api_key:
+            try:
+                self._youtube = build("youtube", "v3", developerKey=api_key)
+                self._last_api_key = api_key
+                self.logger.info("YouTube API client initialized")
+            except Exception as e:
+                self.logger.error("Failed to initialize YouTube API client: %s", e)
+                self._youtube = None
+                self._last_api_key = None
+
+        return self._youtube
+
+    def is_configured(self) -> bool:
+        """Check if YouTube API key is configured and valid."""
+        return self._get_youtube_client() is not None
 
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
         """
@@ -65,14 +95,20 @@ class YouTubeClient:
 
         Returns:
             List of video dictionaries with keys: id, title, thumbnail, duration, etc.
+            Returns empty list if API key is not configured.
         """
+        youtube = self._get_youtube_client()
+        if not youtube:
+            self.logger.warning("YouTube API key not configured, search unavailable")
+            return []
+
         # Automatically append "karaoke" to search query
         search_query = f"{query} karaoke"
         self.logger.debug("Searching YouTube: %s", search_query)
 
         try:
             # Search for videos
-            request = self.youtube.search().list(
+            request = youtube.search().list(
                 part="snippet",
                 q=search_query,
                 type="video",
@@ -89,7 +125,7 @@ class YouTubeClient:
                 return []
 
             # Get detailed information including duration
-            videos_request = self.youtube.videos().list(
+            videos_request = youtube.videos().list(
                 part="contentDetails,snippet", id=",".join(video_ids)
             )
             videos_response = videos_request.execute()
@@ -194,10 +230,15 @@ class YouTubeClient:
             video_id: YouTube video ID
 
         Returns:
-            Video dictionary with metadata, or None if not found
+            Video dictionary with metadata, or None if not found/API not configured
         """
+        youtube = self._get_youtube_client()
+        if not youtube:
+            self.logger.warning("YouTube API key not configured, video info unavailable")
+            return None
+
         try:
-            request = self.youtube.videos().list(part="contentDetails,snippet", id=video_id)
+            request = youtube.videos().list(part="contentDetails,snippet", id=video_id)
             response = request.execute()
 
             if not response.get("items"):
