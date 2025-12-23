@@ -2,6 +2,7 @@
 Unit tests for CacheManager.
 """
 
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -10,6 +11,12 @@ from unittest.mock import Mock
 import pytest
 
 from kbox.cache import CacheManager
+
+
+def _set_mtime(path: Path, seconds_ago: float) -> None:
+    """Set file mtime to a specific time in the past."""
+    mtime = time.time() - seconds_ago
+    os.utime(path, (mtime, mtime))
 
 
 @pytest.fixture
@@ -125,16 +132,19 @@ def test_get_cache_files(cache_manager, temp_cache_dir):
     youtube_dir = Path(temp_cache_dir) / "youtube"
     youtube_dir.mkdir(exist_ok=True)
 
-    # Create files with different mtimes
+    # Create files with explicit mtimes for ordering
     file1 = youtube_dir / "old_video.mp4"
     file2 = youtube_dir / "new_video.mp4"
     file3 = youtube_dir / "mid_video.webm"
 
     file1.write_bytes(b"x" * 1000)
-    time.sleep(0.05)
+    _set_mtime(file1, 3600)  # 1 hour ago (oldest)
+
     file3.write_bytes(b"x" * 2000)
-    time.sleep(0.05)
+    _set_mtime(file3, 1800)  # 30 min ago (middle)
+
     file2.write_bytes(b"x" * 500)
+    _set_mtime(file2, 60)  # 1 min ago (newest)
 
     cache_files = cache_manager._get_cache_files()
 
@@ -195,7 +205,7 @@ def test_cleanup_over_limit(temp_cache_dir):
 
     old_file = youtube_dir / "old.mp4"
     old_file.write_bytes(b"x" * 1000)
-    time.sleep(0.05)
+    _set_mtime(old_file, 3600)  # 1 hour ago
 
     new_file = youtube_dir / "new.mp4"
     new_file.write_bytes(b"x" * 1000)
@@ -224,7 +234,7 @@ def test_cleanup_respects_protected_keys(temp_cache_dir):
 
     protected_file = youtube_dir / "protected_vid.mp4"
     protected_file.write_bytes(b"x" * 1000)
-    time.sleep(0.05)
+    _set_mtime(protected_file, 3600)  # 1 hour ago (older, would be evicted first)
 
     unprotected_file = youtube_dir / "unprotected_vid.mp4"
     unprotected_file.write_bytes(b"x" * 1000)
@@ -257,7 +267,7 @@ def test_cleanup_same_id_different_sources(temp_cache_dir):
 
     youtube_file = youtube_dir / "vid123.mp4"
     youtube_file.write_bytes(b"x" * 1000)
-    time.sleep(0.05)
+    _set_mtime(youtube_file, 3600)  # 1 hour ago (older, would be evicted first)
 
     vimeo_file = vimeo_dir / "vid123.mp4"
     vimeo_file.write_bytes(b"x" * 1000)

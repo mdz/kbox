@@ -333,7 +333,9 @@ def test_cache_cleanup_integration(temp_db, temp_cache_dir):
     # Create old cached file (should be evicted)
     old_file = youtube_dir / "old_video.mp4"
     old_file.write_bytes(b"x" * 1000)
-    time.sleep(0.05)
+    # Set mtime to 1 hour ago to ensure it's older
+    old_mtime = time.time() - 3600
+    os.utime(old_file, (old_mtime, old_mtime))
 
     # Create file that will be in queue (should be protected)
     queued_file = youtube_dir / "queued_video.mp4"
