@@ -51,7 +51,9 @@ class InterstitialGenerator:
         # Font paths (will try system fonts)
         self._font_cache: dict[tuple[int, bool], Any] = {}
 
-    def _get_font(self, size: int, bold: bool = False) -> "ImageFont.FreeTypeFont":
+    def _get_font(
+        self, size: int, bold: bool = False
+    ) -> Any:  # Returns FreeTypeFont or Font (default)
         """Get a font at the specified size, with caching."""
         cache_key = (size, bold)
         if cache_key in self._font_cache:

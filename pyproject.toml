@@ -61,8 +61,8 @@ warn_return_any = false  # Too noisy for database/external library returns
 warn_unused_configs = true
 ignore_missing_imports = true  # GStreamer/gi has no stubs
 exclude = ["test/"]
-# Will enable checks one at a time, starting with var-annotated
-disable_error_code = ["attr-defined", "union-attr", "valid-type", "assignment", "return-value"]
+# Will enable checks one at a time: var-annotated ✅, return-value (in progress)
+disable_error_code = ["attr-defined", "union-attr", "valid-type", "assignment"]
 
 
 
