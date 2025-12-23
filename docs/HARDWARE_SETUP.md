@@ -108,51 +108,28 @@ flowchart TB
 
 ### Scarlett Solo Controls Reference
 
-Both 3rd and 4th generation Scarlett Solo units work with kbox. The layout differs slightly between generations.
+Both 3rd and 4th generation Scarlett Solo units work with kbox. They have identical inputs/outputs, just arranged differently.
 
-#### 3rd Generation (2019-2022)
+| | 3rd Gen | 4th Gen |
+|---|---------|---------|
+| | ![3rd Gen](Scarlett-Solo-3rd-gen.jpeg) | ![4th Gen](Scarlett-Solo-4th-gen.jpeg) |
 
-![Scarlett Solo 3rd Gen - front and back](Scarlett-Solo-3rd-gen.jpeg)
+**Inputs (same on both generations):**
+- **XLR input** - For wired microphones (has preamp + 48V phantom power)
+- **1/4" input** - For line-level sources like wireless mic receivers (leave INST button OFF)
 
-**Front panel (left to right):**
-- **Input 1** (XLR) - Connect wired microphones here
-- **Gain 1** knob - Adjusts Input 1 level (green LED ring)
-- **48V** button - Phantom power for condenser mics
-- **AIR** button - High-frequency brightness (optional)
-- **Input 2** (1/4" jack) - Connect wireless mic receiver here
-- **Gain 2** knob - Adjusts Input 2 level (red LED ring)
-- **INST** button - Leave OFF for wireless mics
-- **Monitor** knob - Output volume (headphones + rear outputs)
-- **Direct Monitor** button - Must be ON for karaoke
-- **Headphone jack** (1/4")
+**Outputs:**
+- **1/4" line outputs** (Left/Right) - Connect to powered speakers
+- **Headphone jack** (1/4") - For monitoring
 
-**Rear panel:** USB-C, dual 1/4" TRS line outputs (Left/Right)
+**Controls:**
+- **Gain knobs** - One for each input; watch the LED ring (green = good, red = clipping)
+- **48V button** - Enables phantom power for condenser mics
+- **AIR button** - Adds high-frequency brightness (optional)
+- **Monitor/Output knob** - Controls output volume
+- **Direct Monitor button** - Mixes inputs with USB playback (must be ON for karaoke)
 
-#### 4th Generation (2022+)
-
-![Scarlett Solo 4th Gen - front and back](Scarlett-Solo-4th-gen.jpeg)
-
-**Front panel (left to right):**
-- **Input 1** (1/4" jack) - For instruments or line sources
-- **Gain 1** knob - Adjusts Input 1 level (green LED ring)
-- **Inst** button - Instrument/line mode for Input 1
-- **48V** button - Phantom power for condenser mics
-- **Gain 2** knob - Adjusts Input 2 level (green LED ring)
-- **Air** button - High-frequency brightness
-- **Output** knob - Output volume
-- **Direct** button - Must be ON for karaoke
-- **Headphone jack** (1/4")
-
-**Rear panel:** USB-C, dual 1/4" TRS line outputs, **Input 2** (XLR - for microphones!)
-
-> **Key difference for 4th gen:** The XLR microphone input moved to the **back panel**. Connect your wired mic to the rear XLR jack (Input 2), not the front. The front 1/4" jacks are for instruments/line sources.
-
-#### Which Input to Use?
-
-| Mic Type | 3rd Gen | 4th Gen |
-|----------|---------|---------|
-| Wired XLR mic | Front - Input 1 (XLR) | **Rear** - Input 2 (XLR) |
-| Wireless receiver (1/4") | Front - Input 2 | Front - Input 1 |
+> **Note:** The physical location of each input differs between generations (see photos), but the functionality is identical. Just look for the XLR jack for wired mics and the 1/4" jack for wireless receivers.
 
 ### Setup Steps
 
@@ -189,17 +166,14 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. The layout diffe
 
 4. **Connect your microphone(s)**
 
-   **Option A: Single wired XLR mic**
-   - *3rd gen:* Plug XLR into **front Input 1** (XLR jack)
-   - *4th gen:* Plug XLR into **rear Input 2** (the XLR jack on the back)
+   **Option A: Wired XLR mic** → connect to the **XLR input**
    - Press **48V** for condenser mics; dynamic mics (SM58, XM8500) don't need it
    
-   **Option B: Wireless mic system (1/4" receiver output)**
-   - *3rd gen:* Connect to **front Input 2** (1/4" jack), leave INST button OFF
-   - *4th gen:* Connect to **front Input 1** (1/4" jack), leave Inst button OFF
+   **Option B: Wireless mic system** → connect receiver to the **1/4" input**
+   - Leave the **INST** button OFF (wireless receivers output line level)
    - Works great for dual-mic systems like the TONOR TW-820
    
-   > **Why different inputs?** The XLR input has a mic preamp for low-level signals. The 1/4" inputs expect line-level signals. Wireless receivers already have internal preamps, so connect them to the 1/4" line input to avoid double-amplification.
+   > **Why different inputs?** The XLR input has a mic preamp for low-level signals. The 1/4" input expects line-level signals. Wireless receivers have internal preamps, so using the XLR input would double-amplify and cause distortion.
 
 5. **Enable Direct Monitor**
    - Press the **Direct Monitor** button (front panel, far right) so it lights up
@@ -213,11 +187,7 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. The layout diffe
    - HDMI from computer to your monitor/TV
 
 8. **Balance the mix**
-   - **Mic level**: Adjust the gain knob for your mic input while singing:
-     - *3rd gen wired mic:* **Gain 1** knob (green LED ring)
-     - *3rd gen wireless:* **Gain 2** knob (red LED ring)
-     - *4th gen wired mic:* **Gain 2** knob (green LED ring)
-     - *4th gen wireless:* **Gain 1** knob (green LED ring)
+   - **Mic level**: Adjust the gain knob for your mic input while singing
      - Watch the LED ring: green = good, amber = okay, red = clipping
    - **Music level**: Adjust in kbox web UI (YouTube volume slider)
    - **Overall level**: Use the **Monitor/Output** knob to control speakers/headphones
@@ -226,7 +196,7 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. The layout diffe
 
 #### Option A: Single Wired Microphone
 
-The simplest setup - one XLR mic into the XLR input (3rd gen: front Input 1, 4th gen: rear Input 2).
+The simplest setup - one XLR mic into the XLR input.
 
 ```mermaid
 flowchart TB
@@ -253,7 +223,7 @@ flowchart TB
 
 #### Option B: Wireless Microphone System
 
-For two singers, use a wireless system with a combined 1/4" output into the line input (3rd gen: front Input 2, 4th gen: front Input 1).
+For two singers, use a wireless system with a combined 1/4" output into the 1/4" input.
 
 ```mermaid
 flowchart TB
