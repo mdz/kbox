@@ -772,8 +772,6 @@
             // Existing user - register/update with server to ensure display name is current
             registerUser(userId, userName);
         }
-        // @ts-ignore - Jinja2 template syntax
-        {% endif %}
         
         // Register user with server (creates or updates)
         async function registerUser(uid, displayName) {
