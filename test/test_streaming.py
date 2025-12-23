@@ -3,6 +3,8 @@ Integration tests for StreamingController.
 
 These tests use fakesinks for headless testing and verify pipeline state
 transitions, pitch shifting, and error handling without requiring hardware.
+
+All tests in this module require GStreamer and will be skipped if unavailable.
 """
 
 import logging
@@ -13,6 +15,9 @@ from pathlib import Path
 from unittest.mock import create_autospec, MagicMock
 
 import pytest
+
+# Mark all tests in this module as requiring GStreamer
+pytestmark = pytest.mark.gstreamer
 
 from kbox.database import Database
 from kbox.config_manager import ConfigManager
