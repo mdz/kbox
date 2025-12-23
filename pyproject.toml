@@ -2,7 +2,7 @@
 name = "kbox"
 version = "0.1.0"
 description = "Self-contained open-source karaoke system"
-requires-python = ">=3.9"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -46,7 +46,7 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -56,7 +56,7 @@ ignore = ["E501"]  # line too long - let formatter handle it
 "test/*" = ["E402", "E722", "F841"]  # E402: imports after pytestmark, E722: bare except, F841: unused vars for setup
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.13"
 warn_return_any = false  # Too noisy for database/external library returns
 warn_unused_configs = true
 ignore_missing_imports = true  # GStreamer/gi has no stubs
