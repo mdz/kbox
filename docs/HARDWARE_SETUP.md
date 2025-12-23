@@ -236,9 +236,9 @@ flowchart TB
 ### Limitations
 
 - **No reverb** - Dry vocal sound (some find this acceptable for casual use)
-- **Fixed mix ratio** - 3rd gen Solo doesn't have blend control (4th gen does via software)
+- **No per-channel EQ** - Can't shape vocal tone (a mixer provides this)
 
-> **Note**: When using a wireless system like the TONOR TW-820, the receiver has individual volume controls for each microphone, so you can still balance levels between singers.
+> **Note**: You can adjust the mix balance between vocals and backing track using the Input 2 gain knob (for wireless) or Input 1 gain knob (for wired mic). The USB playback level is controlled via kbox's volume setting.
 
 ### Balancing Levels (Gain Staging)
 
