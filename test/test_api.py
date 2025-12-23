@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackController
+from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
 from kbox.user import UserManager
 from kbox.web.server import create_app
@@ -68,6 +68,43 @@ def mock_streaming():
 
 
 @pytest.fixture
+def mock_playback():
+    """Create a mock PlaybackController.
+
+    API tests should use a mock playback controller since they're testing
+    the API layer, not playback logic. Only test_playback and test_integration
+    should use the real PlaybackController.
+    """
+    playback = Mock(spec=PlaybackController)
+    # get_status returns a dict with state info
+    playback.get_status.return_value = {
+        "state": PlaybackState.IDLE.value,
+        "current_song": None,
+        "position_seconds": 0,
+        "duration_seconds": 0,
+    }
+    # Movement operations return bool
+    playback.move_to_next.return_value = True
+    playback.move_to_end.return_value = True
+    playback.bump_down.return_value = True
+    # Playback control operations return bool
+    playback.play.return_value = False  # False = no songs to play
+    playback.pause.return_value = True
+    playback.stop_playback.return_value = True
+    playback.skip.return_value = True
+    playback.previous.return_value = True
+    playback.jump_to_song.return_value = True
+    playback.restart.return_value = True
+    playback.seek_relative.return_value = True
+    # Pitch control
+    playback.set_pitch.return_value = False  # False = no song playing
+    # Properties
+    playback.state = PlaybackState.IDLE
+    playback.current_song_id = None
+    return playback
+
+
+@pytest.fixture
 def mock_youtube(temp_cache_dir):
     """Create a mock YouTubeClient."""
     with patch("kbox.youtube.build") as mock_build:
@@ -93,8 +130,13 @@ def mock_youtube(temp_cache_dir):
 
 
 @pytest.fixture
-def app_components(temp_db, temp_cache_dir, mock_streaming, mock_youtube):
-    """Create all app components with mocked dependencies."""
+def app_components(temp_db, temp_cache_dir, mock_streaming, mock_youtube, mock_playback):
+    """Create all app components with mocked dependencies.
+
+    Uses mock playback controller since API tests focus on the HTTP layer,
+    not playback logic. Only test_playback and test_integration use the
+    real PlaybackController.
+    """
     config_manager = ConfigManager(temp_db)
     config_manager.set("youtube_api_key", "test_key")
     config_manager.set("cache_directory", temp_cache_dir)
@@ -105,17 +147,13 @@ def app_components(temp_db, temp_cache_dir, mock_streaming, mock_youtube):
     queue_manager = QueueManager(temp_db)
     history_manager = HistoryManager(temp_db)
 
-    playback_controller = PlaybackController(queue_manager, mock_streaming, config_manager)
-    # Stop position tracking thread
-    playback_controller._tracking_position = False
-
     return {
         "config": config_manager,
         "queue": queue_manager,
         "user": user_manager,
         "youtube": mock_youtube,
         "streaming": mock_streaming,
-        "playback": playback_controller,
+        "playback": mock_playback,
         "history": history_manager,
     }
 
