@@ -294,7 +294,7 @@ class InterstitialGenerator:
         # Or call it a night
         alt_font = self._get_font(36)
         self._center_text(
-            draw, "...or call it a night 🌙", self.height // 2 + 80, alt_font, SECONDARY_TEXT_COLOR
+            draw, "...or call it a night?", self.height // 2 + 80, alt_font, SECONDARY_TEXT_COLOR
         )
 
         # QR code
