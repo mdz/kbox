@@ -879,7 +879,7 @@ class StreamingController:
                     alpha,
                 )
             except Exception as prop_err:
-                self.logger.debug("Could not read overlay properties: %s", prop_err)
+                self.logger.warning("Could not read overlay properties: %s", prop_err)
 
         except Exception as e:
             self.logger.warning("Failed to update QR overlay: %s", e)
