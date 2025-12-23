@@ -1806,6 +1806,7 @@
             renderSongSettings('now-playing-content', {
                 title: currentSong.title,
                 thumbnail_url: currentSong.thumbnail_url,
+                user_id: currentSong.user_id,
                 user_name: currentSong.user_name,
                 duration_seconds: currentSong.duration_seconds,
                 position_seconds: statusData.position_seconds,
@@ -1891,8 +1892,9 @@
             
             const currentSong = statusData.current_song;
             
-            // Find upcoming songs (non-played, non-current)
-            const upcomingSongs = queue.filter(item => !item.is_current && !item.is_played);
+            // Queue is already ordered by position. Find current song's index, everything after is upcoming.
+            const currentIndex = queue.findIndex(item => item.is_current);
+            const upcomingSongs = currentIndex >= 0 ? queue.slice(currentIndex + 1) : queue;
             const nextSong = upcomingSongs[0];
             
             // Helper to format time
