@@ -17,21 +17,31 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 if TYPE_CHECKING:
+    from .cache import CacheManager
     from .config_manager import ConfigManager
+
+# Source identifier for cache management
+SOURCE_ID = "youtube"
 
 
 class YouTubeClient:
     """Handles YouTube search and video download."""
 
-    def __init__(self, config_manager: "ConfigManager"):
+    def __init__(
+        self,
+        config_manager: "ConfigManager",
+        cache_manager: Optional["CacheManager"] = None,
+    ):
         """
         Initialize YouTubeClient.
 
         Args:
             config_manager: ConfigManager for runtime config access
+            cache_manager: CacheManager for cache operations (optional for backwards compat)
         """
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
+        self.cache_manager = cache_manager
 
         # Lazy-initialized YouTube API client
         self._youtube = None
@@ -44,13 +54,16 @@ class YouTubeClient:
 
     @property
     def cache_directory(self) -> Path:
-        """Get cache directory from config, creating it if needed."""
+        """Get cache directory for YouTube videos."""
+        if self.cache_manager:
+            return self.cache_manager.get_source_directory(SOURCE_ID)
+
+        # Fallback for backwards compatibility (no cache_manager)
         cache_dir = self.config_manager.get("cache_directory")
         if cache_dir is None:
             cache_dir = str(Path.home() / ".kbox" / "cache")
 
-        # Use source-specific subdirectory
-        cache_path = Path(cache_dir) / "youtube"
+        cache_path = Path(cache_dir) / SOURCE_ID
         cache_path.mkdir(parents=True, exist_ok=True)
         return cache_path
 
@@ -266,18 +279,24 @@ class YouTubeClient:
             self.logger.error("Error getting video info: %s", e, exc_info=True)
             return None
 
-    def get_download_path(self, video_id: str) -> Optional[Path]:
+    def get_download_path(self, video_id: str, touch: bool = True) -> Optional[Path]:
         """
         Get the path to a downloaded video file if it exists.
 
         Args:
             video_id: YouTube video ID
+            touch: If True, update file mtime for LRU tracking (default True)
 
         Returns:
             Path to video file if exists, None otherwise
         """
-        # Search for files with this video_id as prefix
-        for ext in [".mp4", ".mkv", ".webm"]:
+        if self.cache_manager:
+            return self.cache_manager.get_file_path(SOURCE_ID, video_id, touch=touch)
+
+        # Fallback for backwards compatibility
+        from .cache import VIDEO_EXTENSIONS
+
+        for ext in VIDEO_EXTENSIONS:
             path = self.cache_directory / f"{video_id}{ext}"
             if path.exists():
                 return path
@@ -293,7 +312,9 @@ class YouTubeClient:
         Returns:
             True if video is cached
         """
-        return self.get_download_path(video_id) is not None
+        if self.cache_manager:
+            return self.cache_manager.is_cached(SOURCE_ID, video_id)
+        return self.get_download_path(video_id, touch=False) is not None
 
     def download_video(
         self,
@@ -335,7 +356,10 @@ class YouTubeClient:
                     status_callback("downloading", None, None)
 
                 # Configure yt-dlp options
-                output_template = str(self.cache_directory / f"{video_id}.%(ext)s")
+                if self.cache_manager:
+                    output_template = self.cache_manager.get_output_template(SOURCE_ID, video_id)
+                else:
+                    output_template = str(self.cache_directory / f"{video_id}.%(ext)s")
 
                 # Get max resolution from config (allows runtime changes)
                 max_res = 480  # default

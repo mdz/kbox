@@ -7,12 +7,13 @@ Handles song queue operations with persistence and download management.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
+    from .cache import CacheManager
     from .youtube import YouTubeClient
 
 
@@ -25,18 +26,25 @@ class QueueManager:
     STATUS_READY = "ready"
     STATUS_ERROR = "error"
 
-    def __init__(self, database: Database, youtube_client: Optional["YouTubeClient"] = None):
+    def __init__(
+        self,
+        database: Database,
+        youtube_client: Optional["YouTubeClient"] = None,
+        cache_manager: Optional["CacheManager"] = None,
+    ):
         """
         Initialize QueueManager.
 
         Args:
             database: Database instance for persistence
             youtube_client: YouTubeClient for downloading videos (optional)
+            cache_manager: CacheManager for cache cleanup (optional)
         """
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
         self.youtube_client = youtube_client
+        self.cache_manager = cache_manager
         self.logger = logging.getLogger(__name__)
 
         # Download monitoring
@@ -150,6 +158,8 @@ class QueueManager:
         if status == "ready" and path:
             self.update_download_status(item_id, self.STATUS_READY, download_path=path)
             self.logger.info("Download complete for queue item %s: %s", item_id, path)
+            # Trigger cache cleanup after successful download
+            self._cleanup_cache()
         elif status == "error" and error:
             self.update_download_status(item_id, self.STATUS_ERROR, error_message=error)
             self.logger.error("Download failed for queue item %s: %s", item_id, error)
@@ -168,6 +178,27 @@ class QueueManager:
                 self.logger.warning("Download monitor thread did not stop within timeout")
 
         self.logger.info("Download monitor stopped")
+
+    def _get_protected_cache_keys(self) -> Set[Tuple[str, str]]:
+        """
+        Get set of (source, source_id) tuples that should not be evicted from cache.
+
+        Returns:
+            Set of (source, source_id) tuples for all unplayed items in queue
+        """
+        queue = self.get_queue(include_played=False)
+        return {(item.source, item.source_id) for item in queue}
+
+    def _cleanup_cache(self) -> None:
+        """Trigger cache cleanup with queue items protected from eviction."""
+        if not self.cache_manager:
+            return
+
+        try:
+            protected = self._get_protected_cache_keys()
+            self.cache_manager.cleanup(protected)
+        except Exception as e:
+            self.logger.error("Error during cache cleanup: %s", e, exc_info=True)
 
     # =========================================================================
     # Queue Operations

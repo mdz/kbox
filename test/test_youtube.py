@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from kbox.cache import CacheManager
 from kbox.youtube import YouTubeClient
 
 
@@ -32,20 +33,28 @@ def mock_config_manager(temp_cache_dir):
         "youtube_api_key": "fake_api_key",
         "cache_directory": temp_cache_dir,
         "video_max_resolution": "480",
+        "cache_max_size_gb": "10",
     }.get(key, default)
     config.get_int.side_effect = lambda key, default=None: {
         "video_max_resolution": 480,
+        "cache_max_size_gb": 10,
     }.get(key, default)
     return config
 
 
 @pytest.fixture
-def youtube_client(temp_cache_dir, mock_config_manager):
-    """Create a YouTubeClient instance with mocked API."""
+def cache_manager(mock_config_manager):
+    """Create a CacheManager instance."""
+    return CacheManager(mock_config_manager)
+
+
+@pytest.fixture
+def youtube_client(temp_cache_dir, mock_config_manager, cache_manager):
+    """Create a YouTubeClient instance with mocked API and CacheManager."""
     with patch("kbox.youtube.build") as mock_build:
         mock_youtube = Mock()
         mock_build.return_value = mock_youtube
-        client = YouTubeClient(mock_config_manager)
+        client = YouTubeClient(mock_config_manager, cache_manager=cache_manager)
         # Force initialization of the lazy client
         client._youtube = mock_youtube
         client._last_api_key = "fake_api_key"
