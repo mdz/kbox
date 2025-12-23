@@ -520,6 +520,176 @@ On the mixer:
 
 ---
 
+## Pro Setup: Karaoke Bar / Venue
+
+This setup is designed for dedicated karaoke venues or serious home installations with multiple performers, professional PA, and a polished audience experience.
+
+### What You Need
+
+| Item | Example | Purpose |
+|------|---------|---------|
+| Computer | Raspberry Pi 5 or mini PC | Runs kbox |
+| Digital Mixer | Yamaha MG12XU, Allen & Heath ZED-12FX | Full mixing with effects, USB audio |
+| Wired Microphones | 2-4x Shure SM58 or similar | Reliable, no batteries, professional sound |
+| Mic Stands | Boom stands or straight stands | Hands-free option for performers |
+| PA System | Powered speakers (QSC, JBL PRX) or amp + passive speakers | Main sound for audience |
+| Stage Monitors | 1-2 wedge monitors | Audio feedback for performers |
+| Projector | High-brightness (3000+ lumens) | Main lyrics display for audience |
+| Confidence Monitors | 2-3 small displays or TVs | Lyrics visible from any stage position |
+| HDMI Splitter | 1-in-4-out | Distributes video to all displays |
+| HDMI Audio Injector | Monoprice Blackbird or similar | Combines mixer audio with video |
+| XLR Cables | Various lengths | Connect mics to mixer |
+| Speaker Cables | XLR or 1/4" as needed | Connect mixer to PA |
+
+### Signal Flow
+
+```mermaid
+flowchart TB
+    subgraph kbox["kbox (Raspberry Pi)"]
+        SW[kbox Software]
+    end
+    
+    subgraph mixer["Digital Mixer"]
+        CH1[Ch 1-4: Mics]
+        USB[USB Input: Backing Track]
+        FX[Effects: Reverb]
+        MAIN[Main Mix]
+        AUX[Aux/Monitor Send]
+    end
+    
+    subgraph audio_out["Audio Outputs"]
+        PA[🔊 PA Speakers<br/>Audience]
+        MON[🔊 Stage Monitors<br/>Performers]
+    end
+    
+    subgraph video_out["Video Outputs"]
+        SPLIT[HDMI Splitter]
+        PROJ[📽️ Projector<br/>Audience]
+        CM1[🖥️ Confidence Monitor 1]
+        CM2[🖥️ Confidence Monitor 2]
+    end
+    
+    MIC1[🎤 Mic 1] --> CH1
+    MIC2[🎤 Mic 2] --> CH1
+    MIC3[🎤 Mic 3] --> CH1
+    MIC4[🎤 Mic 4] --> CH1
+    
+    kbox -->|USB Audio| USB
+    CH1 --> FX
+    USB --> MAIN
+    FX --> MAIN
+    CH1 --> AUX
+    
+    MAIN --> PA
+    AUX --> MON
+    
+    kbox -->|HDMI| INJ[HDMI Audio Injector]
+    MAIN -->|Analog| INJ
+    INJ --> SPLIT
+    SPLIT --> PROJ
+    SPLIT --> CM1
+    SPLIT --> CM2
+```
+
+### Room Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          BACK OF ROOM                               │
+│                                                                     │
+│         ┌─────────────────────────────────────────────┐             │
+│         │              PROJECTION SCREEN              │             │
+│         │            (high-brightness projector)      │             │
+│         └─────────────────────────────────────────────┘             │
+│                                                                     │
+│    🔊 PA Speaker (L)                           PA Speaker (R) 🔊    │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                           STAGE AREA                                │
+│                                                                     │
+│   ┌─────────┐      🎤 PERFORMER(S) 🎤      ┌─────────┐              │
+│   │ Monitor │      (facing audience)       │ Monitor │              │
+│   │   (L)   │                              │   (R)   │              │
+│   └─────────┘                              └─────────┘              │
+│                                                                     │
+│         ┌────────┐              ┌────────┐                          │
+│         │Confid. │              │Confid. │                          │
+│         │Mon. 1  │              │Mon. 2  │                          │
+│         └────────┘              └────────┘                          │
+│                                                                     │
+│    🔊 Stage Wedge (L)                       Stage Wedge (R) 🔊     │
+│                                                                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│                            AUDIENCE                                 │
+│                          (facing stage)                             │
+│                                                                     │
+│                    ┌─────────────────────┐                          │
+│                    │   MIXER / CONTROL   │                          │
+│                    │       BOOTH         │                          │
+│                    └─────────────────────┘                          │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Setup Details
+
+#### Microphone Setup
+
+- **Wired mics are preferred** - No batteries to manage, no wireless interference, consistent sound
+- Use **Shure SM58** or equivalent - industry standard, nearly indestructible, great vocal rejection
+- Each mic gets its own mixer channel for independent EQ and effects
+- Keep spare mics and cables on hand
+
+#### Mixer Configuration
+
+1. **Mic channels (1-4)**:
+   - Set gain so peaks hit -6dB to -3dB
+   - Add high-pass filter (80-100Hz) to cut rumble
+   - Apply gentle compression if available
+   - Send to effects bus for reverb
+
+2. **USB channel (backing track)**:
+   - No EQ needed (YouTube audio is already mastered)
+   - Set level to match typical vocal levels
+
+3. **Effects**:
+   - Light reverb on vocals (room or plate, 1-2 second decay)
+   - Avoid heavy effects that muddy the sound
+
+4. **Aux sends**:
+   - Create a monitor mix for stage wedges
+   - Performers often want more vocals and less backing track in monitors
+
+#### Multiple Confidence Monitors
+
+With multiple performers on stage, a single monitor isn't visible to everyone:
+
+- **2-3 monitors** positioned around the stage ensures lyrics are always visible
+- Use an **HDMI splitter** to send the same video to all displays
+- Small 24-32" monitors work well and are affordable
+- Position at performer eye level, angled toward stage
+
+#### PA Considerations
+
+- **Powered speakers** (QSC K12.2, JBL PRX, etc.) are simplest - just connect and go
+- **Position for audience**, not performers - PA faces the crowd
+- **Stage monitors (wedges)** point at performers so they can hear themselves
+- Separate monitor mix prevents feedback - performers get what they need without blasting the audience
+
+### Why This Setup?
+
+| Benefit | Explanation |
+|---------|-------------|
+| **Reliability** | Wired mics don't run out of batteries or suffer interference |
+| **Scalability** | Easy to add more mics as needed |
+| **Professional sound** | Proper PA and monitoring, mixer effects |
+| **Visibility** | Multiple confidence monitors cover the whole stage |
+| **Separation** | Monitor mix independent from house mix |
+| **Durability** | SM58s survive drops, drinks, and abuse |
+
+---
+
 ## Troubleshooting
 
 ### No audio from kbox
