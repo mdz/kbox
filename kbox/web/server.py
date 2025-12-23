@@ -162,18 +162,30 @@ def create_app(
         playback: PlaybackController = Depends(get_playback_controller),
     ):
         """Get current queue with current/played flags for UI rendering."""
+        from dataclasses import asdict
+        
         # Get all queue items (including played ones for navigation)
-        queue = queue_mgr.get_queue(include_played=True)
+        queue_items = queue_mgr.get_queue(include_played=True)
 
         # Get current song from playback status
         status = playback.get_status()
         current_song = status.get("current_song")
-        current_song_id = current_song["id"] if current_song else None
+        current_song_id = current_song.get("id") if current_song else None
 
-        # Add flags for UI rendering
-        for item in queue:
-            item["is_current"] = (item["id"] == current_song_id)
-            item["is_played"] = (item.get("played_at") is not None)
+        # Convert QueueItem objects to dicts and add flags for UI rendering
+        queue = []
+        for item in queue_items:
+            item_dict = asdict(item)
+            # Flatten metadata and settings for easier frontend access
+            item_dict["title"] = item.metadata.title
+            item_dict["duration_seconds"] = item.metadata.duration_seconds
+            item_dict["thumbnail_url"] = item.metadata.thumbnail_url
+            item_dict["channel"] = item.metadata.channel
+            item_dict["pitch_semitones"] = item.settings.pitch_semitones
+            # Add UI flags
+            item_dict["is_current"] = (item.id == current_song_id)
+            item_dict["is_played"] = (item.played_at is not None)
+            queue.append(item_dict)
 
         return {
             "queue": queue,
@@ -189,7 +201,9 @@ def create_app(
         """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
         # Get settings from history (assumes YouTube source)
         settings = history_mgr.get_last_settings('youtube', youtube_video_id, user_id)
-        return {"settings": settings}
+        if settings:
+            return {"settings": {"pitch_semitones": settings.pitch_semitones}}
+        return {"settings": None}
 
     @app.post("/api/queue")
     async def add_song(
@@ -201,13 +215,14 @@ def create_app(
     ):
         """Add song to queue."""
         try:
-            # Get user's display name for notification
+            # Get user (they should already exist from registration)
             user = user_mgr.get_user(request_data.user_id)
-            display_name = user['display_name'] if user else 'Someone'
+            if not user:
+                raise HTTPException(status_code=400, detail="User not found. Please refresh the page.")
             
             # Add song with source-agnostic schema
             item_id = queue_mgr.add_song(
-                user_id=request_data.user_id,
+                user=user,
                 source='youtube',
                 source_id=request_data.youtube_video_id,
                 title=request_data.title,
@@ -224,7 +239,7 @@ def create_app(
             streaming = request.app.state.streaming_controller
             if streaming:
                 streaming.show_notification(
-                    f"{display_name} added a song",
+                    f"{user.display_name} added a song",
                     duration_seconds=5.0
                 )
 
@@ -663,7 +678,23 @@ def create_app(
     ):
         """Get playback history for a specific user."""
         history = history_mgr.get_user_history(user_id, limit=50)
-        return {"history": history}
+        # Convert HistoryRecord objects to dicts for JSON serialization
+        history_dicts = []
+        for record in history:
+            history_dicts.append({
+                'id': record.id,
+                'source': record.source,
+                'source_id': record.source_id,
+                'performed_at': record.performed_at.isoformat() if record.performed_at else None,
+                'title': record.metadata.title,
+                'duration_seconds': record.metadata.duration_seconds,
+                'thumbnail_url': record.metadata.thumbnail_url,
+                'pitch_semitones': record.settings.pitch_semitones,
+                'played_duration_seconds': record.performance.get('played_duration_seconds'),
+                'playback_end_position_seconds': record.performance.get('playback_end_position_seconds'),
+                'completion_percentage': record.performance.get('completion_percentage'),
+            })
+        return {"history": history_dicts}
 
     # Web UI
     @app.get("/", response_class=HTMLResponse)

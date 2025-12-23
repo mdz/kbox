@@ -7,7 +7,7 @@ Provides access to configuration values with defaults and type conversion.
 import logging
 import sys
 from typing import Any, Optional
-from .database import Database
+from .database import Database, ConfigRepository
 
 class ConfigManager:
     """Manages configuration stored in database."""
@@ -91,30 +91,12 @@ class ConfigManager:
             database: Database instance
         """
         self.database = database
+        self.repository = ConfigRepository(database)
         self.logger = logging.getLogger(__name__)
         # Merge platform-specific defaults
         platform_defaults = self._get_platform_defaults()
         self._merged_defaults = {**self.DEFAULTS, **platform_defaults}
-        self._initialize_defaults()
-    
-    def _initialize_defaults(self):
-        """Initialize default values in database if they don't exist."""
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            for key, value in self._merged_defaults.items():
-                cursor.execute('SELECT key FROM config WHERE key = ?', (key,))
-                if not cursor.fetchone():
-                    cursor.execute('''
-                        INSERT INTO config (key, value) 
-                        VALUES (?, ?)
-                    ''', (key, str(value) if value is not None else ''))
-            
-            conn.commit()
-            self.logger.debug('Configuration defaults initialized')
-        finally:
-            conn.close()
+        self.repository.initialize_defaults(self._merged_defaults)
     
     def get(self, key: str, default: Any = None) -> Optional[str]:
         """
@@ -130,18 +112,10 @@ class ConfigManager:
         if default is None:
             default = self._merged_defaults.get(key)
         
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT value FROM config WHERE key = ?', (key,))
-            result = cursor.fetchone()
-            
-            if result:
-                return result['value'] if result['value'] else default
-            return default
-        finally:
-            conn.close()
+        entry = self.repository.get(key)
+        if entry:
+            return entry.value if entry.value else default
+        return default
     
     def get_int(self, key: str, default: Optional[int] = None) -> Optional[int]:
         """Get configuration value as integer."""
@@ -183,23 +157,7 @@ class ConfigManager:
         Returns:
             True if successful
         """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO config (key, value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = CURRENT_TIMESTAMP
-            ''', (key, str(value)))
-            
-            conn.commit()
-            self.logger.debug('Set config %s = %s', key, value)
-            return True
-        finally:
-            conn.close()
+        return self.repository.set(key, str(value))
     
     def get_all(self) -> dict:
         """
@@ -208,21 +166,13 @@ class ConfigManager:
         Returns:
             Dictionary of all configuration key-value pairs
         """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute('SELECT key, value FROM config')
-            config = {}
-            for row in cursor.fetchall():
-                config[row['key']] = row['value']
-            
-            # Merge with defaults to ensure all keys are present
-            result = self._merged_defaults.copy()
-            result.update(config)
-            return result
-        finally:
-            conn.close()
+        entries = self.repository.get_all()
+        config = {entry.key: entry.value for entry in entries}
+        
+        # Merge with defaults to ensure all keys are present
+        result = self._merged_defaults.copy()
+        result.update(config)
+        return result
     
     def get_editable_keys(self) -> list:
         """

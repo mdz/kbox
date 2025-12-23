@@ -9,6 +9,7 @@ import threading
 from enum import Enum
 from typing import Optional, Dict, Any
 from .queue import QueueManager
+from .models import QueueItem, User
 
 class PlaybackState(Enum):
     """Playback state enumeration."""
@@ -41,7 +42,6 @@ class PlaybackController:
         self.streaming_controller = streaming_controller
         self.config_manager = config_manager
         self.history_manager = history_manager
-        
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.IDLE
         self.current_song_id: Optional[int] = None
@@ -110,10 +110,10 @@ class PlaybackController:
         if current_position <= 3:
             current_song = self.queue_manager.get_item(self.current_song_id)
             if current_song:
-                overlay_text = f"Now singing: {current_song['user_name']}"
+                overlay_text = f"Now singing: {current_song.user_name}"
                 self.streaming_controller.set_overlay_text(overlay_text)
                 self._current_singer_shown = True
-                self.logger.debug('Set current singer overlay for: %s', current_song['user_name'])
+                self.logger.debug('Set current singer overlay for: %s', current_song.user_name)
     
     def _check_up_next_notification(self, current_position: int):
         """
@@ -133,7 +133,7 @@ class PlaybackController:
         if not current_song:
             return
         
-        duration = current_song.get('duration_seconds')
+        duration = current_song.metadata.duration_seconds
         if not duration or duration <= 0:
             return
         
@@ -143,10 +143,10 @@ class PlaybackController:
             # Get next song
             next_song = self.queue_manager.get_next_song_after(self.current_song_id)
             if next_song:
-                overlay_text = f"Up next: {next_song['user_name']}"
+                overlay_text = f"Up next: {next_song.user_name}"
                 self.streaming_controller.set_overlay_text(overlay_text)
                 self._up_next_shown = True
-                self.logger.debug('Updated overlay to up next for: %s', next_song['user_name'])
+                self.logger.debug('Updated overlay to up next for: %s', next_song.user_name)
     
     def play(self) -> bool:
         """
@@ -190,7 +190,7 @@ class PlaybackController:
         # Get unplayed songs only
         queue = self.queue_manager.get_queue(include_played=False)
         ready_songs = [item for item in queue 
-                      if item['download_status'] == QueueManager.STATUS_READY]
+                      if item.download_status == QueueManager.STATUS_READY]
         
         if not ready_songs:
             self.logger.info('No ready songs in queue')
@@ -201,20 +201,20 @@ class PlaybackController:
         next_song = ready_songs[0]
         return self._play_song(next_song)
     
-    def _play_song(self, song: Dict[str, Any]) -> bool:
+    def _play_song(self, song: QueueItem) -> bool:
         """
         Load and play a specific song.
         
         Args:
-            song: Queue item dictionary to play
+            song: Queue item to play
         
         Returns:
             True if playback started, False on error
         """
         # Check if file exists
-        download_path = song.get('download_path')
+        download_path = song.download_path
         if not download_path:
-            self.logger.warning('No download path for song %s', song['id'])
+            self.logger.warning('No download path for song %s', song.id)
             self.state = PlaybackState.IDLE
             return False
         
@@ -223,11 +223,11 @@ class PlaybackController:
         self._current_singer_shown = False
         
         try:
-            self.logger.info('Loading song: %s by %s', song['title'], song['user_name'])
+            self.logger.info('Loading song: %s by %s', song.metadata.title, song.user_name)
             
             # Set pitch for this song
-            pitch = song.get('pitch_semitones', 0)
-            self.logger.debug('[DEBUG] _play_song: before set_pitch_shift, song=%s pitch=%s', song['id'], pitch)
+            pitch = song.settings.pitch_semitones
+            self.logger.debug('[DEBUG] _play_song: before set_pitch_shift, song=%s pitch=%s', song.id, pitch)
             try:
                 self.streaming_controller.set_pitch_shift(pitch)
             except Exception as e:
@@ -240,7 +240,7 @@ class PlaybackController:
             except Exception as e:
                 self.logger.error('Failed to load file into streaming controller: %s', e)
                 self.state = PlaybackState.ERROR
-                self._handle_error(song['id'], f'Playback failed: {str(e)}')
+                self._handle_error(song.id, f'Playback failed: {str(e)}')
                 return False
             
             # Mark song ID as currently playing
@@ -248,16 +248,16 @@ class PlaybackController:
             #   1. _play_song() - sets it when starting playback
             #   2. _stop_internal() - clears it when stopping playback
             #   3. on_song_end() - clears it when song finishes naturally
-            self.current_song_id = song['id']
+            self.current_song_id = song.id
             self.state = PlaybackState.PLAYING
             
-            self.logger.info('Playback started: %s', song['title'])
+            self.logger.info('Playback started: %s', song.metadata.title)
             return True
             
         except Exception as e:
             self.logger.error('Error loading song: %s', e, exc_info=True)
             self.state = PlaybackState.ERROR
-            self._handle_error(song['id'], str(e))
+            self._handle_error(song.id, str(e))
             return False
     
     def pause(self) -> bool:
@@ -353,10 +353,10 @@ class PlaybackController:
         
         # Record history if threshold met
         current_position = self.streaming_controller.get_position() or 0
-        if self.history_manager and self._should_record_history(current_song.get('duration_seconds'), current_position):
+        if self.history_manager and self._should_record_history(current_song.metadata.duration_seconds, current_position):
             completion_pct = self._calculate_completion_percentage(
                 current_position, 
-                current_song.get('duration_seconds')
+                current_song.metadata.duration_seconds
             )
             self._record_performance_history(
                 current_song,
@@ -368,7 +368,7 @@ class PlaybackController:
         self.queue_manager.mark_played(self.current_song_id)
         
         # Stop current playback (but do NOT mark as played)
-        self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
+        self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song.id)
         self.streaming_controller.stop_playback()
         self.logger.debug('[DEBUG] skip: after stop_playback')
         
@@ -408,8 +408,8 @@ class PlaybackController:
                 return False
             
             # Check if song is ready
-            if song['download_status'] != QueueManager.STATUS_READY:
-                self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
+            if song.download_status != QueueManager.STATUS_READY:
+                self.logger.warning('Song %s is not ready (status: %s)', item_id, song.download_status)
                 return False
             
             # Stop current playback
@@ -442,20 +442,20 @@ class PlaybackController:
                 return False
             
             # Check if song is ready
-            if song['download_status'] != QueueManager.STATUS_READY:
-                self.logger.warning('Song %s is not ready (status: %s)', item_id, song['download_status'])
+            if song.download_status != QueueManager.STATUS_READY:
+                self.logger.warning('Song %s is not ready (status: %s)', item_id, song.download_status)
                 return False
             
             # Stop current playback if something is playing
             if self.current_song_id:
                 self.streaming_controller.stop_playback()
             
-            self.logger.info('Playing song %s at position %s', item_id, song.get('position'))
+            self.logger.info('Playing song %s at position %s', item_id, song.position)
             
             # Load and play the song (always from beginning)
             return self._play_song(song)
     
-    def _switch_to_song(self, song: Dict[str, Any]) -> bool:
+    def _switch_to_song(self, song: QueueItem) -> bool:
         """
         Stop current playback and switch to a different song.
         
@@ -526,11 +526,11 @@ class PlaybackController:
                 self.logger.warning('Song %s not found', item_id)
                 return {'status': 'not_found'}
             
-            current_position = item.get('position', 0)
+            current_position = item.position
             
             # Get max position
             queue = self.queue_manager.get_queue()
-            max_position = max((q.get('position', 0) for q in queue), default=0)
+            max_position = max((q.position for q in queue), default=0)
             
             # Calculate new position (down 1, but not past the end)
             new_position = min(current_position + 1, max_position)
@@ -563,11 +563,11 @@ class PlaybackController:
                 song_at_old_position = None
                 updated_queue = self.queue_manager.get_queue()
                 for song in updated_queue:
-                    if song.get('position') == current_position:
+                    if song.position == current_position:
                         song_at_old_position = song
                         break
                 
-                if song_at_old_position and song_at_old_position.get('download_status') == QueueManager.STATUS_READY:
+                if song_at_old_position and song_at_old_position.download_status == QueueManager.STATUS_READY:
                     # Play the song that moved up
                     self._switch_to_song(song_at_old_position)
                     return {
@@ -616,7 +616,7 @@ class PlaybackController:
                 if not current_song:
                     self.logger.error('Current song ID %s not found', self.current_song_id)
                     return False
-                target_position = current_song.get('position', 1) + 1
+                target_position = current_song.position + 1
             else:
                 target_position = 1
             
@@ -660,7 +660,7 @@ class PlaybackController:
                 self.logger.warning('Cannot move to end - queue is empty')
                 return False
             
-            max_position = max((item.get('position', 0) for item in queue), default=0)
+            max_position = max((item.position for item in queue), default=0)
             
             # Check if this is the currently playing song
             is_currently_playing = (
@@ -710,14 +710,14 @@ class PlaybackController:
                 # Get song data for history recording
                 finished_song = self.queue_manager.get_item(finished_song_id)
                 if finished_song:
-                    self.logger.info('Song ended: %s', finished_song['title'])
+                    self.logger.info('Song ended: %s', finished_song.metadata.title)
                     
                     # Record history if threshold met
                     final_position = self.streaming_controller.get_position() or 0
-                    if self.history_manager and self._should_record_history(finished_song.get('duration_seconds'), final_position):
+                    if self.history_manager and self._should_record_history(finished_song.metadata.duration_seconds, final_position):
                         completion_pct = self._calculate_completion_percentage(
                             final_position, 
-                            finished_song.get('duration_seconds')
+                            finished_song.metadata.duration_seconds
                         )
                         self._record_performance_history(
                             finished_song,
@@ -791,11 +791,11 @@ class PlaybackController:
         
         # Show transition screen
         self.logger.info('Showing transition for: %s (duration: %ss)', 
-                        next_song['user_name'], transition_duration)
+                        next_song.user_name, transition_duration)
         self.state = PlaybackState.TRANSITION
         self._show_transition_screen(
-            singer_name=next_song['user_name'],
-            song_title=next_song.get('title')
+            singer_name=next_song.user_name,
+            song_title=next_song.metadata.title
         )
         
         # Schedule the next song to start after transition
@@ -824,7 +824,7 @@ class PlaybackController:
             next_song = self._next_song_pending
             self._next_song_pending = None
             
-            self.logger.info('Transition complete, starting: %s', next_song['title'])
+            self.logger.info('Transition complete, starting: %s', next_song.metadata.title)
             self._play_song(next_song)
     
     # =========================================================================
@@ -926,6 +926,8 @@ class PlaybackController:
         Returns:
             Dictionary with playback state and current song info
         """
+        from dataclasses import asdict
+        
         with self.lock:
             position = None
             if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
@@ -934,7 +936,21 @@ class PlaybackController:
             # Query current song data from database (always fresh)
             current_song = None
             if self.current_song_id:
-                current_song = self.queue_manager.get_item(self.current_song_id)
+                queue_item = self.queue_manager.get_item(self.current_song_id)
+                if queue_item:
+                    # Convert QueueItem to dict for JSON serialization
+                    current_song = asdict(queue_item)
+                    # Convert datetime objects to ISO format strings for JSON
+                    if current_song.get("played_at"):
+                        current_song["played_at"] = current_song["played_at"].isoformat()
+                    if current_song.get("created_at"):
+                        current_song["created_at"] = current_song["created_at"].isoformat()
+                    # Flatten metadata and settings for easier frontend access
+                    current_song["title"] = queue_item.metadata.title
+                    current_song["duration_seconds"] = queue_item.metadata.duration_seconds
+                    current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
+                    current_song["channel"] = queue_item.metadata.channel
+                    current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
             
             status = {
                 'state': self.state.value,
@@ -1014,7 +1030,7 @@ class PlaybackController:
             # Clamp to song duration if available
             current_song = self.queue_manager.get_item(self.current_song_id)
             if current_song:
-                duration = current_song.get('duration_seconds')
+                duration = current_song.metadata.duration_seconds
                 if duration and new_position > duration:
                     new_position = max(0, duration - 1)  # Seek to near the end
             
@@ -1094,7 +1110,7 @@ class PlaybackController:
     
     def _record_performance_history(
         self,
-        queue_item: dict,
+        queue_item: QueueItem,
         played_duration_seconds: int,
         playback_end_position_seconds: int,
         completion_percentage: float
@@ -1103,13 +1119,18 @@ class PlaybackController:
         Record a performance in history.
         
         Args:
-            queue_item: Queue item dict with song details
+            queue_item: Queue item with song details
             played_duration_seconds: How long the song was played
             playback_end_position_seconds: Where playback ended
             completion_percentage: Percentage of song completed
         """
         self.history_manager.record_performance(
-            queue_item=queue_item,
+            user_id=queue_item.user_id,
+            user_name=queue_item.user_name,
+            source=queue_item.source,
+            source_id=queue_item.source_id,
+            metadata=queue_item.metadata,
+            settings=queue_item.settings,
             played_duration_seconds=played_duration_seconds,
             playback_end_position_seconds=playback_end_position_seconds,
             completion_percentage=completion_percentage

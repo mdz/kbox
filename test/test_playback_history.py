@@ -11,7 +11,10 @@ from kbox.queue import QueueManager
 @pytest.fixture
 def mock_queue_manager():
     """Create a mock QueueManager."""
-    return Mock(spec=QueueManager)
+    qm = Mock(spec=QueueManager)
+    # PlaybackController needs queue_manager.database for UserRepository
+    qm.database = Mock()
+    return qm
 
 
 @pytest.fixture

@@ -42,17 +42,17 @@ CHARLIE_ID = 'charlie-uuid-9012'
 
 @pytest.fixture
 def test_users(user_manager):
-    """Create test users and return their IDs."""
-    user_manager.get_or_create_user(ALICE_ID, 'Alice')
-    user_manager.get_or_create_user(BOB_ID, 'Bob')
-    user_manager.get_or_create_user(CHARLIE_ID, 'Charlie')
-    return {'alice': ALICE_ID, 'bob': BOB_ID, 'charlie': CHARLIE_ID}
+    """Create test users and return User objects."""
+    alice = user_manager.get_or_create_user(ALICE_ID, 'Alice')
+    bob = user_manager.get_or_create_user(BOB_ID, 'Bob')
+    charlie = user_manager.get_or_create_user(CHARLIE_ID, 'Charlie')
+    return {'alice': alice, 'bob': bob, 'charlie': charlie}
 
 
 def test_add_song(queue_manager, test_users):
     """Test adding a song to the queue."""
     item_id = queue_manager.add_song(
-        user_id=test_users['alice'],
+        user=test_users['alice'],
         source='youtube',
         source_id='test123',
         title='Test Song',
@@ -65,15 +65,15 @@ def test_add_song(queue_manager, test_users):
     
     queue = queue_manager.get_queue()
     assert len(queue) == 1
-    assert queue[0]['user_id'] == test_users['alice']
-    assert queue[0]['user_name'] == 'Alice'  # Display name from users table
-    assert queue[0]['source'] == 'youtube'
-    assert queue[0]['source_id'] == 'test123'
-    assert queue[0]['title'] == 'Test Song'
-    assert queue[0]['duration_seconds'] == 180
-    assert queue[0]['pitch_semitones'] == 2
-    assert queue[0]['download_status'] == QueueManager.STATUS_PENDING
-    assert queue[0]['position'] == 1
+    assert queue[0].user_id == ALICE_ID
+    assert queue[0].user_name == 'Alice'  # Display name from users table
+    assert queue[0].source == 'youtube'
+    assert queue[0].source_id == 'test123'
+    assert queue[0].metadata.title == 'Test Song'
+    assert queue[0].metadata.duration_seconds == 180
+    assert queue[0].settings.pitch_semitones == 2
+    assert queue[0].download_status == QueueManager.STATUS_PENDING
+    assert queue[0].position == 1
 
 
 def test_add_multiple_songs(queue_manager, test_users):
@@ -84,12 +84,12 @@ def test_add_multiple_songs(queue_manager, test_users):
     
     queue = queue_manager.get_queue()
     assert len(queue) == 3
-    assert queue[0]['position'] == 1
-    assert queue[1]['position'] == 2
-    assert queue[2]['position'] == 3
-    assert queue[0]['user_id'] == test_users['alice']
-    assert queue[1]['user_id'] == test_users['bob']
-    assert queue[2]['user_id'] == test_users['charlie']
+    assert queue[0].position == 1
+    assert queue[1].position == 2
+    assert queue[2].position == 3
+    assert queue[0].user_id == ALICE_ID
+    assert queue[1].user_id == BOB_ID
+    assert queue[2].user_id == CHARLIE_ID
 
 
 def test_remove_song(queue_manager, test_users):
@@ -104,10 +104,10 @@ def test_remove_song(queue_manager, test_users):
     
     queue = queue_manager.get_queue()
     assert len(queue) == 2
-    assert queue[0]['position'] == 1
-    assert queue[1]['position'] == 2
-    assert queue[0]['source_id'] == 'vid1'
-    assert queue[1]['source_id'] == 'vid3'
+    assert queue[0].position == 1
+    assert queue[1].position == 2
+    assert queue[0].source_id == 'vid1'
+    assert queue[1].source_id == 'vid3'
 
 
 def test_remove_nonexistent_song(queue_manager):
@@ -127,12 +127,12 @@ def test_reorder_song(queue_manager, test_users):
     assert result is True
     
     queue = queue_manager.get_queue()
-    assert queue[0]['source_id'] == 'vid3'
-    assert queue[1]['source_id'] == 'vid1'
-    assert queue[2]['source_id'] == 'vid2'
-    assert queue[0]['position'] == 1
-    assert queue[1]['position'] == 2
-    assert queue[2]['position'] == 3
+    assert queue[0].source_id == 'vid3'
+    assert queue[1].source_id == 'vid1'
+    assert queue[2].source_id == 'vid2'
+    assert queue[0].position == 1
+    assert queue[1].position == 2
+    assert queue[2].position == 3
 
 
 def test_reorder_invalid_position(queue_manager, test_users):
@@ -162,8 +162,8 @@ def test_get_next_song(queue_manager, test_users):
     
     next_song = queue_manager.get_next_song()
     assert next_song is not None
-    assert next_song['id'] == id1
-    assert next_song['download_status'] == QueueManager.STATUS_READY
+    assert next_song.id == id1
+    assert next_song.download_status == QueueManager.STATUS_READY
 
 
 def test_update_download_status(queue_manager, test_users):
@@ -175,7 +175,7 @@ def test_update_download_status(queue_manager, test_users):
     assert result is True
     
     item = queue_manager.get_item(item_id)
-    assert item['download_status'] == QueueManager.STATUS_DOWNLOADING
+    assert item.download_status == QueueManager.STATUS_DOWNLOADING
     
     # Update to ready with path
     result = queue_manager.update_download_status(
@@ -186,8 +186,8 @@ def test_update_download_status(queue_manager, test_users):
     assert result is True
     
     item = queue_manager.get_item(item_id)
-    assert item['download_status'] == QueueManager.STATUS_READY
-    assert item['download_path'] == '/path/to/video.mp4'
+    assert item.download_status == QueueManager.STATUS_READY
+    assert item.download_path == '/path/to/video.mp4'
 
 
 def test_update_download_status_error(queue_manager, test_users):
@@ -202,8 +202,8 @@ def test_update_download_status_error(queue_manager, test_users):
     assert result is True
     
     item = queue_manager.get_item(item_id)
-    assert item['download_status'] == QueueManager.STATUS_ERROR
-    assert item['error_message'] == 'Download failed'
+    assert item.download_status == QueueManager.STATUS_ERROR
+    assert item.error_message == 'Download failed'
 
 
 def test_mark_played(queue_manager, test_users):
@@ -214,7 +214,7 @@ def test_mark_played(queue_manager, test_users):
     assert result is True
     
     item = queue_manager.get_item(item_id)
-    assert item['played_at'] is not None
+    assert item.played_at is not None
 
 
 def test_update_pitch(queue_manager, test_users):
@@ -225,7 +225,7 @@ def test_update_pitch(queue_manager, test_users):
     assert result is True
     
     item = queue_manager.get_item(item_id)
-    assert item['pitch_semitones'] == 3
+    assert item.settings.pitch_semitones == 3
 
 
 def test_clear_queue(queue_manager, test_users):
@@ -243,19 +243,19 @@ def test_clear_queue(queue_manager, test_users):
 
 def test_queue_persistence(temp_db, user_manager):
     """Test that queue persists across QueueManager instances."""
-    user_manager.get_or_create_user(ALICE_ID, 'Alice')
+    alice = user_manager.get_or_create_user(ALICE_ID, 'Alice')
     
     qm1 = QueueManager(temp_db)
-    item_id = qm1.add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1')
+    item_id = qm1.add_song(alice, 'youtube', 'vid1', 'Song 1')
     qm1.update_download_status(item_id, QueueManager.STATUS_READY, download_path='/path/to/video.mp4')
     
     # Create new QueueManager with same database
     qm2 = QueueManager(temp_db)
     queue = qm2.get_queue()
     assert len(queue) == 1
-    assert queue[0]['user_id'] == ALICE_ID
-    assert queue[0]['user_name'] == 'Alice'
-    assert queue[0]['download_status'] == QueueManager.STATUS_READY
+    assert queue[0].user_id == ALICE_ID
+    assert queue[0].user_name == 'Alice'
+    assert queue[0].download_status == QueueManager.STATUS_READY
 
 
 

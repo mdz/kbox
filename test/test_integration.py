@@ -62,9 +62,9 @@ def full_system(temp_db, temp_cache_dir):
     # User manager
     user_manager = UserManager(temp_db)
     # Create test users
-    user_manager.get_or_create_user(ALICE_ID, 'Alice')
-    user_manager.get_or_create_user(BOB_ID, 'Bob')
-    user_manager.get_or_create_user(CHARLIE_ID, 'Charlie')
+    alice = user_manager.get_or_create_user(ALICE_ID, 'Alice')
+    bob = user_manager.get_or_create_user(BOB_ID, 'Bob')
+    charlie = user_manager.get_or_create_user(CHARLIE_ID, 'Charlie')
     
     # Queue manager (with mocked youtube client, but no download monitor for tests)
     queue_manager = QueueManager(temp_db)  # No youtube_client = no download monitor
@@ -95,6 +95,7 @@ def full_system(temp_db, temp_cache_dir):
         'config': config_manager,
         'queue': queue_manager,
         'user': user_manager,
+        'users': {'alice': alice, 'bob': bob, 'charlie': charlie},
         'youtube': youtube_client,
         'streaming': mock_streaming,
         'playback': playback_controller
@@ -107,7 +108,7 @@ def test_add_song_to_queue_and_play(full_system):
     
     # Add song to queue
     item_id = system['queue'].add_song(
-        user_id=ALICE_ID,
+        user=system['users']['alice'],
         source='youtube',
         source_id='test123',
         title='Test Song',
@@ -142,13 +143,13 @@ def test_queue_persistence_across_restarts(temp_db):
     # Create first system
     config1 = ConfigManager(temp_db)
     user1 = UserManager(temp_db)
-    user1.get_or_create_user(ALICE_ID, 'Alice')
-    user1.get_or_create_user(BOB_ID, 'Bob')
+    alice = user1.get_or_create_user(ALICE_ID, 'Alice')
+    bob = user1.get_or_create_user(BOB_ID, 'Bob')
     queue1 = QueueManager(temp_db)
     
     # Add songs
-    id1 = queue1.add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1')
-    id2 = queue1.add_song(BOB_ID, 'youtube', 'vid2', 'Song 2')
+    id1 = queue1.add_song(alice, 'youtube', 'vid1', 'Song 1')
+    id2 = queue1.add_song(bob, 'youtube', 'vid2', 'Song 2')
     queue1.update_download_status(id1, QueueManager.STATUS_READY, download_path='/path1')
     
     # Create second system (simulating restart)
@@ -158,9 +159,9 @@ def test_queue_persistence_across_restarts(temp_db):
     # Verify queue persisted
     queue = queue2.get_queue()
     assert len(queue) == 2
-    assert queue[0]['user_id'] == ALICE_ID
-    assert queue[1]['user_id'] == BOB_ID
-    assert queue[0]['download_status'] == QueueManager.STATUS_READY
+    assert queue[0].user_id == ALICE_ID
+    assert queue[1].user_id == BOB_ID
+    assert queue[0].download_status == QueueManager.STATUS_READY
 
 
 def test_playback_state_transitions(full_system):
@@ -171,7 +172,7 @@ def test_playback_state_transitions(full_system):
     assert system['playback'].state == PlaybackState.IDLE
     
     # Add and mark ready
-    item_id = system['queue'].add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1')
+    item_id = system['queue'].add_song(system['users']['alice'], 'youtube', 'vid1', 'Song 1')
     system['queue'].update_download_status(
         item_id, QueueManager.STATUS_READY, download_path='/fake/path.mp4'
     )
@@ -194,7 +195,7 @@ def test_pitch_adjustment_during_playback(full_system):
     system = full_system
     
     # Add and play song
-    item_id = system['queue'].add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1', pitch_semitones=0)
+    item_id = system['queue'].add_song(system['users']['alice'], 'youtube', 'vid1', 'Song 1', pitch_semitones=0)
     system['queue'].update_download_status(
         item_id, QueueManager.STATUS_READY, download_path='/fake/path.mp4'
     )
@@ -206,7 +207,7 @@ def test_pitch_adjustment_during_playback(full_system):
     
     # Verify pitch was updated in queue
     item = system['queue'].get_item(item_id)
-    assert item['pitch_semitones'] == 3
+    assert item.settings.pitch_semitones == 3
     
     # Verify streaming controller was called
     system['streaming'].set_pitch_shift.assert_called_with(3)
@@ -218,8 +219,8 @@ def test_song_transition_on_end(full_system):
     system = full_system
     
     # Add two songs
-    id1 = system['queue'].add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1')
-    id2 = system['queue'].add_song(BOB_ID, 'youtube', 'vid2', 'Song 2')
+    id1 = system['queue'].add_song(system['users']['alice'], 'youtube', 'vid1', 'Song 1')
+    id2 = system['queue'].add_song(system['users']['bob'], 'youtube', 'vid2', 'Song 2')
     
     system['queue'].update_download_status(
         id1, QueueManager.STATUS_READY, download_path='/fake/path1.mp4'
@@ -249,8 +250,8 @@ def test_skip_to_next_song(full_system):
     system = full_system
     
     # Add two songs
-    id1 = system['queue'].add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1')
-    id2 = system['queue'].add_song(BOB_ID, 'youtube', 'vid2', 'Song 2')
+    id1 = system['queue'].add_song(system['users']['alice'], 'youtube', 'vid1', 'Song 1')
+    id2 = system['queue'].add_song(system['users']['bob'], 'youtube', 'vid2', 'Song 2')
     
     system['queue'].update_download_status(
         id1, QueueManager.STATUS_READY, download_path='/fake/path1.mp4'
@@ -274,18 +275,18 @@ def test_queue_reordering(full_system):
     system = full_system
     
     # Add three songs
-    id1 = system['queue'].add_song(ALICE_ID, 'youtube', 'vid1', 'Song 1')
-    id2 = system['queue'].add_song(BOB_ID, 'youtube', 'vid2', 'Song 2')
-    id3 = system['queue'].add_song(CHARLIE_ID, 'youtube', 'vid3', 'Song 3')
+    id1 = system['queue'].add_song(system['users']['alice'], 'youtube', 'vid1', 'Song 1')
+    id2 = system['queue'].add_song(system['users']['bob'], 'youtube', 'vid2', 'Song 2')
+    id3 = system['queue'].add_song(system['users']['charlie'], 'youtube', 'vid3', 'Song 3')
     
     # Move last to first
     result = system['queue'].reorder_song(id3, 1)
     assert result is True
     
     queue = system['queue'].get_queue()
-    assert queue[0]['id'] == id3
-    assert queue[1]['id'] == id1
-    assert queue[2]['id'] == id2
+    assert queue[0].id == id3
+    assert queue[1].id == id1
+    assert queue[2].id == id2
 
 
 def test_config_persistence(temp_db):
