@@ -34,3 +34,6 @@ notes.txt
 .coverage
 htmlcov/
 
+.ruff_cache
+.mypy_cache
+.test-venv

@@ -5,20 +5,20 @@ Provides REST API and web UI for queue management and playback control.
 """
 
 import logging
-from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Depends, Request
+from typing import Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
-import os
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
 
-from ..queue import QueueManager
-from ..youtube import YouTubeClient
-from ..playback import PlaybackController
 from ..config_manager import ConfigManager
+from ..playback import PlaybackController
+from ..queue import QueueManager
 from ..streaming import StreamingController
 from ..user import UserManager
+from ..youtube import YouTubeClient
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class UpdateQueueItemRequest(BaseModel):
 
 class UserRequest(BaseModel):
     """Request model for user registration/update."""
-    
+
     user_id: str  # UUID
     display_name: str
 
@@ -139,9 +139,7 @@ def create_app(
     app = FastAPI(title="kbox", version="1.0.0")
 
     # Add session middleware for operator authentication
-    app.add_middleware(
-        SessionMiddleware, secret_key="kbox-secret-key-change-in-production"
-    )
+    app.add_middleware(SessionMiddleware, secret_key="kbox-secret-key-change-in-production")
 
     # Store components in app state
     app.state.queue_manager = queue_manager
@@ -163,7 +161,7 @@ def create_app(
     ):
         """Get current queue with current/played flags for UI rendering."""
         from dataclasses import asdict
-        
+
         # Get all queue items (including played ones for navigation)
         queue_items = queue_mgr.get_queue(include_played=True)
 
@@ -183,24 +181,21 @@ def create_app(
             item_dict["channel"] = item.metadata.channel
             item_dict["pitch_semitones"] = item.settings.pitch_semitones
             # Add UI flags
-            item_dict["is_current"] = (item.id == current_song_id)
-            item_dict["is_played"] = (item.played_at is not None)
+            item_dict["is_current"] = item.id == current_song_id
+            item_dict["is_played"] = item.played_at is not None
             queue.append(item_dict)
 
-        return {
-            "queue": queue,
-            "current_song_id": current_song_id
-        }
+        return {"queue": queue, "current_song_id": current_song_id}
 
     @app.get("/api/queue/settings/{youtube_video_id}")
     async def get_song_settings(
         youtube_video_id: str,
         user_id: str,
-        history_mgr = Depends(get_history_manager),
+        history_mgr=Depends(get_history_manager),
     ):
         """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
         # Get settings from history (assumes YouTube source)
-        settings = history_mgr.get_last_settings('youtube', youtube_video_id, user_id)
+        settings = history_mgr.get_last_settings("youtube", youtube_video_id, user_id)
         if settings:
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
@@ -218,12 +213,14 @@ def create_app(
             # Get user (they should already exist from registration)
             user = user_mgr.get_user(request_data.user_id)
             if not user:
-                raise HTTPException(status_code=400, detail="User not found. Please refresh the page.")
-            
+                raise HTTPException(
+                    status_code=400, detail="User not found. Please refresh the page."
+                )
+
             # Add song with source-agnostic schema
             item_id = queue_mgr.add_song(
                 user=user,
-                source='youtube',
+                source="youtube",
                 source_id=request_data.youtube_video_id,
                 title=request_data.title,
                 duration_seconds=request_data.duration_seconds,
@@ -239,8 +236,7 @@ def create_app(
             streaming = request.app.state.streaming_controller
             if streaming:
                 streaming.show_notification(
-                    f"{user.display_name} added a song",
-                    duration_seconds=5.0
+                    f"{user.display_name} added a song", duration_seconds=5.0
                 )
 
             return {"id": item_id, "status": "added"}
@@ -259,7 +255,7 @@ def create_app(
     ):
         """
         Remove song from queue.
-        
+
         Operators can remove any song. Users can remove their own songs
         by providing their user_id as a query parameter.
         """
@@ -271,9 +267,7 @@ def create_app(
         # Check permissions: operator can remove any, users can only remove their own
         if not is_operator:
             if not user_id or user_id != item.user_id:
-                raise HTTPException(
-                    status_code=403, detail="You can only remove songs you added"
-                )
+                raise HTTPException(status_code=403, detail="You can only remove songs you added")
 
         if not queue_mgr.remove_song(item_id):
             raise HTTPException(status_code=404, detail="Queue item not found")
@@ -288,14 +282,10 @@ def create_app(
     ):
         """Reorder song in queue (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if not queue_mgr.reorder_song(item_id, request_data.new_position):
-            raise HTTPException(
-                status_code=404, detail="Queue item not found or invalid position"
-            )
+            raise HTTPException(status_code=404, detail="Queue item not found or invalid position")
         return {"status": "reordered"}
 
     @app.patch("/api/queue/{item_id}")
@@ -320,13 +310,8 @@ def create_app(
 
         # Check permissions: operator can edit any, users can only edit their own
         if not is_operator:
-            if (
-                not request_data.user_id
-                or request_data.user_id != item.user_id
-            ):
-                raise HTTPException(
-                    status_code=403, detail="You can only edit songs you added"
-                )
+            if not request_data.user_id or request_data.user_id != item.user_id:
+                raise HTTPException(status_code=403, detail="You can only edit songs you added")
 
         # Update pitch if provided
         if request_data.pitch_semitones is not None:
@@ -345,13 +330,11 @@ def create_app(
     ):
         """Move song to play next after currently playing song (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if not playback.move_to_next(item_id):
             raise HTTPException(status_code=404, detail="Queue item not found")
-        
+
         return {"status": "moved_to_next"}
 
     @app.post("/api/queue/{item_id}/move-to-end")
@@ -362,13 +345,11 @@ def create_app(
     ):
         """Move song to end of queue (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if not playback.move_to_end(item_id):
             raise HTTPException(status_code=404, detail="Queue item not found")
-        
+
         return {"status": "moved_to_end"}
 
     @app.post("/api/queue/{item_id}/bump-down")
@@ -378,21 +359,19 @@ def create_app(
         is_operator: bool = Depends(check_operator),
     ):
         """Move song down 1 position (for no-shows). Operator only.
-        
+
         If the song is currently playing, this also skips to the next song.
         """
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         result = playback.bump_down(item_id)
-        
-        if result.get('status') == 'not_found':
+
+        if result.get("status") == "not_found":
             raise HTTPException(status_code=404, detail="Queue item not found")
-        elif result.get('status') == 'error':
+        elif result.get("status") == "error":
             raise HTTPException(status_code=500, detail="Failed to bump down song")
-        
+
         return result
 
     @app.post("/api/queue/clear")
@@ -402,9 +381,7 @@ def create_app(
     ):
         """Clear entire queue (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         count = queue_mgr.clear_queue()
         return {"status": "cleared", "items_removed": count}
@@ -421,9 +398,7 @@ def create_app(
         return {"results": results}
 
     @app.get("/api/youtube/video/{video_id}")
-    async def get_video_info(
-        video_id: str, youtube: YouTubeClient = Depends(get_youtube_client)
-    ):
+    async def get_video_info(video_id: str, youtube: YouTubeClient = Depends(get_youtube_client)):
         """Get video information."""
         info = youtube.get_video_info(video_id)
         if not info:
@@ -445,9 +420,7 @@ def create_app(
     ):
         """Start/resume playback (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.play():
             return {"status": "playing"}
@@ -461,9 +434,7 @@ def create_app(
     ):
         """Pause playback (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.pause():
             return {"status": "paused"}
@@ -477,9 +448,7 @@ def create_app(
     ):
         """Stop playback and return to idle (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.stop_playback():
             return {"status": "stopped"}
@@ -493,9 +462,7 @@ def create_app(
     ):
         """Skip to next song (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.skip():
             return {"status": "skipped"}
@@ -510,9 +477,7 @@ def create_app(
     ):
         """Go to previous song (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.previous():
             return {"status": "previous"}
@@ -528,9 +493,7 @@ def create_app(
     ):
         """Jump to and play a song immediately at its current queue position (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.jump_to_song(item_id):
             return {"status": "playing_now", "item_id": item_id}
@@ -549,27 +512,23 @@ def create_app(
         """
         status = playback.get_status()
         current_song = status.get("current_song")
-        
+
         if not current_song:
-            raise HTTPException(
-                status_code=400, detail="No song is currently playing"
-            )
-        
+            raise HTTPException(status_code=400, detail="No song is currently playing")
+
         # Check authorization: user's own song OR operator
         is_own_song = current_song.get("user_id") == request_data.user_id
         is_op = check_operator(request)
-        
+
         if not is_own_song and not is_op:
             raise HTTPException(
                 status_code=403, detail="You can only adjust pitch for your own song"
             )
-        
+
         if playback.set_pitch(request_data.semitones):
             return {"status": "updated", "pitch": request_data.semitones}
         else:
-            raise HTTPException(
-                status_code=400, detail="Failed to update pitch"
-            )
+            raise HTTPException(status_code=400, detail="Failed to update pitch")
 
     @app.post("/api/playback/restart")
     async def restart(
@@ -578,9 +537,7 @@ def create_app(
     ):
         """Restart current song from the beginning (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.restart():
             return {"status": "restarted"}
@@ -595,9 +552,7 @@ def create_app(
     ):
         """Seek forward or backward in current song (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         if playback.seek_relative(request_data.delta_seconds):
             return {"status": "seeked", "delta_seconds": request_data.delta_seconds}
@@ -635,10 +590,7 @@ def create_app(
     @app.get("/api/config")
     async def get_config(config: ConfigManager = Depends(get_config_manager)):
         """Get all configuration with editable keys metadata."""
-        return {
-            "values": config.get_all(),
-            "editable_keys": config.get_editable_keys()
-        }
+        return {"values": config.get_all(), "editable_keys": config.get_editable_keys()}
 
     @app.patch("/api/config")
     async def update_config(
@@ -648,9 +600,7 @@ def create_app(
     ):
         """Update configuration (operator only)."""
         if not is_operator:
-            raise HTTPException(
-                status_code=403, detail="Operator authentication required"
-            )
+            raise HTTPException(status_code=403, detail="Operator authentication required")
 
         config.set(request_data.key, request_data.value)
         return {
@@ -667,8 +617,7 @@ def create_app(
     ):
         """Register or update a user."""
         user = user_mgr.get_or_create_user(
-            user_id=request_data.user_id,
-            display_name=request_data.display_name
+            user_id=request_data.user_id, display_name=request_data.display_name
         )
         return user
 
@@ -676,34 +625,38 @@ def create_app(
     @app.get("/api/history/{user_id}")
     async def get_user_history(
         user_id: str,
-        history_mgr = Depends(get_history_manager),
+        history_mgr=Depends(get_history_manager),
     ):
         """Get playback history for a specific user."""
         history = history_mgr.get_user_history(user_id, limit=50)
         # Convert HistoryRecord objects to dicts for JSON serialization
         history_dicts = []
         for record in history:
-            history_dicts.append({
-                'id': record.id,
-                'source': record.source,
-                'source_id': record.source_id,
-                'performed_at': record.performed_at.isoformat() if record.performed_at else None,
-                'title': record.metadata.title,
-                'duration_seconds': record.metadata.duration_seconds,
-                'thumbnail_url': record.metadata.thumbnail_url,
-                'pitch_semitones': record.settings.pitch_semitones,
-                'played_duration_seconds': record.performance.get('played_duration_seconds'),
-                'playback_end_position_seconds': record.performance.get('playback_end_position_seconds'),
-                'completion_percentage': record.performance.get('completion_percentage'),
-            })
+            history_dicts.append(
+                {
+                    "id": record.id,
+                    "source": record.source,
+                    "source_id": record.source_id,
+                    "performed_at": record.performed_at.isoformat()
+                    if record.performed_at
+                    else None,
+                    "title": record.metadata.title,
+                    "duration_seconds": record.metadata.duration_seconds,
+                    "thumbnail_url": record.metadata.thumbnail_url,
+                    "pitch_semitones": record.settings.pitch_semitones,
+                    "played_duration_seconds": record.performance.get("played_duration_seconds"),
+                    "playback_end_position_seconds": record.performance.get(
+                        "playback_end_position_seconds"
+                    ),
+                    "completion_percentage": record.performance.get("completion_percentage"),
+                }
+            )
         return {"history": history_dicts}
 
     # Web UI
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         """Serve web UI."""
-        return templates.TemplateResponse(
-            request, "index.html"
-        )
+        return templates.TemplateResponse(request, "index.html")
 
     return app

@@ -13,8 +13,10 @@ def _is_gstreamer_available():
     """Check if GStreamer Python bindings are available."""
     try:
         import gi
+
         gi.require_version("Gst", "1.0")
         from gi.repository import Gst
+
         Gst.init(None)
         return True
     except (ImportError, ValueError):
@@ -35,9 +37,8 @@ def pytest_collection_modifyitems(config, items):
     """Auto-skip GStreamer tests when GStreamer is unavailable."""
     if GSTREAMER_AVAILABLE:
         return
-    
+
     skip_gstreamer = pytest.mark.skip(reason="GStreamer not available (gi module not found)")
     for item in items:
         if "gstreamer" in item.keywords:
             item.add_marker(skip_gstreamer)
-

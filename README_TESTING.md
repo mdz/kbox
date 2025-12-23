@@ -1,5 +1,31 @@
 # Running Tests
 
+## Quick Start
+
+```bash
+# Run all non-GStreamer tests (works everywhere)
+uv run pytest -m "not gstreamer"
+
+# Run all tests (requires GStreamer)
+uv run pytest
+
+# Run pre-commit hooks manually
+uv run pre-commit run --all-files
+```
+
+## Pre-commit Hooks
+
+Pre-commit hooks are configured to run automatically on each commit:
+- **ruff check**: Linting with auto-fix
+- **ruff format**: Code formatting
+- **mypy**: Type checking
+- **pytest**: Run tests (non-GStreamer only)
+
+Install hooks (one-time setup):
+```bash
+uv run pre-commit install
+```
+
 ## Prerequisites
 
 The integration tests require GStreamer and its Python bindings to be installed on your system.
@@ -16,7 +42,7 @@ sudo apt install python3-gi python3-gst-1.0
 
 ## Running Tests
 
-Use uv to run tests (it auto-detects GStreamer environment on macOS):
+Use uv to run tests:
 
 ```bash
 uv run pytest
@@ -61,6 +87,19 @@ These tests use **real GStreamer** (not mocks) to catch:
 
 **Tests will FAIL if GStreamer is not available** - this is intentional to ensure pipeline stability is actually being verified.
 
+## Docker Testing
+
+Run tests inside Docker (includes GStreamer):
+```bash
+docker compose run --rm kbox pytest
+```
+
+Build and verify Docker image:
+```bash
+docker compose build
+docker compose up
+```
+
 ## CI/CD Integration
 
 For GitHub Actions or other CI systems:
@@ -77,5 +116,3 @@ For GitHub Actions or other CI systems:
 - name: Run Tests  
   run: uv run pytest -v
 ```
-
-

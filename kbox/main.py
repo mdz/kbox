@@ -6,19 +6,20 @@ Initializes all components and starts the server.
 
 import logging
 import sys
+
 import uvicorn
 
-from .database import Database
 from .config_manager import ConfigManager
-from .queue import QueueManager
-from .user import UserManager
-from .youtube import YouTubeClient
-from .streaming import StreamingController
-from .playback import PlaybackController
+from .database import Database
 from .history import HistoryManager
-from .web.server import create_app
-from .platform import is_macos, run_with_gst_macos_main, run_uvicorn_in_thread
 from .overlay import generate_qr_code
+from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
+from .playback import PlaybackController
+from .queue import QueueManager
+from .streaming import StreamingController
+from .user import UserManager
+from .web.server import create_app
+from .youtube import YouTubeClient
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -59,9 +60,7 @@ class KboxServer:
         self.history_manager = HistoryManager(self.database)
 
         # StreamingController uses ConfigManager for configuration
-        self.streaming_controller = StreamingController(
-            self.config_manager, self
-        )
+        self.streaming_controller = StreamingController(self.config_manager, self)
 
         # PlaybackController
         self.playback_controller = PlaybackController(
@@ -116,7 +115,7 @@ class KboxServer:
                 hostname = socket.gethostname()
                 try:
                     local_ip = socket.gethostbyname(hostname)
-                except:
+                except OSError:
                     local_ip = "localhost"
                 web_url = f"http://{local_ip}:8000"
                 logger.info("Using auto-detected URL: %s", web_url)
@@ -137,9 +136,7 @@ class KboxServer:
         logger.info("=" * 60)
 
         # Use uvicorn Server API for better control over shutdown
-        config = uvicorn.Config(
-            self.web_app, host="0.0.0.0", port=8000, log_level="info"
-        )
+        config = uvicorn.Config(self.web_app, host="0.0.0.0", port=8000, log_level="info")
         self.uvicorn_server = uvicorn.Server(config)
 
         # On macOS, run uvicorn in a thread so main thread can run NSRunLoop
@@ -180,7 +177,7 @@ def actual_main():
     import argparse
 
     parser = argparse.ArgumentParser(description="kbox - Self-contained karaoke system")
-    args = parser.parse_args()
+    parser.parse_args()
 
     server = KboxServer()
     try:

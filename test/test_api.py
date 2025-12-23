@@ -6,22 +6,21 @@ Tests all 30 API endpoints with:
 - Detailed tests for critical endpoints (queue, playback, auth)
 """
 
-import pytest
-import tempfile
 import os
-from unittest.mock import Mock, patch, MagicMock
+import tempfile
+from unittest.mock import Mock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
-from kbox.database import Database
 from kbox.config_manager import ConfigManager
+from kbox.database import Database
+from kbox.history import HistoryManager
+from kbox.playback import PlaybackController
 from kbox.queue import QueueManager
 from kbox.user import UserManager
-from kbox.youtube import YouTubeClient
-from kbox.playback import PlaybackController
-from kbox.history import HistoryManager
 from kbox.web.server import create_app
-
+from kbox.youtube import YouTubeClient
 
 # Test user IDs
 ALICE_ID = "alice-uuid-1234"
@@ -45,6 +44,7 @@ def temp_cache_dir():
     temp_dir = tempfile.mkdtemp()
     yield temp_dir
     import shutil
+
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -75,18 +75,20 @@ def mock_youtube(temp_cache_dir):
         mock_build.return_value = mock_yt
         client = YouTubeClient("test_key", cache_directory=temp_cache_dir)
         client.youtube = mock_yt
-        
+
         # Mock search results
-        client.search = Mock(return_value=[
-            {"video_id": "test123", "title": "Test Song", "duration_seconds": 180}
-        ])
-        client.get_video_info = Mock(return_value={
-            "video_id": "test123",
-            "title": "Test Song",
-            "duration_seconds": 180,
-            "thumbnail_url": "https://example.com/thumb.jpg",
-            "channel": "Test Channel",
-        })
+        client.search = Mock(
+            return_value=[{"video_id": "test123", "title": "Test Song", "duration_seconds": 180}]
+        )
+        client.get_video_info = Mock(
+            return_value={
+                "video_id": "test123",
+                "title": "Test Song",
+                "duration_seconds": 180,
+                "thumbnail_url": "https://example.com/thumb.jpg",
+                "channel": "Test Channel",
+            }
+        )
         yield client
 
 
@@ -103,9 +105,7 @@ def app_components(temp_db, temp_cache_dir, mock_streaming, mock_youtube):
     queue_manager = QueueManager(temp_db)
     history_manager = HistoryManager(temp_db)
 
-    playback_controller = PlaybackController(
-        queue_manager, mock_streaming, config_manager
-    )
+    playback_controller = PlaybackController(queue_manager, mock_streaming, config_manager)
     # Stop position tracking thread
     playback_controller._tracking_position = False
 
@@ -289,9 +289,7 @@ class TestQueueEndpoints:
         )
         item_id = add_response.json()["id"]
 
-        response = client.patch(
-            f"/api/queue/{item_id}/position", json={"new_position": 1}
-        )
+        response = client.patch(f"/api/queue/{item_id}/position", json={"new_position": 1})
         assert response.status_code == 403
 
     def test_update_queue_item_pitch(self, client, alice):
@@ -346,9 +344,7 @@ class TestQueueEndpoints:
 
     def test_get_song_settings(self, client, alice):
         """GET /api/queue/settings/{video_id} - get saved settings."""
-        response = client.get(
-            f"/api/queue/settings/test123?user_id={ALICE_ID}"
-        )
+        response = client.get(f"/api/queue/settings/test123?user_id={ALICE_ID}")
         assert response.status_code == 200
         # No history yet, so settings should be None
         assert response.json()["settings"] is None
@@ -573,17 +569,13 @@ class TestConfigEndpoints:
 
     def test_update_config_requires_operator(self, client):
         """PATCH /api/config - requires operator."""
-        response = client.patch(
-            "/api/config", json={"key": "test_key", "value": "test_value"}
-        )
+        response = client.patch("/api/config", json={"key": "test_key", "value": "test_value"})
         assert response.status_code == 403
 
     def test_update_config_as_operator(self, client):
         """PATCH /api/config - operator can update."""
         set_operator(client)
-        response = client.patch(
-            "/api/config", json={"key": "test_key", "value": "test_value"}
-        )
+        response = client.patch("/api/config", json={"key": "test_key", "value": "test_value"})
         assert response.status_code == 200
         assert response.json()["status"] == "updated"
 

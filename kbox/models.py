@@ -6,12 +6,13 @@ Defines typed dataclasses for all entities used throughout the application.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 
 @dataclass
 class User:
     """User entity with UUID-based identity."""
+
     id: str
     display_name: str
     created_at: Optional[datetime] = None
@@ -20,6 +21,7 @@ class User:
 @dataclass
 class SongMetadata:
     """Song metadata (title, duration, thumbnail, etc.)."""
+
     title: str
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
@@ -29,6 +31,7 @@ class SongMetadata:
 @dataclass
 class SongSettings:
     """Song playback settings (pitch, etc.)."""
+
     pitch_semitones: int = 0
     # Future settings can be added here
 
@@ -36,6 +39,7 @@ class SongSettings:
 @dataclass
 class QueueItem:
     """Queue item representing a song in the queue."""
+
     id: int
     position: int
     user_id: str
@@ -44,7 +48,7 @@ class QueueItem:
     source_id: str
     metadata: SongMetadata
     settings: SongSettings
-    download_status: str = 'pending'
+    download_status: str = "pending"
     download_path: Optional[str] = None
     error_message: Optional[str] = None
     played_at: Optional[datetime] = None
@@ -54,6 +58,7 @@ class QueueItem:
 @dataclass
 class HistoryRecord:
     """Playback history record."""
+
     id: int
     source: str
     source_id: str
@@ -68,7 +73,7 @@ class HistoryRecord:
 @dataclass
 class ConfigEntry:
     """Configuration entry."""
+
     key: str
     value: str
     updated_at: Optional[datetime] = None
-

@@ -1,1 +1,6 @@
 .git
+.ruff_cache
+.mypy_cache
+.pytest_cache
+.venv
+.test-venv

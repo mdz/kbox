@@ -28,17 +28,16 @@ WORKDIR /app
 RUN uv venv --system-site-packages
 
 # Install dependencies using the lockfile (include dev deps for testing in container)
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
+# Note: no uv cache mount to avoid shebang path issues from host builds
+RUN --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project
 
 # Copy the project into the image
 COPY . /app
 
-# Install the project itself
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked
+# Install the project itself (no cache - avoid shebang issues from host builds)
+RUN uv sync --locked
 
 # Fix: uv sync recreates venv without system-site-packages; restore it
 RUN sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' /app/.venv/pyvenv.cfg
