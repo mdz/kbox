@@ -408,13 +408,8 @@ def test_stop_cleans_up_pipeline(controller, test_video_1s):
     assert controller.playbin is None
 
 
-# =========================================================================
-# Legacy Test (for backwards compatibility)
-# =========================================================================
-
-
-def test_legacy_streaming():
-    """Legacy test to ensure basic functionality still works."""
+def test_streaming_controller_initialization():
+    """Test basic StreamingController initialization."""
     db = create_autospec(Database, instance=True)
     config_manager = ConfigManager(db)
 

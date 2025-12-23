@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Request models
 class AddSongRequest(BaseModel):
     user_id: str  # UUID for identity
-    youtube_video_id: str  # Keep for backward compatibility with frontend
+    youtube_video_id: str
     title: str
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None

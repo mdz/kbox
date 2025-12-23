@@ -1,48 +1,80 @@
 # kbox
 
-kbox is a simple headless server application to perform real-time, high-quality
-pitch shifting of stereo audio input, intended for use in a karaoke
-environment.
+A self-contained, open-source karaoke system with YouTube integration, real-time pitch shifting, and a mobile-friendly web interface.
 
-It uses:
+## Features
 
-- [GStreamer](https://gstreamer.freedesktop.org/)
-- [gst-python](https://gstreamer.freedesktop.org/bindings/python.html)
-- [rubberband](https://breakfastquay.com/rubberband/)
-- [python-rtmidi](https://github.com/SpotlightKid/python-rtmidi)
-- [LADSPA](https://www.ladspa.org/)
+- **YouTube Integration**: Search and queue karaoke videos directly from YouTube
+- **Real-time Pitch Shifting**: Adjust pitch per song using rubberband
+- **Web Interface**: Mobile-friendly queue management and playback controls
+- **User System**: Track songs by user with persistent history
+- **Operator Mode**: PIN-protected controls for playback and queue management
 
-kbox is controlled via a MIDI keyboard. Tapping middle C on the keyboard will
-reset the pitch shift to zero. Any other note will shift the pitch up or down
-by the interval between that note and middle C (C<sub>4</sub>). For example,
-the E above middle C (E<sub>4</sub>) will shift up by two whole steps (4
-semitones), and the B&flat; below middle C (B&flat;<sub>3</sub>) will shift
-down by one whole step (2 semitones).
+## Technology
+
+- [GStreamer](https://gstreamer.freedesktop.org/) with [gst-python](https://gstreamer.freedesktop.org/bindings/python.html) for audio/video playback
+- [rubberband](https://breakfastquay.com/rubberband/) via [LADSPA](https://www.ladspa.org/) for pitch shifting
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube downloads
+- [FastAPI](https://fastapi.tiangolo.com/) for the web server
+
+## Quick Start (Docker)
+
+```bash
+docker-compose build
+docker-compose run --rm kbox python3 configure_api_key.py YOUR_YOUTUBE_API_KEY
+docker-compose up
+```
+
+Then open `http://localhost:8000` in your browser.
+
+## Quick Start (Native)
+
+### Prerequisites
+
+**Debian/Ubuntu:**
+```bash
+sudo apt install python3-gst-1.0 gstreamer1.0-alsa rubberband-ladspa \
+    gstreamer1.0-plugins-bad gstreamer1.0-plugins-good ffmpeg
+```
+
+**macOS:**
+See `ldocs/SETUP_MACOS.md` for GStreamer and rubberband setup.
+
+### Run
+
+```bash
+# Install dependencies
+uv sync
+
+# Configure YouTube API key (one-time)
+uv run python configure_api_key.py YOUR_YOUTUBE_API_KEY
+
+# Start the server
+uv run python -m kbox.main
+```
 
 ## Configuration
 
-Currently, the configuration is hardcoded in `kbox/config.py`. The default
-configuration uses the default ALSA sink for output, and expects an Akai MPK
-mini Play mk3 as the MIDI input device. If you need to use a different audio
-output, or a different MIDI device, you will need to edit this file.
+Configuration is stored in SQLite and managed through the web interface:
 
-## Easy setup (Docker)
+- **Operator PIN**: Default is `1234` (change in Settings)
+- **YouTube API Key**: Required for search functionality
+- **Audio Devices**: Auto-detected, configurable in Settings
 
-1. Install docker
-1. Install docker-compose
-1. docker-compose build
-1. docker-compose up
-
-## Manual setup (Debian and derivatives)
+## Development
 
 ```bash
-apt install python3-gst-1.0 gstreamer1.0-alsa python3-mido python3-rtmidi rubberband-ladspa gstreamer1.0-plugins-bad
+# Install dev dependencies
+uv sync --group dev
+
+# Run tests
+uv run pytest
+
+# Run linting
+uv run ruff check .
+uv run mypy kbox/
 ```
 
-## Manual setup (MacOS)
+## License
 
-- install gstreamer from homebrew (or was this a mistake?? /Library/Frameworks has GStreamer...)
-- python bindings for gstreamer (how?)
-- compile gstreamer LADSPA plugin from source (must match gstreamer version), install in $GST_PLUGIN_PATH
-- compile rubberband LADSPA plugin from source, install in $HOME/.ladspa
-- run with GST_PLUGIN_PATH set appropriately
+See [LICENSE](LICENSE).
