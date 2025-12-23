@@ -131,6 +131,9 @@ class KboxServer:
         else:
             logger.warning("QR code generation failed, overlay disabled")
 
+        # Show initial idle screen
+        self.playback_controller.show_idle_screen()
+
         logger.info("=" * 60)
         logger.info("kbox is running!")
         logger.info("Web UI: %s", web_url)
