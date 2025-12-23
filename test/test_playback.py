@@ -600,7 +600,6 @@ def test_on_song_end_plays_next_in_queue_order(playback_controller, mock_queue_m
     mock_queue_manager.get_next_song_after.return_value = song_at_position_3
     
     mock_queue_manager.mark_played.return_value = True
-    mock_queue_manager.record_history.return_value = 1
     mock_streaming_controller.get_position.return_value = 150
     
     # Simulate song ending

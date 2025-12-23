@@ -25,7 +25,8 @@ class PlaybackController:
         self,
         queue_manager: QueueManager,
         streaming_controller,  # StreamingController - avoid circular import
-        config_manager
+        config_manager,
+        history_manager=None  # HistoryManager - avoid circular import, optional for tests
     ):
         """
         Initialize PlaybackController.
@@ -34,10 +35,12 @@ class PlaybackController:
             queue_manager: QueueManager instance
             streaming_controller: StreamingController instance
             config_manager: ConfigManager instance
+            history_manager: HistoryManager instance (optional, for tests)
         """
         self.queue_manager = queue_manager
         self.streaming_controller = streaming_controller
         self.config_manager = config_manager
+        self.history_manager = history_manager
         
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.IDLE
@@ -350,19 +353,19 @@ class PlaybackController:
         
         # Record history if threshold met
         current_position = self.streaming_controller.get_position() or 0
-        if self._should_record_history(current_song.get('duration_seconds'), current_position):
+        if self.history_manager and self._should_record_history(current_song.get('duration_seconds'), current_position):
             completion_pct = self._calculate_completion_percentage(
                 current_position, 
                 current_song.get('duration_seconds')
             )
-            self.queue_manager.record_history(
-                queue_item_id=self.current_song_id,
-                played_duration_seconds=current_position,
-                playback_end_position_seconds=current_position,
-                completion_percentage=completion_pct
+            self._record_performance_history(
+                current_song,
+                current_position,
+                current_position,
+                completion_pct
             )
-            # Mark as played in queue for current event tracking
-            self.queue_manager.mark_played(self.current_song_id)
+        # Mark as played in queue for current event tracking
+        self.queue_manager.mark_played(self.current_song_id)
         
         # Stop current playback (but do NOT mark as played)
         self.logger.debug('[DEBUG] skip: before stop_playback, current=%s next=%s', self.current_song_id, next_song['id'])
@@ -711,16 +714,16 @@ class PlaybackController:
                     
                     # Record history if threshold met
                     final_position = self.streaming_controller.get_position() or 0
-                    if self._should_record_history(finished_song.get('duration_seconds'), final_position):
+                    if self.history_manager and self._should_record_history(finished_song.get('duration_seconds'), final_position):
                         completion_pct = self._calculate_completion_percentage(
                             final_position, 
                             finished_song.get('duration_seconds')
                         )
-                        self.queue_manager.record_history(
-                            queue_item_id=finished_song_id,
-                            played_duration_seconds=final_position,
-                            playback_end_position_seconds=final_position,
-                            completion_percentage=completion_pct
+                        self._record_performance_history(
+                            finished_song,
+                            final_position,
+                            final_position,
+                            completion_pct
                         )
                     
                     # Mark as played in queue for current event tracking
@@ -1088,6 +1091,29 @@ class PlaybackController:
             return 0.0
         
         return min(100.0, (played_seconds / duration_seconds) * 100.0)
+    
+    def _record_performance_history(
+        self,
+        queue_item: dict,
+        played_duration_seconds: int,
+        playback_end_position_seconds: int,
+        completion_percentage: float
+    ):
+        """
+        Record a performance in history.
+        
+        Args:
+            queue_item: Queue item dict with song details
+            played_duration_seconds: How long the song was played
+            playback_end_position_seconds: Where playback ended
+            completion_percentage: Percentage of song completed
+        """
+        self.history_manager.record_performance(
+            queue_item=queue_item,
+            played_duration_seconds=played_duration_seconds,
+            playback_end_position_seconds=playback_end_position_seconds,
+            completion_percentage=completion_percentage
+        )
     
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""

@@ -101,6 +101,11 @@ def get_user_manager(request: Request) -> UserManager:
     return request.app.state.user_manager
 
 
+def get_history_manager(request: Request):
+    """Get HistoryManager from app state."""
+    return request.app.state.history_manager
+
+
 def check_operator(request: Request) -> bool:
     """
     Check if user is authenticated as operator.
@@ -114,6 +119,7 @@ def create_app(
     playback_controller: PlaybackController,
     config_manager: ConfigManager,
     user_manager: UserManager,
+    history_manager,  # HistoryManager - avoid circular import
     streaming_controller: Optional[StreamingController] = None,
 ) -> FastAPI:
     """
@@ -143,6 +149,7 @@ def create_app(
     app.state.playback_controller = playback_controller
     app.state.config_manager = config_manager
     app.state.user_manager = user_manager
+    app.state.history_manager = history_manager
     app.state.streaming_controller = streaming_controller
 
     # Templates
@@ -177,11 +184,11 @@ def create_app(
     async def get_song_settings(
         youtube_video_id: str,
         user_id: str,
-        queue_mgr: QueueManager = Depends(get_queue_manager),
+        history_mgr = Depends(get_history_manager),
     ):
         """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
         # Get settings from history (assumes YouTube source)
-        settings = queue_mgr.get_last_settings('youtube', youtube_video_id, user_id)
+        settings = history_mgr.get_last_settings('youtube', youtube_video_id, user_id)
         return {"settings": settings}
 
     @app.post("/api/queue")
@@ -652,10 +659,10 @@ def create_app(
     @app.get("/api/history/{user_id}")
     async def get_user_history(
         user_id: str,
-        queue_mgr: QueueManager = Depends(get_queue_manager),
+        history_mgr = Depends(get_history_manager),
     ):
         """Get playback history for a specific user."""
-        history = queue_mgr.get_user_history(user_id, limit=50)
+        history = history_mgr.get_user_history(user_id, limit=50)
         return {"history": history}
 
     # Web UI

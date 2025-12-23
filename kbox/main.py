@@ -15,6 +15,7 @@ from .user import UserManager
 from .youtube import YouTubeClient
 from .streaming import StreamingController
 from .playback import PlaybackController
+from .history import HistoryManager
 from .web.server import create_app
 from .platform import is_macos, run_with_gst_macos_main, run_uvicorn_in_thread
 from .overlay import generate_qr_code
@@ -55,6 +56,7 @@ class KboxServer:
         )
         self.queue_manager = QueueManager(self.database, youtube_client=self.youtube_client)
         self.user_manager = UserManager(self.database)
+        self.history_manager = HistoryManager(self.database)
 
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(
@@ -66,6 +68,7 @@ class KboxServer:
             self.queue_manager,
             self.streaming_controller,
             self.config_manager,
+            self.history_manager,
         )
 
         # Web server
@@ -75,6 +78,7 @@ class KboxServer:
             self.playback_controller,
             self.config_manager,
             self.user_manager,
+            self.history_manager,
             streaming_controller=self.streaming_controller,
         )
 
