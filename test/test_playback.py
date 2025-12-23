@@ -109,7 +109,7 @@ def playback_controller(mock_queue_manager, mock_streaming_controller, mock_conf
 
 def test_initial_state(playback_controller):
     """Test initial playback state."""
-    assert playback_controller.state == PlaybackState.IDLE
+    assert playback_controller.state == PlaybackState.STOPPED
     assert playback_controller.current_song_id is None
 
 

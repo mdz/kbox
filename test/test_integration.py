@@ -161,8 +161,8 @@ def test_playback_state_transitions(full_system):
     """Test playback state transitions."""
     system = full_system
 
-    # Start in idle
-    assert system["playback"].state == PlaybackState.IDLE
+    # Start in stopped (operator must press play to start)
+    assert system["playback"].state == PlaybackState.STOPPED
 
     # Add and mark ready
     item_id = system["queue"].add_song(system["users"]["alice"], "youtube", "vid1", "Song 1")

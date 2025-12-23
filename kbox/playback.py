@@ -16,7 +16,8 @@ from .queue import QueueManager
 class PlaybackState(Enum):
     """Playback state enumeration."""
 
-    IDLE = "idle"
+    STOPPED = "stopped"  # Operator stopped or initial state - no auto-start
+    IDLE = "idle"  # Queue exhausted naturally - will auto-start when songs added
     PLAYING = "playing"
     PAUSED = "paused"
     TRANSITION = "transition"  # Between songs, showing interstitial
@@ -47,7 +48,7 @@ class PlaybackController:
         self.config_manager = config_manager
         self.history_manager = history_manager
         self.logger = logging.getLogger(__name__)
-        self.state = PlaybackState.IDLE
+        self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
         self.lock = threading.Lock()
 
@@ -69,6 +70,27 @@ class PlaybackController:
 
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
+
+    def _set_state(self, new_state: PlaybackState, reason: str = ""):
+        """
+        Set playback state with logging.
+
+        All state transitions should go through this method to ensure
+        consistent logging and easier debugging.
+
+        Args:
+            new_state: The new state to transition to
+            reason: Optional reason/context for the transition
+        """
+        old_state = self.state
+        if old_state == new_state:
+            return  # No change, skip logging
+
+        self.state = new_state
+        if reason:
+            self.logger.info("State: %s -> %s (%s)", old_state.value, new_state.value, reason)
+        else:
+            self.logger.info("State: %s -> %s", old_state.value, new_state.value)
 
     def _start_monitor(self):
         """Start background thread to monitor playback state and react accordingly."""
@@ -189,10 +211,9 @@ class PlaybackController:
 
             if self.state == PlaybackState.PAUSED:
                 # Resume current song
-                self.logger.info("Resuming playback")
                 try:
                     self.streaming_controller.resume()
-                    self.state = PlaybackState.PLAYING
+                    self._set_state(PlaybackState.PLAYING, "resumed")
                     return True
                 except Exception as e:
                     self.logger.error("Error resuming playback: %s", e, exc_info=True)
@@ -219,8 +240,7 @@ class PlaybackController:
         ready_songs = [item for item in queue if item.download_status == QueueManager.STATUS_READY]
 
         if not ready_songs:
-            self.logger.info("No ready songs in queue")
-            self.state = PlaybackState.IDLE
+            self._set_state(PlaybackState.IDLE, "no ready songs")
             return False
 
         # Get the first ready song
@@ -241,7 +261,7 @@ class PlaybackController:
         download_path = song.download_path
         if not download_path:
             self.logger.warning("No download path for song %s", song.id)
-            self.state = PlaybackState.IDLE
+            self._set_state(PlaybackState.IDLE, "no download path")
             return False
 
         # Reset notification flags for new song
@@ -267,7 +287,7 @@ class PlaybackController:
                 self.streaming_controller.load_file(download_path)
             except Exception as e:
                 self.logger.error("Failed to load file into streaming controller: %s", e)
-                self.state = PlaybackState.ERROR
+                self._set_state(PlaybackState.ERROR, f"load failed: {e}")
                 self._handle_error(song.id, f"Playback failed: {str(e)}")
                 return False
 
@@ -277,14 +297,12 @@ class PlaybackController:
             #   2. _stop_internal() - clears it when stopping playback
             #   3. on_song_end() - clears it when song finishes naturally
             self.current_song_id = song.id
-            self.state = PlaybackState.PLAYING
-
-            self.logger.info("Playback started: %s", song.metadata.title)
+            self._set_state(PlaybackState.PLAYING, f"playing: {song.metadata.title}")
             return True
 
         except Exception as e:
             self.logger.error("Error loading song: %s", e, exc_info=True)
-            self.state = PlaybackState.ERROR
+            self._set_state(PlaybackState.ERROR, f"error: {e}")
             self._handle_error(song.id, str(e))
             return False
 
@@ -300,10 +318,9 @@ class PlaybackController:
                 self.logger.debug("Not playing, cannot pause")
                 return False
 
-            self.logger.info("Pausing playback")
             try:
                 self.streaming_controller.pause()
-                self.state = PlaybackState.PAUSED
+                self._set_state(PlaybackState.PAUSED, "paused")
                 return True
             except Exception as e:
                 self.logger.error("Error pausing playback: %s", e, exc_info=True)
@@ -319,7 +336,7 @@ class PlaybackController:
         self.streaming_controller.stop_playback()
         self.streaming_controller.set_overlay_text("")  # Clear the singer/up next overlay
         self.current_song_id = None
-        self.state = PlaybackState.IDLE
+        self._set_state(PlaybackState.STOPPED, "stopped by operator")
         self.show_idle_screen()
 
     def stop_playback(self) -> bool:
@@ -338,8 +355,11 @@ class PlaybackController:
                 self._transition_timer = None
             self._next_song_pending = None
 
-            if not self.current_song_id and self.state == PlaybackState.IDLE:
-                self.logger.debug("Already idle, nothing to stop")
+            if not self.current_song_id and self.state in (
+                PlaybackState.IDLE,
+                PlaybackState.STOPPED,
+            ):
+                self.logger.debug("Already stopped, nothing to stop")
                 return False
 
             self.logger.info("Stopping playback")
@@ -690,12 +710,10 @@ class PlaybackController:
         """
         self.logger.error("Playback error for item %s: %s", item_id, error_message)
 
-        # Try to skip to next song (using internal version since lock is already held)
-        if self._skip_internal():
-            self.logger.info("Skipped to next song after error")
-        else:
-            self.logger.warning("No next song available after error")
-            self.state = PlaybackState.IDLE
+        # Stop playback so operator can investigate
+        self._set_state(PlaybackState.STOPPED, f"error: {error_message}")
+        self.current_song_id = None
+        self.show_idle_screen()
 
     def on_song_end(self):
         """Called when current song ends (EOS)."""
@@ -767,8 +785,7 @@ class PlaybackController:
 
         if not next_song:
             # No more songs - show end-of-queue screen
-            self.logger.info("No more songs, showing end-of-queue screen")
-            self.state = PlaybackState.IDLE
+            self._set_state(PlaybackState.IDLE, "queue exhausted")
             self._show_end_of_queue_screen()
             return
 
@@ -786,10 +803,9 @@ class PlaybackController:
                 transition_duration = 5
 
         # Show transition screen
-        self.logger.info(
-            "Showing transition for: %s (duration: %ss)", next_song.user_name, transition_duration
+        self._set_state(
+            PlaybackState.TRANSITION, f"next: {next_song.user_name} ({transition_duration}s)"
         )
-        self.state = PlaybackState.TRANSITION
         self._show_transition_screen(
             singer_name=next_song.user_name, song_title=next_song.metadata.title
         )
@@ -814,7 +830,7 @@ class PlaybackController:
 
             if not self._next_song_pending:
                 self.logger.warning("Transition complete but no pending song")
-                self.state = PlaybackState.IDLE
+                self._set_state(PlaybackState.IDLE, "no pending song after transition")
                 return
 
             next_song = self._next_song_pending
