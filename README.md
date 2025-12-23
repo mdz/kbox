@@ -53,6 +53,13 @@ uv run python configure_api_key.py YOUR_YOUTUBE_API_KEY
 uv run python -m kbox.main
 ```
 
+## Hardware Setup
+
+kbox requires external audio hardware for microphone input and mixing. See the [Hardware Setup Guide](docs/HARDWARE_SETUP.md) for detailed information on:
+- Simple setups with audio interfaces (e.g., Focusrite Scarlett Solo)
+- Advanced setups with mixers and home theater systems
+- Signal flow diagrams and troubleshooting
+
 ## Configuration
 
 Configuration is stored in SQLite and managed through the web interface:
