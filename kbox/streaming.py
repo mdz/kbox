@@ -9,7 +9,7 @@ READY (idle) and PLAYING (song) states.
 import logging
 import sys
 import threading
-from typing import Optional
+from typing import Any, Optional
 
 # Defer GStreamer imports until actually needed to avoid crashes on import
 # On macOS, importing GStreamer can cause segfaults due to library conflicts
@@ -61,10 +61,10 @@ class StreamingController:
         self.eos_callback = None
 
         # Pipeline components (set by _create_persistent_pipeline)
-        self.playbin = None
-        self.audio_bin = None
-        self.video_bin = None
-        self.pitch_shift_element = None
+        self.playbin: Any = None
+        self.audio_bin: Any = None
+        self.video_bin: Any = None
+        self.pitch_shift_element: Any = None
 
         # Overlay elements (set by _create_video_sink_bin)
         self.qr_overlay = None

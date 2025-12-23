@@ -61,8 +61,8 @@ warn_return_any = false  # Too noisy for database/external library returns
 warn_unused_configs = true
 ignore_missing_imports = true  # GStreamer/gi has no stubs
 exclude = ["test/"]
-# Will enable checks one at a time: var-annotated ✅, return-value ✅, assignment ✅, valid-type ✅, union-attr (in progress)
-disable_error_code = ["attr-defined"]
+# Will enable checks one at a time: var-annotated ✅, return-value ✅, assignment ✅, valid-type ✅, union-attr ✅, attr-defined (in progress)
+# No checks disabled - all mypy checks enabled!
 
 
 
