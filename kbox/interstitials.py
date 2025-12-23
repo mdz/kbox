@@ -7,7 +7,7 @@ Generates images for display between songs, during idle, and at end of queue.
 import logging
 import os
 import tempfile
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class InterstitialGenerator:
         os.makedirs(self.cache_dir, exist_ok=True)
 
         # Font paths (will try system fonts)
-        self._font_cache = {}
+        self._font_cache: dict[tuple[int, bool], Any] = {}
 
     def _get_font(self, size: int, bold: bool = False) -> "ImageFont.FreeTypeFont":
         """Get a font at the specified size, with caching."""

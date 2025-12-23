@@ -61,8 +61,8 @@ warn_return_any = false  # Too noisy for database/external library returns
 warn_unused_configs = true
 ignore_missing_imports = true  # GStreamer/gi has no stubs
 exclude = ["test/"]
-# Disable strict attribute checking for dynamic/optional code paths
-disable_error_code = ["attr-defined", "union-attr", "valid-type", "assignment", "return-value", "var-annotated"]
+# Will enable checks one at a time, starting with var-annotated
+disable_error_code = ["attr-defined", "union-attr", "valid-type", "assignment", "return-value"]
 
 
 
