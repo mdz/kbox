@@ -106,23 +106,53 @@ flowchart TB
     style DM fill:#e1f5fe
 ```
 
-### Scarlett Solo 3rd Gen - Front Panel
+### Scarlett Solo Controls Reference
 
-![Scarlett Solo 3rd Gen front panel](Scarlett-Solo-3rd-gen.jpeg)
+Both 3rd and 4th generation Scarlett Solo units work with kbox. The layout differs slightly between generations.
 
-**Front panel controls (left to right):**
+#### 3rd Generation (2019-2022)
+
+![Scarlett Solo 3rd Gen - front and back](Scarlett-Solo-3rd-gen.jpeg)
+
+**Front panel (left to right):**
 - **Input 1** (XLR) - Connect wired microphones here
-- **Gain 1** knob - Adjusts Input 1 level (green LED ring shows level)
-- **48V** button - Enables phantom power for condenser mics
-- **AIR** button - Adds high-frequency brightness (optional, for vocals)
-- **Input 2** (1/4" TS) - Connect wireless mic receiver or line sources here
-- **Gain 2** knob - Adjusts Input 2 level (red LED ring shows level)
-- **INST** button - Switches Input 2 between line and instrument mode (leave OFF for wireless mics)
-- **Monitor** knob - Controls output volume (headphones + rear outputs)
-- **Direct Monitor** button - Mixes inputs with USB playback (must be ON for karaoke)
-- **Headphone jack** (1/4") - For monitoring
+- **Gain 1** knob - Adjusts Input 1 level (green LED ring)
+- **48V** button - Phantom power for condenser mics
+- **AIR** button - High-frequency brightness (optional)
+- **Input 2** (1/4" jack) - Connect wireless mic receiver here
+- **Gain 2** knob - Adjusts Input 2 level (red LED ring)
+- **INST** button - Leave OFF for wireless mics
+- **Monitor** knob - Output volume (headphones + rear outputs)
+- **Direct Monitor** button - Must be ON for karaoke
+- **Headphone jack** (1/4")
 
-**Rear panel:** USB-C port, dual 1/4" TRS outputs (left/right)
+**Rear panel:** USB-C, dual 1/4" TRS line outputs (Left/Right)
+
+#### 4th Generation (2022+)
+
+![Scarlett Solo 4th Gen - front and back](Scarlett-Solo-4th-gen.jpeg)
+
+**Front panel (left to right):**
+- **Input 1** (1/4" jack) - For instruments or line sources
+- **Gain 1** knob - Adjusts Input 1 level (green LED ring)
+- **Inst** button - Instrument/line mode for Input 1
+- **48V** button - Phantom power for condenser mics
+- **Gain 2** knob - Adjusts Input 2 level (green LED ring)
+- **Air** button - High-frequency brightness
+- **Output** knob - Output volume
+- **Direct** button - Must be ON for karaoke
+- **Headphone jack** (1/4")
+
+**Rear panel:** USB-C, dual 1/4" TRS line outputs, **Input 2** (XLR - for microphones!)
+
+> **Key difference for 4th gen:** The XLR microphone input moved to the **back panel**. Connect your wired mic to the rear XLR jack (Input 2), not the front. The front 1/4" jacks are for instruments/line sources.
+
+#### Which Input to Use?
+
+| Mic Type | 3rd Gen | 4th Gen |
+|----------|---------|---------|
+| Wired XLR mic | Front - Input 1 (XLR) | **Rear** - Input 2 (XLR) |
+| Wireless receiver (1/4") | Front - Input 2 | Front - Input 1 |
 
 ### Setup Steps
 
@@ -159,17 +189,17 @@ flowchart TB
 
 4. **Connect your microphone(s)**
 
-   **Option A: Single wired mic** → use **Input 1** (XLR)
-   - Plug XLR cable from your mic into Input 1 (the combo jack)
-   - If using a condenser mic, press the **48V** button for phantom power
-   - Dynamic mics (SM58, XM8500) don't need phantom power
+   **Option A: Single wired XLR mic**
+   - *3rd gen:* Plug XLR into **front Input 1** (XLR jack)
+   - *4th gen:* Plug XLR into **rear Input 2** (the XLR jack on the back)
+   - Press **48V** for condenser mics; dynamic mics (SM58, XM8500) don't need it
    
-   **Option B: Wireless mic system** → use **Input 2** (1/4" line)
-   - Connect receiver's 1/4" output to Input 2 using a 1/4" TS cable
-   - Leave the **INST** button OFF (wireless receivers output line level)
-   - This works great for dual-mic systems like the TONOR TW-820
+   **Option B: Wireless mic system (1/4" receiver output)**
+   - *3rd gen:* Connect to **front Input 2** (1/4" jack), leave INST button OFF
+   - *4th gen:* Connect to **front Input 1** (1/4" jack), leave Inst button OFF
+   - Works great for dual-mic systems like the TONOR TW-820
    
-   > **Why different inputs?** Input 1 has a mic preamp for low-level XLR signals. Input 2 expects line-level signals - wireless receivers already have internal preamps, so using Input 1 would double-amplify and cause distortion.
+   > **Why different inputs?** The XLR input has a mic preamp for low-level signals. The 1/4" inputs expect line-level signals. Wireless receivers already have internal preamps, so connect them to the 1/4" line input to avoid double-amplification.
 
 5. **Enable Direct Monitor**
    - Press the **Direct Monitor** button (front panel, far right) so it lights up
@@ -183,18 +213,20 @@ flowchart TB
    - HDMI from computer to your monitor/TV
 
 8. **Balance the mix**
-   - **Mic level**: Adjust the gain knob for your input while singing:
-     - *Wired mic (Input 1)*: Use the **Gain 1** knob (has green LED ring)
-     - *Wireless (Input 2)*: Use the **Gain 2** knob (has red LED ring)
-     - Watch the LED ring around the knob: green = good, amber = okay, red = clipping
+   - **Mic level**: Adjust the gain knob for your mic input while singing:
+     - *3rd gen wired mic:* **Gain 1** knob (green LED ring)
+     - *3rd gen wireless:* **Gain 2** knob (red LED ring)
+     - *4th gen wired mic:* **Gain 2** knob (green LED ring)
+     - *4th gen wireless:* **Gain 1** knob (green LED ring)
+     - Watch the LED ring: green = good, amber = okay, red = clipping
    - **Music level**: Adjust in kbox web UI (YouTube volume slider)
-   - **Overall level**: Use the large **Monitor** knob to control output to speakers/headphones
+   - **Overall level**: Use the **Monitor/Output** knob to control speakers/headphones
 
 ### Microphone Options
 
 #### Option A: Single Wired Microphone
 
-The simplest setup - one XLR mic into Input 1.
+The simplest setup - one XLR mic into the XLR input (3rd gen: front Input 1, 4th gen: rear Input 2).
 
 ```mermaid
 flowchart TB
@@ -221,7 +253,7 @@ flowchart TB
 
 #### Option B: Wireless Microphone System
 
-For two singers, use a wireless system with a combined output into Input 2.
+For two singers, use a wireless system with a combined 1/4" output into the line input (3rd gen: front Input 2, 4th gen: front Input 1).
 
 ```mermaid
 flowchart TB
