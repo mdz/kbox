@@ -139,9 +139,12 @@ flowchart TB
    
    > **Tip**: Use `plughw:` (not `hw:`) to let ALSA handle sample format conversion automatically.
 
-4. **Connect your microphone**
-   - Plug XLR cable into the Solo's Input 1
-   - If using a condenser mic, enable 48V phantom power
+4. **Connect your microphone (single mic setup)**
+   - Plug XLR cable from your mic into the Solo's **Input 1** (the XLR/combo jack)
+   - If using a condenser mic, press the **48V** button to enable phantom power
+   - Dynamic mics (like SM58, XM8500) don't need phantom power
+   
+   > **Input 1** is the mic preamp input - it provides gain for low-level microphone signals. Use this for any mic connected directly via XLR.
 
 5. **Enable Direct Monitor**
    - Flip the Direct Monitor switch to ON (front panel)
@@ -153,8 +156,38 @@ flowchart TB
    - HDMI from computer to your monitor/TV
 
 8. **Balance the mix**
-   - **Mic level**: Adjust the Gain knob on the Solo (aim for green, avoid red)
-   - **Music level**: Adjust in kbox web UI or system volume
+   - **Mic level**: Adjust the **Input 1 Gain** knob (the large knob on top) while singing
+     - Watch the LED ring around the knob: green = good, red = too hot (clipping)
+     - Aim for the signal to peak in the green, occasionally touching yellow
+   - **Music level**: Adjust in kbox web UI (YouTube volume slider)
+   - **Overall level**: Use the **Monitor** knob to control output to speakers/headphones
+
+### Using a Single Wired Microphone
+
+This is the simplest setup - one XLR microphone into Input 1.
+
+```mermaid
+flowchart TB
+    subgraph kbox["kbox (Raspberry Pi / Computer)"]
+        SW[kbox Software]
+    end
+    
+    subgraph solo["Scarlett Solo"]
+        DM[Direct Monitor Mix]
+    end
+    
+    MIC[🎤 Wired Mic] -->|XLR| solo
+    kbox -->|USB Audio| solo
+    kbox -->|HDMI| MON[🖥️ Display]
+    solo -->|1/4 inch TRS| SPK[🔊 Powered Speaker]
+    
+    style DM fill:#e1f5fe
+```
+
+**Recommended microphones:**
+- **Budget**: Behringer XM8500 (~$20) - dynamic, no phantom power needed
+- **Mid-range**: Shure SM58 (~$100) - industry standard, very durable
+- **Condenser**: Audio-Technica AT2020 (~$100) - requires 48V phantom power
 
 ### Using Two Microphones with Solo
 
