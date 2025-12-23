@@ -106,6 +106,24 @@ flowchart TB
     style DM fill:#e1f5fe
 ```
 
+### Scarlett Solo 3rd Gen - Front Panel
+
+![Scarlett Solo 3rd Gen front panel](Scarlett-Solo-3rd-gen.jpeg)
+
+**Front panel controls (left to right):**
+- **Input 1** (XLR) - Connect wired microphones here
+- **Gain 1** knob - Adjusts Input 1 level (green LED ring shows level)
+- **48V** button - Enables phantom power for condenser mics
+- **AIR** button - Adds high-frequency brightness (optional, for vocals)
+- **Input 2** (1/4" TS) - Connect wireless mic receiver or line sources here
+- **Gain 2** knob - Adjusts Input 2 level (red LED ring shows level)
+- **INST** button - Switches Input 2 between line and instrument mode (leave OFF for wireless mics)
+- **Monitor** knob - Controls output volume (headphones + rear outputs)
+- **Direct Monitor** button - Mixes inputs with USB playback (must be ON for karaoke)
+- **Headphone jack** (1/4") - For monitoring
+
+**Rear panel:** USB-C port, dual 1/4" TRS outputs (left/right)
+
 ### Setup Steps
 
 1. **Connect the Scarlett Solo to your computer via USB**
@@ -154,21 +172,23 @@ flowchart TB
    > **Why different inputs?** Input 1 has a mic preamp for low-level XLR signals. Input 2 expects line-level signals - wireless receivers already have internal preamps, so using Input 1 would double-amplify and cause distortion.
 
 5. **Enable Direct Monitor**
-   - Flip the Direct Monitor switch to ON (front panel)
+   - Press the **Direct Monitor** button (front panel, far right) so it lights up
+   - This mixes your mic input with USB playback in hardware with zero latency
 
 6. **Connect speaker**
-   - Run 1/4" TRS cable from Solo's output to your powered speaker
+   - Run 1/4" TRS cable from Solo's **rear outputs** to your powered speaker
+   - The Solo has dual 1/4" outputs on the back (left and right channels)
 
 7. **Connect display**
    - HDMI from computer to your monitor/TV
 
 8. **Balance the mix**
    - **Mic level**: Adjust the gain knob for your input while singing:
-     - *Wired mic (Input 1)*: Use the large **Input 1 Gain** knob on top
-     - *Wireless (Input 2)*: Use the smaller **Input 2 Gain** knob on top
-     - Watch the LED ring: green = good, yellow = okay, red = too hot (clipping)
+     - *Wired mic (Input 1)*: Use the **Gain 1** knob (has green LED ring)
+     - *Wireless (Input 2)*: Use the **Gain 2** knob (has red LED ring)
+     - Watch the LED ring around the knob: green = good, amber = okay, red = clipping
    - **Music level**: Adjust in kbox web UI (YouTube volume slider)
-   - **Overall level**: Use the **Monitor** knob to control output to speakers/headphones
+   - **Overall level**: Use the large **Monitor** knob to control output to speakers/headphones
 
 ### Microphone Options
 
