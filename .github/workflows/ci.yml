@@ -10,56 +10,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    container:
-      image: debian:stable-slim
 
     steps:
-      - name: Install system dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            git \
-            ca-certificates \
-            curl \
-            python3 \
-            python3-gi \
-            python3-gst-1.0 \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad \
-            gstreamer1.0-libav
-
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      - name: Install dependencies
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          # Create venv with system-site-packages to access apt-installed GStreamer
-          uv venv --system-site-packages
-          uv sync
-          # Fix: uv sync may reset system-site-packages flag
-          sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' .venv/pyvenv.cfg
+      - name: Build Docker image
+        run: docker build -t kbox .
 
       - name: Lint with ruff
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run ruff check .
+        run: docker run --rm kbox ruff check .
 
       - name: Check formatting with ruff
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run ruff format --check .
+        run: docker run --rm kbox ruff format --check .
 
       - name: Type check with mypy
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run mypy kbox
+        run: docker run --rm kbox mypy kbox
 
       - name: Run tests
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run pytest -v
-
+        run: docker run --rm kbox pytest -v
