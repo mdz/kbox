@@ -81,8 +81,8 @@ This is the most accessible setup for casual karaoke. It uses a USB audio interf
 | Display | Any HDMI monitor/TV | Shows lyrics |
 | Audio Interface | Focusrite Scarlett Solo (3rd gen) | Mixes mic + audio |
 | Microphone(s) | Wired XLR mic, or wireless system (see below) | Vocals |
-| Powered Speaker | JBL, QSC, or similar powered speaker | Sound output |
-| 1/4" TRS Cable | Standard balanced audio cable | Interface to speaker |
+| Powered Speaker | Any powered speaker or Bluetooth speaker | Sound output |
+| Audio Cable | Dual 1/4" to 3.5mm stereo cable | Interface to speaker |
 
 ### How It Works
 
@@ -180,8 +180,9 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. They have identi
    - This mixes your mic input with USB playback in hardware with zero latency
 
 6. **Connect speaker**
-   - Run 1/4" TRS cable from Solo's **rear outputs** to your powered speaker
-   - The Solo has dual 1/4" outputs on the back (left and right channels)
+   - The Solo has dual 1/4" TRS outputs on the back (left/right)
+   - Use a **dual 1/4" to 3.5mm stereo cable** to connect to most consumer speakers
+   - Pro audio speakers with 1/4" inputs can connect directly
 
 7. **Connect display**
    - HDMI from computer to your monitor/TV
