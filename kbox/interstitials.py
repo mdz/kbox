@@ -31,13 +31,13 @@ SECONDARY_TEXT_COLOR = (150, 150, 160)  # Muted gray
 class InterstitialGenerator:
     """Generates interstitial screen images."""
 
-    def __init__(self, width: int = 1920, height: int = 1080, cache_dir: Optional[str] = None):
+    def __init__(self, width: int = 1280, height: int = 720, cache_dir: Optional[str] = None):
         """
         Initialize the interstitial generator.
 
         Args:
-            width: Output image width in pixels
-            height: Output image height in pixels
+            width: Output image width in pixels (default: 1280 to match typical video)
+            height: Output image height in pixels (default: 720 to match typical video)
             cache_dir: Directory to store generated images (default: temp dir)
         """
         self.width = width
@@ -116,52 +116,6 @@ class InterstitialGenerator:
         x = (self.width - text_width) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    def _add_qr_code(
-        self,
-        img: "Image.Image",
-        url: str,
-        position: str = "bottom-right",
-        size: int = 150,
-        padding: int = 30,
-    ) -> None:
-        """Add a QR code to the image."""
-        try:
-            import qrcode
-
-            # Generate QR code
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=10,
-                border=2,
-            )
-            qr.add_data(url)
-            qr.make(fit=True)
-            qr_img = qr.make_image(fill_color="white", back_color=BACKGROUND_COLOR)
-            qr_img = qr_img.resize((size, size), Image.Resampling.LANCZOS)
-
-            # Calculate position
-            if position == "bottom-right":
-                x = self.width - size - padding
-                y = self.height - size - padding
-            elif position == "bottom-left":
-                x = padding
-                y = self.height - size - padding
-            elif position == "top-right":
-                x = self.width - size - padding
-                y = padding
-            else:  # top-left
-                x = padding
-                y = padding
-
-            # Paste QR code
-            img.paste(qr_img, (x, y))
-
-        except ImportError:
-            self.logger.warning("qrcode library not available, skipping QR code")
-        except Exception as e:
-            self.logger.warning("Failed to add QR code: %s", e)
-
     def generate_idle_screen(
         self, web_url: Optional[str] = None, message: str = "Add songs to get started!"
     ) -> str:
@@ -194,13 +148,7 @@ class InterstitialGenerator:
         message_font = self._get_font(64)
         self._center_text(draw, message, self.height // 2 + 50, message_font, PRIMARY_TEXT_COLOR)
 
-        # Scan instruction (if URL provided)
-        if web_url:
-            scan_font = self._get_font(36)
-            self._center_text(
-                draw, "Scan to add songs →", self.height - 120, scan_font, SECONDARY_TEXT_COLOR
-            )
-            self._add_qr_code(img, web_url, position="bottom-right", size=180)
+        # Note: QR code is handled by the streaming overlay for consistency
 
         # Save and return path
         output_path = os.path.join(self.cache_dir, "interstitial_idle.png")
@@ -249,9 +197,7 @@ class InterstitialGenerator:
         ready_font = self._get_font(48)
         self._center_text(draw, "Get ready!", self.height * 2 // 3, ready_font, ACCENT_COLOR)
 
-        # QR code (smaller, corner)
-        if web_url:
-            self._add_qr_code(img, web_url, position="bottom-right", size=120, padding=20)
+        # Note: QR code is handled by the streaming overlay for consistency
 
         # Save and return path
         output_path = os.path.join(self.cache_dir, "interstitial_transition.png")
@@ -297,13 +243,7 @@ class InterstitialGenerator:
             draw, "...or call it a night?", self.height // 2 + 80, alt_font, SECONDARY_TEXT_COLOR
         )
 
-        # QR code
-        if web_url:
-            scan_font = self._get_font(36)
-            self._center_text(
-                draw, "Scan to add more →", self.height - 120, scan_font, SECONDARY_TEXT_COLOR
-            )
-            self._add_qr_code(img, web_url, position="bottom-right", size=180)
+        # Note: QR code is handled by the streaming overlay for consistency
 
         # Save and return path
         output_path = os.path.join(self.cache_dir, "interstitial_end.png")

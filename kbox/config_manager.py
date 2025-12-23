@@ -64,6 +64,7 @@ class ConfigManager:
         # Overlay settings
         "external_url": None,  # External URL for QR code (overrides auto-detect)
         "overlay_qr_position": "top-left",  # QR position: top-left, top-right, bottom-left, bottom-right
+        "overlay_qr_size_percent": "10",  # QR size as percentage of video height (default 10%)
         # Interstitial settings
         "transition_duration_seconds": "5",  # Duration of transition screen between songs
     }
@@ -76,6 +77,7 @@ class ConfigManager:
         "cache_directory",
         "external_url",
         "overlay_qr_position",
+        "overlay_qr_size_percent",
         "transition_duration_seconds",
         "default_mic_volume",
         "default_youtube_volume",

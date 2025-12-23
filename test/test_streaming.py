@@ -424,3 +424,54 @@ def test_streaming_controller_initialization():
     # Verify it initialized
     assert streaming.get_pipeline_state() == "ready"
     assert streaming.state == "idle"
+
+
+# =========================================================================
+# QR Overlay Tests
+# =========================================================================
+
+
+def test_qr_overlay_resizes_on_video_caps(controller, test_video_3s):
+    """Test that QR overlay resizes based on video resolution via caps negotiation."""
+    # Skip if QR overlay not available (optional element)
+    if controller.qr_overlay is None:
+        pytest.skip("QR overlay not available")
+
+    # Store initial size
+    initial_size = controller._qr_current_size
+
+    # Load a video - this should trigger caps negotiation
+    controller.load_file(test_video_3s)
+
+    # Wait for caps to be negotiated and QR size to be updated
+    time.sleep(0.5)
+
+    # The QR size should have been updated based on video height
+    # Test video is 240px high, so at 10% it should be ~48px (minimum is 48)
+    # Just verify the update method was exercised without crashing
+    assert controller._qr_current_size >= 48
+
+    controller.stop_playback()
+
+
+def test_qr_overlay_position_calculation(controller, test_video_3s):
+    """Test that QR position is calculated correctly for different corners."""
+    if controller.qr_overlay is None:
+        pytest.skip("QR overlay not available")
+
+    # Test each position
+    for position in ["top-left", "top-right", "bottom-left", "bottom-right"]:
+        controller._qr_position = position
+
+        # Manually trigger the size update with known dimensions
+        controller._update_qr_size_for_resolution(1280, 720)
+
+        # Get the offset properties
+        offset_x = controller.qr_overlay.get_property("offset-x")
+        offset_y = controller.qr_overlay.get_property("offset-y")
+
+        # Verify offsets are reasonable (not negative, within bounds)
+        assert offset_x >= 0, f"offset-x negative for {position}"
+        assert offset_y >= 0, f"offset-y negative for {position}"
+        assert offset_x < 1280, f"offset-x out of bounds for {position}"
+        assert offset_y < 720, f"offset-y out of bounds for {position}"

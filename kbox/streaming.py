@@ -263,6 +263,12 @@ class StreamingController:
         ghost_pad = Gst.GhostPad.new("sink", sink_pad)
         video_bin.add_pad(ghost_pad)
 
+        # Add pad probe on videoconvert's src pad to detect video dimensions
+        if self.qr_overlay:
+            vc_src_pad = vc.get_static_pad("src")
+            vc_src_pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_video_caps_event)
+            self.logger.debug("QR overlay pad probe added to videoconvert src pad")
+
         self.logger.info(
             "Video sink bin created with overlays (qr=%s, text=%s)",
             self.qr_overlay is not None,
@@ -281,19 +287,23 @@ class StreamingController:
                 return None
 
             # Store config for later use when positioning
-            self._qr_position = self.config_manager.get("overlay_qr_position") or "bottom-left"
-            self._qr_size = 53  # Small, unobtrusive size (2/3 of original 80px)
-            self._qr_padding = 15
+            self._qr_position = self.config_manager.get("overlay_qr_position") or "top-left"
+            self._qr_size_percent = self.config_manager.get_int("overlay_qr_size_percent", 10)
+            self._qr_current_size = 72  # Default size, will be updated by caps probe
+            self._qr_current_padding = 15
 
-            # Set size and alpha - positioning will be done when we know video dimensions
-            # For now, use simple top-left positioning which always works
-            qr.set_property("overlay-width", self._qr_size)
-            qr.set_property("overlay-height", self._qr_size)
-            qr.set_property("offset-x", self._qr_padding)
-            qr.set_property("offset-y", self._qr_padding)
+            # Set initial size and alpha - will be updated when we know video dimensions
+            qr.set_property("overlay-width", self._qr_current_size)
+            qr.set_property("overlay-height", self._qr_current_size)
+            qr.set_property("offset-x", self._qr_current_padding)
+            qr.set_property("offset-y", self._qr_current_padding)
             qr.set_property("alpha", 0.7)  # Semi-transparent
 
-            self.logger.info("QR overlay element created (size=%dpx, alpha=0.7)", self._qr_size)
+            self.logger.info(
+                "QR overlay element created (size_percent=%d%%, position=%s)",
+                self._qr_size_percent,
+                self._qr_position,
+            )
             return qr
 
         except Exception as e:
@@ -326,6 +336,116 @@ class StreamingController:
         except Exception as e:
             self.logger.warning("Failed to create text overlay: %s", e)
             return None
+
+    def _on_video_caps_event(self, pad, info):
+        """Handle video caps events to detect resolution changes."""
+        Gst = _get_gst()
+
+        try:
+            event = info.get_event()
+            if event is None:
+                return Gst.PadProbeReturn.OK
+
+            if event.type == Gst.EventType.CAPS:
+                self.logger.debug("Received CAPS event on videoconvert src pad")
+                caps = event.parse_caps()
+                if caps:
+                    struct = caps.get_structure(0)
+                    if struct:
+                        # Extract width and height - try multiple API styles
+                        width = None
+                        height = None
+
+                        # Try dictionary-style access first (most compatible)
+                        if hasattr(struct, "__getitem__"):
+                            try:
+                                width = struct["width"]
+                                height = struct["height"]
+                            except (KeyError, TypeError):
+                                pass
+
+                        # Fallback: try get_value (some versions)
+                        if width is None and hasattr(struct, "get_value"):
+                            try:
+                                width = struct.get_value("width")
+                                height = struct.get_value("height")
+                            except Exception:
+                                pass
+
+                        # Fallback: try to parse from caps string
+                        if width is None:
+                            caps_str = caps.to_string()
+                            self.logger.debug("Parsing caps from string: %s", caps_str)
+                            import re
+
+                            width_match = re.search(r"width=\(int\)(\d+)", caps_str)
+                            height_match = re.search(r"height=\(int\)(\d+)", caps_str)
+                            if width_match and height_match:
+                                width = int(width_match.group(1))
+                                height = int(height_match.group(1))
+
+                        if width is not None and height is not None:
+                            self.logger.info("Detected video resolution: %dx%d", width, height)
+                            self._update_qr_size_for_resolution(width, height)
+                        else:
+                            self.logger.debug(
+                                "Could not extract resolution from caps: %s",
+                                caps.to_string()[:200],
+                            )
+                    else:
+                        self.logger.debug("CAPS event had no structure")
+                else:
+                    self.logger.debug("CAPS event had no caps")
+        except Exception as e:
+            self.logger.warning("Error processing video caps event: %s", e, exc_info=True)
+
+        return Gst.PadProbeReturn.OK
+
+    def _update_qr_size_for_resolution(self, width, height):
+        """Update QR overlay size and position based on video resolution."""
+        if not self.qr_overlay:
+            return
+
+        try:
+            # Size QR as configured percentage of video height
+            percent = self._qr_size_percent / 100.0
+            qr_size = max(48, int(height * percent))  # Minimum 48px for scannability
+            padding = max(10, int(height * 0.02))  # ~2% padding
+
+            # Calculate position based on configured corner
+            position = self._qr_position
+            if position == "top-left":
+                x, y = padding, padding
+            elif position == "top-right":
+                x, y = width - qr_size - padding, padding
+            elif position == "bottom-left":
+                x, y = padding, height - qr_size - padding
+            else:  # bottom-right
+                x, y = width - qr_size - padding, height - qr_size - padding
+
+            # Update overlay properties
+            self.qr_overlay.set_property("overlay-width", qr_size)
+            self.qr_overlay.set_property("overlay-height", qr_size)
+            self.qr_overlay.set_property("offset-x", x)
+            self.qr_overlay.set_property("offset-y", y)
+
+            # Store current values
+            self._qr_current_size = qr_size
+            self._qr_current_padding = padding
+
+            self.logger.info(
+                "QR overlay sized for %dx%d: size=%dpx (%d%%), position=%s at (%d,%d)",
+                width,
+                height,
+                qr_size,
+                self._qr_size_percent,
+                position,
+                x,
+                y,
+            )
+
+        except Exception as e:
+            self.logger.warning("Failed to update QR size for resolution: %s", e)
 
     def _create_pitch_shift_or_identity(self):
         """Create pitch shift element or identity passthrough if unavailable."""
