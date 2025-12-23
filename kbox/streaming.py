@@ -736,10 +736,11 @@ class StreamingController:
             duration_seconds: How long to show the notification (default 5s)
         """
         if not self.text_overlay:
-            self.logger.debug("Text overlay not available, skipping notification")
+            self.logger.warning("Text overlay not available, skipping notification")
             return
 
         if not self._notification_lock:
+            self.logger.warning("Notification lock not initialized, skipping notification")
             return
 
         with self._notification_lock:
@@ -752,7 +753,7 @@ class StreamingController:
                 # Show the text
                 self.text_overlay.set_property("text", text)
                 self.text_overlay.set_property("silent", False)
-                self.logger.debug("Showing notification: %s", text)
+                self.logger.info("Showing notification: %s", text)
 
                 # Schedule hide after duration
                 def hide_notification():

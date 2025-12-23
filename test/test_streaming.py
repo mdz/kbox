@@ -145,6 +145,17 @@ def test_init_creates_pitch_shift_element(controller):
     assert controller.pitch_shift_element is not None
 
 
+def test_init_creates_text_overlay_element(controller):
+    """Test that text overlay element is created for notifications.
+
+    This requires gstreamer1.0-x (Pango plugin) to be installed.
+    """
+    assert controller.text_overlay is not None, (
+        "textoverlay element not available - install gstreamer1.0-x"
+    )
+    assert controller._notification_lock is not None
+
+
 # =========================================================================
 # Playback State Transition Tests
 # =========================================================================
@@ -475,3 +486,36 @@ def test_qr_overlay_position_calculation(controller, test_video_3s):
         assert offset_y >= 0, f"offset-y negative for {position}"
         assert offset_x < 1280, f"offset-x out of bounds for {position}"
         assert offset_y < 720, f"offset-y out of bounds for {position}"
+
+
+# =========================================================================
+# Text Overlay / Notification Tests
+# =========================================================================
+
+
+def test_show_notification(controller):
+    """Test that notifications can be shown and hidden."""
+    if controller.text_overlay is None:
+        pytest.skip("Text overlay not available")
+
+    # Show a notification
+    controller.show_notification("Test notification", duration_seconds=1.0)
+
+    # Verify text is set
+    text = controller.text_overlay.get_property("text")
+    assert text == "Test notification"
+
+    # Verify not silent (visible)
+    silent = controller.text_overlay.get_property("silent")
+    assert silent is False
+
+    # Wait for auto-hide
+    time.sleep(1.5)
+
+    # Verify text is cleared
+    text = controller.text_overlay.get_property("text")
+    assert text == ""
+
+    # Verify now silent
+    silent = controller.text_overlay.get_property("silent")
+    assert silent is True
