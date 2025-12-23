@@ -1,21 +1,51 @@
-FROM debian:stable
+# Use Debian base for GStreamer system packages
+FROM debian:stable-slim
 
-RUN apt update && \
-    apt -y install python3-gst-1.0 gstreamer1.0-alsa python3-mido python3-rtmidi \
-    rubberband-ladspa gstreamer1.0-plugins-bad gstreamer1.0-plugins-good \
-    python3-pip python3-venv ffmpeg && \
-    apt clean
+# Install uv from official image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-WORKDIR /srv/kbox
+# Install system packages including GStreamer and Python bindings
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        python3-gi \
+        python3-gst-1.0 \
+        gstreamer1.0-alsa \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        python3-mido \
+        python3-rtmidi \
+        rubberband-ladspa \
+        ffmpeg \
+        ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files first for better caching
-COPY requirements.txt .
+WORKDIR /app
 
-# Install Python dependencies (this layer will be cached unless requirements.txt changes)
-RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
+# Create venv with access to system site-packages (for gi module)
+RUN uv venv --system-site-packages
 
-# Copy the rest of the application code
-COPY . .
+# Install dependencies using the lockfile
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project --no-dev
+
+# Copy the project into the image
+COPY . /app
+
+# Install the project itself
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev
+
+# Fix: uv sync recreates venv without system-site-packages; restore it
+RUN sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' /app/.venv/pyvenv.cfg
+
+# Place venv executables at front of path
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
+
 CMD ["python3", "-m", "kbox.main"]

@@ -6,30 +6,35 @@ The integration tests require GStreamer and its Python bindings to be installed 
 
 **macOS:**
 ```bash
-brew install pygobject3 gstreamer
+brew install pygobject3 gstreamer glib
 ```
 
 **Linux/Raspberry Pi:**
 ```bash
-sudo apt install python3-gi python3-gst-1.0 python3-pytest
+sudo apt install python3-gi python3-gst-1.0
 ```
 
 ## Running Tests
 
-Use the test runner script which automatically uses system Python with GStreamer:
+Use uv to run tests (it auto-detects GStreamer environment on macOS):
 
 ```bash
-./test/run_tests.sh
+uv run pytest
 ```
 
 Run specific tests:
 ```bash
-./test/run_tests.sh test/test_streaming.py::test_init_creates_pipeline_in_ready_state -v
+uv run pytest test/test_streaming.py::test_init_creates_pipeline_in_ready_state -v
 ```
 
 Run with verbose output:
 ```bash
-./test/run_tests.sh -v
+uv run pytest -v
+```
+
+Skip GStreamer tests (useful on systems without GStreamer):
+```bash
+uv run pytest -m "not gstreamer"
 ```
 
 ## What the Tests Verify
@@ -66,8 +71,11 @@ For GitHub Actions or other CI systems:
     sudo apt-get update
     sudo apt-get install -y python3-gi python3-gst-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good
 
+- name: Install uv
+  uses: astral-sh/setup-uv@v4
+
 - name: Run Tests  
-  run: ./test/run_tests.sh -v
+  run: uv run pytest -v
 ```
 
 

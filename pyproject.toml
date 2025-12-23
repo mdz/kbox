@@ -4,18 +4,23 @@ version = "0.1.0"
 description = "Self-contained open-source karaoke system"
 requires-python = ">=3.9"
 dependencies = [
-    "pytest",
     "fastapi",
     "uvicorn[standard]",
     "jinja2",
     "itsdangerous",
     "google-api-python-client",
     "yt-dlp",
+    "qrcode[pil]",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "ruff>=0.1.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
 ]
 
 [build-system]
@@ -30,11 +35,29 @@ testpaths = ["test"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-
-[dependency-groups]
-dev = [
-    "ruff>=0.14.8",
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "gstreamer: tests that require GStreamer (may be skipped if unavailable)",
 ]
+filterwarnings = [
+    "ignore::DeprecationWarning:gi.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # line too long - let formatter handle it
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true  # GStreamer/gi has no stubs
+exclude = ["test/"]
 
 
 
