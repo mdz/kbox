@@ -6,7 +6,6 @@ Tests the integration between components without external dependencies.
 
 import os
 import tempfile
-import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import Mock
@@ -40,7 +39,6 @@ class FakeVideoSource(VideoSource):
         self._configured = True
         self._search_results: List[Dict[str, Any]] = []
         self._video_info: Dict[str, Dict[str, Any]] = {}
-        self._download_delay: float = 0.1  # Simulate async download
         self._fail_downloads: bool = False  # If True, downloads will fail
         self._fail_message: str = "Simulated download error"
 
@@ -76,39 +74,29 @@ class FakeVideoSource(VideoSource):
         queue_item_id: int,
         status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
     ) -> Optional[str]:
-        """Simulate async download by creating a fake file."""
+        """Create a fake cached file synchronously.
+
+        Per the VideoSource interface:
+        - Returns path if already cached or download completes synchronously
+        - Callback is only used for async status updates (not needed for sync)
+        """
         # Check if already cached
         cached = self.get_cached_path(video_id, touch=False)
         if cached:
-            if status_callback:
-                status_callback("ready", str(cached), None)
             return str(cached)
 
-        # Simulate async download
-        fail_downloads = self._fail_downloads
-        fail_message = self._fail_message
-
-        def async_download():
-            import time
-
-            time.sleep(self._download_delay)
-
-            if fail_downloads:
-                if status_callback:
-                    status_callback("error", None, fail_message)
-                return
-
-            # Create fake cached file
-            source_dir = self._cache_dir / self._source_id
-            source_dir.mkdir(parents=True, exist_ok=True)
-            cached_file = source_dir / f"{video_id}.mp4"
-            cached_file.write_bytes(b"fake video content for " + video_id.encode())
-
+        if self._fail_downloads:
             if status_callback:
-                status_callback("ready", str(cached_file), None)
+                status_callback("error", None, self._fail_message)
+            return None
 
-        threading.Thread(target=async_download, daemon=True).start()
-        return None
+        # Create fake cached file synchronously
+        source_dir = self._cache_dir / self._source_id
+        source_dir.mkdir(parents=True, exist_ok=True)
+        cached_file = source_dir / f"{video_id}.mp4"
+        cached_file.write_bytes(b"fake video content for " + video_id.encode())
+
+        return str(cached_file)
 
     def get_cached_path(self, video_id: str, touch: bool = True) -> Optional[Path]:
         source_dir = self._cache_dir / self._source_id
@@ -533,8 +521,6 @@ def download_system(temp_db, temp_cache_dir):
 
 def test_download_monitor_triggers_download(download_system):
     """Test that the download monitor picks up pending items and triggers downloads."""
-    import time
-
     system = download_system
 
     # Add a song using fake source (starts as pending)
@@ -550,9 +536,8 @@ def test_download_monitor_triggers_download(download_system):
     item = system["queue"].get_item(item_id)
     assert item.download_status == QueueManager.STATUS_PENDING
 
-    # Trigger download processing directly and wait for async callback
+    # Trigger download processing
     system["queue"]._process_download_queue()
-    time.sleep(0.2)  # FakeVideoSource has 0.1s delay
 
     # Verify status was updated to ready (download completed via FakeVideoSource)
     item = system["queue"].get_item(item_id)
@@ -566,17 +551,14 @@ def test_download_monitor_triggers_download(download_system):
 
 def test_download_monitor_handles_multiple_items(download_system):
     """Test that the download monitor processes multiple pending items."""
-    import time
-
     system = download_system
 
     # Add multiple songs using fake source
     id1 = system["queue"].add_song(system["users"]["alice"], "fake", "vid1", "Song 1")
     id2 = system["queue"].add_song(system["users"]["bob"], "fake", "vid2", "Song 2")
 
-    # Trigger download processing and wait for async callbacks
+    # Trigger download processing
     system["queue"]._process_download_queue()
-    time.sleep(0.3)  # Wait for both async downloads
 
     # Both should be downloaded
     item1 = system["queue"].get_item(id1)
@@ -592,8 +574,6 @@ def test_download_monitor_handles_multiple_items(download_system):
 
 def test_download_monitor_handles_error(temp_db, temp_cache_dir):
     """Test that the download monitor handles download errors gracefully."""
-    import time
-
     # Config
     config_manager = ConfigManager(temp_db)
     config_manager.set("youtube_api_key", "test_key")
@@ -617,9 +597,8 @@ def test_download_monitor_handles_error(temp_db, temp_cache_dir):
     # Add song using the failing source
     item_id = queue_manager.add_song(alice, "failing", "fail_vid", "Failing Song")
 
-    # Trigger download and wait for async error callback
+    # Trigger download processing
     queue_manager._process_download_queue()
-    time.sleep(0.2)
 
     # Verify status is error
     item = queue_manager.get_item(item_id)
@@ -629,8 +608,6 @@ def test_download_monitor_handles_error(temp_db, temp_cache_dir):
 
 def test_download_status_callback_updates_queue(download_system):
     """Test that the download status callback correctly updates queue items."""
-    import time
-
     system = download_system
 
     # Add song using fake source
@@ -638,9 +615,8 @@ def test_download_status_callback_updates_queue(download_system):
         system["users"]["alice"], "fake", "callback_test", "Callback Test Song"
     )
 
-    # Trigger download and wait for async callback
+    # Trigger download processing
     system["queue"]._process_download_queue()
-    time.sleep(0.2)
 
     # Get the item
     item = system["queue"].get_item(item_id)
@@ -662,8 +638,6 @@ def test_download_status_callback_updates_queue(download_system):
 
 def test_search_to_queue_to_download_flow(download_system):
     """Test the full flow: search results → add to queue → download completes."""
-    import time
-
     system = download_system
 
     # Configure fake source with search results
@@ -711,9 +685,8 @@ def test_search_to_queue_to_download_flow(download_system):
     assert item.metadata.title == "Karaoke Song Found in Search"
     assert item.download_status == QueueManager.STATUS_PENDING
 
-    # Step 3: Trigger download and wait for async callback
+    # Step 3: Trigger download processing
     system["queue"]._process_download_queue()
-    time.sleep(0.2)
 
     # Step 4: Verify item is now ready for playback
     item = system["queue"].get_item(item_id)
@@ -726,8 +699,6 @@ def test_search_to_queue_to_download_flow(download_system):
 
 def test_multiple_sources_in_queue(download_system):
     """Test that items from different sources can be queued and downloaded."""
-    import time
-
     system = download_system
 
     # Add song using fake source
@@ -735,9 +706,8 @@ def test_multiple_sources_in_queue(download_system):
         system["users"]["alice"], "fake", "multi_src_vid", "Fake Source Song"
     )
 
-    # Trigger download and wait for async callback
+    # Trigger download processing
     system["queue"]._process_download_queue()
-    time.sleep(0.2)
 
     item1 = system["queue"].get_item(id1)
     assert item1.download_status == QueueManager.STATUS_READY
@@ -749,8 +719,6 @@ def test_multiple_sources_in_queue(download_system):
 
 def test_queue_to_playback_integration(download_system):
     """Test that downloaded items can be played back."""
-    import time
-
     system = download_system
 
     # Create streaming mock
@@ -777,9 +745,8 @@ def test_queue_to_playback_integration(download_system):
         pitch_semitones=1,
     )
 
-    # Trigger download and wait for async callback
+    # Trigger download processing
     system["queue"]._process_download_queue()
-    time.sleep(0.2)
 
     # Verify ready for playback
     item = system["queue"].get_item(item_id)

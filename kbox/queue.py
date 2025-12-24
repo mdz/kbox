@@ -100,10 +100,19 @@ class QueueManager:
             self._on_download_status(item_id, status, path, error)
 
         # Use video manager to download (routes to correct source)
-        self.video_manager.download(item.source, item.source_id, item.id, status_callback=on_status)
+        cached_path = self.video_manager.download(
+            item.source, item.source_id, item.id, status_callback=on_status
+        )
 
-        # Update status to downloading
-        self.update_download_status(item.id, self.STATUS_DOWNLOADING)
+        if cached_path:
+            # Already cached or completed synchronously - mark as ready
+            self.update_download_status(item.id, self.STATUS_READY, download_path=cached_path)
+        else:
+            # Check if callback already updated status (e.g., sync error)
+            current = self.get_item(item.id)
+            if current and current.download_status == self.STATUS_PENDING:
+                # Async download started - mark as downloading
+                self.update_download_status(item.id, self.STATUS_DOWNLOADING)
 
     def _check_stuck_download(self, item: QueueItem):
         """Check if a download is stuck and recover if possible."""
