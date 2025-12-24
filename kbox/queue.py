@@ -7,7 +7,7 @@ Handles song queue operations with persistence and download management.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
@@ -158,20 +158,11 @@ class QueueManager:
 
         self.logger.info("Download monitor stopped")
 
-    def _get_protected_cache_keys(self) -> Set[Tuple[str, str]]:
-        """
-        Get set of (source, source_id) tuples that should not be evicted from cache.
-
-        Returns:
-            Set of (source, source_id) tuples for all unplayed items in queue
-        """
-        queue = self.get_queue(include_played=False)
-        return {(item.source, item.source_id) for item in queue}
-
     def _cleanup_cache(self) -> None:
         """Trigger cache cleanup with queue items protected from eviction."""
         try:
-            protected = self._get_protected_cache_keys()
+            queue = self.get_queue(include_played=False)
+            protected = {(item.source, item.source_id) for item in queue}
             self.video_manager.cleanup_cache(protected)
         except Exception as e:
             self.logger.error("Error during cache cleanup: %s", e, exc_info=True)

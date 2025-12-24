@@ -472,9 +472,11 @@ def test_cache_cleanup_integration(temp_db, temp_cache_dir):
     # Add song to queue (this protects queued_video)
     queue_manager.add_song(alice, "youtube", "queued_video", "Queued Song")
 
-    # Manually trigger cache cleanup with protected keys from queue
-    protected = queue_manager._get_protected_cache_keys()
-    deleted_count = cache_manager.cleanup(protected)
+    # Trigger cache cleanup (which protects queued items)
+    queue_manager._cleanup_cache()
+
+    # Verify cleanup happened - old file deleted, queued file remains
+    deleted_count = 1 if not old_file.exists() else 0
 
     # Old file should be deleted, queued file should remain
     assert deleted_count == 1

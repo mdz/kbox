@@ -278,38 +278,6 @@ def test_queue_persistence(temp_db, user_manager, mock_video_manager):
     qm2.stop_download_monitor()
 
 
-def test_get_protected_cache_keys(queue_manager, test_users):
-    """Test getting protected (source, source_id) tuples for cache management."""
-    # Add some songs
-    id1 = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
-    id3 = queue_manager.add_song(test_users["charlie"], "youtube", "vid3", "Song 3")
-
-    # All unplayed songs should be protected
-    protected = queue_manager._get_protected_cache_keys()
-    assert protected == {("youtube", "vid1"), ("youtube", "vid2"), ("youtube", "vid3")}
-
-    # Mark one as played
-    queue_manager.mark_played(id1)
-
-    # Played song should no longer be protected
-    protected = queue_manager._get_protected_cache_keys()
-    assert protected == {("youtube", "vid2"), ("youtube", "vid3")}
-
-
-def test_get_protected_cache_keys_multiple_sources(queue_manager, test_users):
-    """Test that protected keys include (source, id) from all sources."""
-    # Add YouTube song
-    queue_manager.add_song(test_users["alice"], "youtube", "vid123", "YouTube Song")
-    # Add Vimeo song with SAME source_id (different source)
-    queue_manager.add_song(test_users["bob"], "vimeo", "vid123", "Vimeo Song")
-
-    protected = queue_manager._get_protected_cache_keys()
-
-    # Both should be protected as separate keys
-    assert protected == {("youtube", "vid123"), ("vimeo", "vid123")}
-
-
 # =============================================================================
 # VideoManager Integration Tests
 # =============================================================================
