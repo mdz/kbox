@@ -28,14 +28,14 @@ class QueueManager:
     def __init__(
         self,
         database: Database,
-        video_manager: Optional["VideoManager"] = None,
+        video_manager: "VideoManager",
     ):
         """
         Initialize QueueManager.
 
         Args:
             database: Database instance for persistence
-            video_manager: VideoManager for video search/download (optional)
+            video_manager: VideoManager for video search/download
         """
         self.database = database
         self.repository = QueueRepository(database)
@@ -47,10 +47,10 @@ class QueueManager:
         self._download_timeout = timedelta(minutes=10)
         self._download_monitor_thread = None
         self._monitoring = False
+        self._stop_event = threading.Event()  # Used to wake monitor thread on stop
 
-        # Start download monitor if video_manager provided
-        if self.video_manager:
-            self._start_download_monitor()
+        # Start download monitor
+        self._start_download_monitor()
 
     # =========================================================================
     # Download Monitoring
@@ -62,16 +62,17 @@ class QueueManager:
             return
 
         self._monitoring = True
+        self._stop_event.clear()
 
         def monitor():
             while self._monitoring:
                 try:
                     self._process_download_queue()
-                    # Sleep before next check
-                    threading.Event().wait(2.0)
+                    # Sleep before next check (wakes immediately if stop_event is set)
+                    self._stop_event.wait(2.0)
                 except Exception as e:
                     self.logger.error("Error in download monitor: %s", e, exc_info=True)
-                    threading.Event().wait(5.0)  # Wait longer on error
+                    self._stop_event.wait(5.0)  # Wait longer on error
 
         self._download_monitor_thread = threading.Thread(
             target=monitor, daemon=True, name="DownloadMonitor"
@@ -91,13 +92,6 @@ class QueueManager:
 
     def _start_download(self, item: QueueItem):
         """Start downloading a queue item."""
-        if not self.video_manager:
-            self.logger.error("Video manager not available")
-            self.update_download_status(
-                item.id, self.STATUS_ERROR, error_message="Video manager not configured"
-            )
-            return
-
         self.logger.info("Starting download for %s (ID: %s)", item.metadata.title, item.id)
 
         item_id = item.id
@@ -113,9 +107,6 @@ class QueueManager:
 
     def _check_stuck_download(self, item: QueueItem):
         """Check if a download is stuck and recover if possible."""
-        if not self.video_manager:
-            return
-
         # Check if file exists (download completed but callback failed)
         cached_path = self.video_manager.get_cached_path(item.source, item.source_id)
         if cached_path and cached_path.exists():
@@ -158,9 +149,10 @@ class QueueManager:
 
         self.logger.info("Stopping download monitor...")
         self._monitoring = False
+        self._stop_event.set()  # Wake the thread if it's sleeping
 
         if self._download_monitor_thread and self._download_monitor_thread.is_alive():
-            self._download_monitor_thread.join(timeout=2.0)
+            self._download_monitor_thread.join(timeout=0.5)
             if self._download_monitor_thread.is_alive():
                 self.logger.warning("Download monitor thread did not stop within timeout")
 
@@ -178,9 +170,6 @@ class QueueManager:
 
     def _cleanup_cache(self) -> None:
         """Trigger cache cleanup with queue items protected from eviction."""
-        if not self.video_manager:
-            return
-
         try:
             protected = self._get_protected_cache_keys()
             self.video_manager.cleanup_cache(protected)

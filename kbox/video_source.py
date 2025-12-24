@@ -154,18 +154,6 @@ class VideoManager:
         self._sources[source.source_id] = source
         self.logger.info("Registered video source: %s", source.source_id)
 
-    def get_source(self, source_id: str) -> Optional[VideoSource]:
-        """
-        Get a registered source by ID.
-
-        Args:
-            source_id: Source identifier
-
-        Returns:
-            VideoSource instance or None if not found
-        """
-        return self._sources.get(source_id)
-
     def is_source_configured(self, source_id: str) -> bool:
         """
         Check if a source is registered and configured.

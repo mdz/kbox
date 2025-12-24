@@ -8,6 +8,8 @@ Tests all API endpoints with:
 
 import os
 import tempfile
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import Mock
 
 import pytest
@@ -20,8 +22,52 @@ from kbox.history import HistoryManager
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
 from kbox.user import UserManager
-from kbox.video_source import VideoManager
+from kbox.video_source import VideoManager, VideoSource
 from kbox.web.server import create_app
+
+
+class FakeVideoSource(VideoSource):
+    """Fake video source for API testing."""
+
+    def __init__(self, cache_dir: str, source_id: str = "youtube"):
+        self._source_id = source_id
+        self._cache_dir = Path(cache_dir)
+        self._search_results: List[Dict[str, Any]] = []
+        self._video_info: Dict[str, Dict[str, Any]] = {}
+
+    @property
+    def source_id(self) -> str:
+        return self._source_id
+
+    def is_configured(self) -> bool:
+        return True
+
+    def set_search_results(self, results: List[Dict[str, Any]]) -> None:
+        self._search_results = results
+
+    def set_video_info(self, video_id: str, info: Dict[str, Any]) -> None:
+        self._video_info[video_id] = info
+
+    def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        return self._search_results[:max_results]
+
+    def get_video_info(self, video_id: str) -> Optional[Dict[str, Any]]:
+        return self._video_info.get(video_id)
+
+    def download(
+        self,
+        video_id: str,
+        queue_item_id: int,
+        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
+    ) -> Optional[str]:
+        return None  # Async download
+
+    def get_cached_path(self, video_id: str, touch: bool = True) -> Optional[Path]:
+        return None
+
+    def is_cached(self, video_id: str) -> bool:
+        return False
+
 
 # Test user IDs
 ALICE_ID = "alice-uuid-1234"
@@ -107,7 +153,7 @@ def mock_playback():
 
 @pytest.fixture
 def mock_video_manager(temp_cache_dir):
-    """Create a mock VideoManager with YouTube source."""
+    """Create a VideoManager with FakeVideoSource for API testing."""
     # Create a mock config manager
     mock_config = Mock()
     mock_config.get.side_effect = lambda key, default=None: {
@@ -124,24 +170,25 @@ def mock_video_manager(temp_cache_dir):
     # Create cache manager
     cache_manager = CacheManager(mock_config)
 
-    # Create video manager (pass config_manager to let it create sources)
-    # But we'll override with mocks for testing
+    # Create video manager and register fake source
     video_manager = VideoManager(mock_config, cache_manager)
 
-    # Get the YouTube source that was auto-registered and mock its methods
-    youtube_source = video_manager.get_source("youtube")
-    youtube_source.search = Mock(
-        return_value=[{"id": "test123", "title": "Test Song", "duration_seconds": 180}]
+    # Create and configure a fake source (using "youtube" as source_id for API compatibility)
+    fake_source = FakeVideoSource(temp_cache_dir, source_id="youtube")
+    fake_source.set_search_results(
+        [{"id": "test123", "title": "Test Song", "duration_seconds": 180}]
     )
-    youtube_source.get_video_info = Mock(
-        return_value={
+    fake_source.set_video_info(
+        "test123",
+        {
             "id": "test123",
             "title": "Test Song",
             "duration_seconds": 180,
             "thumbnail_url": "https://example.com/thumb.jpg",
             "channel": "Test Channel",
-        }
+        },
     )
+    video_manager._register_source(fake_source)
 
     yield video_manager
 
@@ -161,10 +208,10 @@ def app_components(temp_db, temp_cache_dir, mock_streaming, mock_video_manager, 
     config_manager.set("operator_pin", "1234")
 
     user_manager = UserManager(temp_db)
-    queue_manager = QueueManager(temp_db)
+    queue_manager = QueueManager(temp_db, video_manager=mock_video_manager)
     history_manager = HistoryManager(temp_db)
 
-    return {
+    yield {
         "config": config_manager,
         "queue": queue_manager,
         "user": user_manager,
@@ -173,6 +220,9 @@ def app_components(temp_db, temp_cache_dir, mock_streaming, mock_video_manager, 
         "playback": mock_playback,
         "history": history_manager,
     }
+
+    # Cleanup
+    queue_manager.stop_download_monitor()
 
 
 @pytest.fixture
