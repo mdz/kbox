@@ -1937,7 +1937,7 @@
             }
         });
         
-        // Search YouTube
+        // Search for videos
         async function search() {
             const query = document.getElementById('search-input').value;
             
@@ -1956,7 +1956,7 @@
             resultsDiv.innerHTML = 'Searching...';
             
             try {
-                const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(query)}`);
+                const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
                 const data = await response.json();
                 
                 resultsDiv.innerHTML = '';
@@ -1994,7 +1994,8 @@
             // Fetch saved settings for this video and user (pitch preset, etc.)
             let savedPitch = 0;
             try {
-                const settingsResponse = await fetch(`/api/queue/settings/${video.id}?user_id=${encodeURIComponent(userId)}`);
+                const source = video.source || 'youtube';
+                const settingsResponse = await fetch(`/api/queue/settings/${source}/${video.id}?user_id=${encodeURIComponent(userId)}`);
                 if (settingsResponse.ok) {
                     const settingsData = await settingsResponse.json();
                     savedPitch = settingsData.settings.pitch_semitones || 0;
@@ -2050,7 +2051,8 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         user_id: userId,
-                        youtube_video_id: currentVideoToAdd.id,
+                        source: currentVideoToAdd.source || 'youtube',
+                        source_id: currentVideoToAdd.id,
                         title: currentVideoToAdd.title,
                         duration_seconds: currentVideoToAdd.duration_seconds,
                         thumbnail_url: currentVideoToAdd.thumbnail,

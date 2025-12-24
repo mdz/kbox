@@ -7,14 +7,13 @@ Handles song queue operations with persistence and download management.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
-    from .cache import CacheManager
-    from .youtube import YouTubeClient
+    from .video_source import VideoManager
 
 
 class QueueManager:
@@ -29,32 +28,29 @@ class QueueManager:
     def __init__(
         self,
         database: Database,
-        youtube_client: Optional["YouTubeClient"] = None,
-        cache_manager: Optional["CacheManager"] = None,
+        video_manager: "VideoManager",
     ):
         """
         Initialize QueueManager.
 
         Args:
             database: Database instance for persistence
-            youtube_client: YouTubeClient for downloading videos (optional)
-            cache_manager: CacheManager for cache cleanup (optional)
+            video_manager: VideoManager for video search/download
         """
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
-        self.youtube_client = youtube_client
-        self.cache_manager = cache_manager
+        self.video_manager = video_manager
         self.logger = logging.getLogger(__name__)
 
         # Download monitoring
         self._download_timeout = timedelta(minutes=10)
         self._download_monitor_thread = None
         self._monitoring = False
+        self._stop_event = threading.Event()  # Used to wake monitor thread on stop
 
-        # Start download monitor if youtube_client provided
-        if self.youtube_client:
-            self._start_download_monitor()
+        # Start download monitor
+        self._start_download_monitor()
 
     # =========================================================================
     # Download Monitoring
@@ -66,16 +62,17 @@ class QueueManager:
             return
 
         self._monitoring = True
+        self._stop_event.clear()
 
         def monitor():
             while self._monitoring:
                 try:
                     self._process_download_queue()
-                    # Sleep before next check
-                    threading.Event().wait(2.0)
+                    # Sleep before next check (wakes immediately if stop_event is set)
+                    self._stop_event.wait(2.0)
                 except Exception as e:
                     self.logger.error("Error in download monitor: %s", e, exc_info=True)
-                    threading.Event().wait(5.0)  # Wait longer on error
+                    self._stop_event.wait(5.0)  # Wait longer on error
 
         self._download_monitor_thread = threading.Thread(
             target=monitor, daemon=True, name="DownloadMonitor"
@@ -102,43 +99,24 @@ class QueueManager:
         def on_status(status: str, path: Optional[str], error: Optional[str]):
             self._on_download_status(item_id, status, path, error)
 
-        # For YouTube source, use source_id (video ID)
-        if item.source == "youtube":
-            if not self.youtube_client:
-                self.logger.error("YouTube client not available")
-                self.update_download_status(
-                    item.id, self.STATUS_ERROR, error_message="YouTube client not configured"
-                )
-                return
-            self.youtube_client.download_video(item.source_id, item.id, status_callback=on_status)
-        else:
-            self.logger.error("Unsupported source type: %s", item.source)
-            self.update_download_status(
-                item.id, self.STATUS_ERROR, error_message=f"Unsupported source: {item.source}"
-            )
-            return
+        # Use video manager to download (routes to correct source)
+        self.video_manager.download(item.source, item.source_id, item.id, status_callback=on_status)
 
         # Update status to downloading
         self.update_download_status(item.id, self.STATUS_DOWNLOADING)
 
     def _check_stuck_download(self, item: QueueItem):
         """Check if a download is stuck and recover if possible."""
-        # First, check if file exists (download completed but callback failed)
-        # Only works for YouTube source currently
-        if item.source == "youtube":
-            if not self.youtube_client:
-                return
-            download_path = self.youtube_client.get_download_path(item.source_id)
-            if download_path and download_path.exists():
-                self.logger.info(
-                    "Found completed download for %s (ID: %s), updating status",
-                    item.metadata.title,
-                    item.id,
-                )
-                self.update_download_status(
-                    item.id, self.STATUS_READY, download_path=str(download_path)
-                )
-                return
+        # Check if file exists (download completed but callback failed)
+        cached_path = self.video_manager.get_cached_path(item.source, item.source_id)
+        if cached_path and cached_path.exists():
+            self.logger.info(
+                "Found completed download for %s (ID: %s), updating status",
+                item.metadata.title,
+                item.id,
+            )
+            self.update_download_status(item.id, self.STATUS_READY, download_path=str(cached_path))
+            return
 
         # Check if download has been stuck for too long
         if item.created_at:
@@ -171,32 +149,21 @@ class QueueManager:
 
         self.logger.info("Stopping download monitor...")
         self._monitoring = False
+        self._stop_event.set()  # Wake the thread if it's sleeping
 
         if self._download_monitor_thread and self._download_monitor_thread.is_alive():
-            self._download_monitor_thread.join(timeout=2.0)
+            self._download_monitor_thread.join(timeout=0.5)
             if self._download_monitor_thread.is_alive():
                 self.logger.warning("Download monitor thread did not stop within timeout")
 
         self.logger.info("Download monitor stopped")
 
-    def _get_protected_cache_keys(self) -> Set[Tuple[str, str]]:
-        """
-        Get set of (source, source_id) tuples that should not be evicted from cache.
-
-        Returns:
-            Set of (source, source_id) tuples for all unplayed items in queue
-        """
-        queue = self.get_queue(include_played=False)
-        return {(item.source, item.source_id) for item in queue}
-
     def _cleanup_cache(self) -> None:
         """Trigger cache cleanup with queue items protected from eviction."""
-        if not self.cache_manager:
-            return
-
         try:
-            protected = self._get_protected_cache_keys()
-            self.cache_manager.cleanup(protected)
+            queue = self.get_queue(include_played=False)
+            protected = {(item.source, item.source_id) for item in queue}
+            self.video_manager.cleanup_cache(protected)
         except Exception as e:
             self.logger.error("Error during cache cleanup: %s", e, exc_info=True)
 

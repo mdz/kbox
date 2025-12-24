@@ -4,6 +4,7 @@ Unit tests for QueueManager.
 
 import os
 import tempfile
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,9 +31,22 @@ def user_manager(temp_db):
 
 
 @pytest.fixture
-def queue_manager(temp_db):
+def mock_video_manager():
+    """Create a mock VideoManager for testing."""
+    mock = MagicMock()
+    mock.download.return_value = None  # Async download
+    mock.get_cached_path.return_value = None
+    mock.is_cached.return_value = False
+    mock.cleanup_cache.return_value = 0
+    return mock
+
+
+@pytest.fixture
+def queue_manager(temp_db, mock_video_manager):
     """Create a QueueManager instance for testing."""
-    return QueueManager(temp_db)
+    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    yield qm
+    qm.stop_download_monitor()
 
 
 # Test user IDs - used consistently across tests
@@ -242,52 +256,193 @@ def test_clear_queue(queue_manager, test_users):
     assert len(queue) == 0
 
 
-def test_queue_persistence(temp_db, user_manager):
+def test_queue_persistence(temp_db, user_manager, mock_video_manager):
     """Test that queue persists across QueueManager instances."""
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
 
-    qm1 = QueueManager(temp_db)
+    qm1 = QueueManager(temp_db, video_manager=mock_video_manager)
     item_id = qm1.add_song(alice, "youtube", "vid1", "Song 1")
     qm1.update_download_status(
         item_id, QueueManager.STATUS_READY, download_path="/path/to/video.mp4"
     )
+    qm1.stop_download_monitor()
 
     # Create new QueueManager with same database
-    qm2 = QueueManager(temp_db)
+    mock_video_manager2 = MagicMock()
+    qm2 = QueueManager(temp_db, video_manager=mock_video_manager2)
     queue = qm2.get_queue()
     assert len(queue) == 1
     assert queue[0].user_id == ALICE_ID
     assert queue[0].user_name == "Alice"
     assert queue[0].download_status == QueueManager.STATUS_READY
+    qm2.stop_download_monitor()
 
 
-def test_get_protected_cache_keys(queue_manager, test_users):
-    """Test getting protected (source, source_id) tuples for cache management."""
-    # Add some songs
-    id1 = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
-    id3 = queue_manager.add_song(test_users["charlie"], "youtube", "vid3", "Song 3")
-
-    # All unplayed songs should be protected
-    protected = queue_manager._get_protected_cache_keys()
-    assert protected == {("youtube", "vid1"), ("youtube", "vid2"), ("youtube", "vid3")}
-
-    # Mark one as played
-    queue_manager.mark_played(id1)
-
-    # Played song should no longer be protected
-    protected = queue_manager._get_protected_cache_keys()
-    assert protected == {("youtube", "vid2"), ("youtube", "vid3")}
+# =============================================================================
+# VideoManager Integration Tests
+# =============================================================================
 
 
-def test_get_protected_cache_keys_multiple_sources(queue_manager, test_users):
-    """Test that protected keys include (source, id) from all sources."""
-    # Add YouTube song
-    queue_manager.add_song(test_users["alice"], "youtube", "vid123", "YouTube Song")
-    # Add Vimeo song with SAME source_id (different source)
-    queue_manager.add_song(test_users["bob"], "vimeo", "vid123", "Vimeo Song")
+def test_download_monitor_calls_video_manager(temp_db, user_manager):
+    """Test that download monitor calls video_manager.download for pending items."""
+    mock_video_manager = MagicMock()
+    mock_video_manager.download.return_value = None
+    mock_video_manager.get_cached_path.return_value = None
+    mock_video_manager.cleanup_cache.return_value = 0
 
-    protected = queue_manager._get_protected_cache_keys()
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm.stop_download_monitor()  # Stop background thread, we'll call directly
 
-    # Both should be protected as separate keys
-    assert protected == {("youtube", "vid123"), ("vimeo", "vid123")}
+    # Add song (starts as pending)
+    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+
+    # Directly trigger download processing (what the monitor does)
+    qm._process_download_queue()
+
+    # Verify video_manager.download was called with correct args
+    mock_video_manager.download.assert_called()
+    call_args = mock_video_manager.download.call_args
+    assert call_args[0][0] == "youtube"  # source
+    assert call_args[0][1] == "test_vid"  # video_id
+    assert call_args[0][2] == item_id  # queue_item_id
+    assert call_args[1]["status_callback"] is not None  # callback provided
+
+
+def test_download_callback_updates_status_ready(temp_db, user_manager):
+    """Test that download callback updates queue item to ready status."""
+    captured_callback = None
+
+    def capture_callback(source, video_id, queue_item_id, status_callback=None):
+        nonlocal captured_callback
+        captured_callback = status_callback
+        return None
+
+    mock_video_manager = MagicMock()
+    mock_video_manager.download.side_effect = capture_callback
+    mock_video_manager.get_cached_path.return_value = None
+    mock_video_manager.cleanup_cache.return_value = 0
+
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm.stop_download_monitor()
+
+    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+
+    # Directly trigger download processing
+    qm._process_download_queue()
+
+    assert captured_callback is not None
+
+    # Simulate successful download
+    captured_callback("ready", "/path/to/video.mp4", None)
+
+    # Verify status was updated
+    item = qm.get_item(item_id)
+    assert item.download_status == QueueManager.STATUS_READY
+    assert item.download_path == "/path/to/video.mp4"
+
+
+def test_download_callback_updates_status_error(temp_db, user_manager):
+    """Test that download callback updates queue item to error status."""
+    captured_callback = None
+
+    def capture_callback(source, video_id, queue_item_id, status_callback=None):
+        nonlocal captured_callback
+        captured_callback = status_callback
+        return None
+
+    mock_video_manager = MagicMock()
+    mock_video_manager.download.side_effect = capture_callback
+    mock_video_manager.get_cached_path.return_value = None
+    mock_video_manager.cleanup_cache.return_value = 0
+
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm.stop_download_monitor()
+
+    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+
+    # Directly trigger download processing
+    qm._process_download_queue()
+
+    assert captured_callback is not None
+
+    # Simulate failed download
+    captured_callback("error", None, "Download failed: network error")
+
+    # Verify status was updated
+    item = qm.get_item(item_id)
+    assert item.download_status == QueueManager.STATUS_ERROR
+    assert item.error_message == "Download failed: network error"
+
+
+def test_cleanup_cache_calls_video_manager(temp_db, user_manager):
+    """Test that cache cleanup calls video_manager.cleanup_cache with protected keys."""
+    captured_callback = None
+
+    def capture_and_succeed(source, video_id, queue_item_id, status_callback=None):
+        nonlocal captured_callback
+        captured_callback = status_callback
+        return None
+
+    mock_video_manager = MagicMock()
+    mock_video_manager.download.side_effect = capture_and_succeed
+    mock_video_manager.get_cached_path.return_value = None
+    mock_video_manager.cleanup_cache.return_value = 0
+
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm.stop_download_monitor()
+
+    # Add songs that will be protected
+    qm.add_song(alice, "youtube", "vid1", "Song 1")
+    qm.add_song(alice, "youtube", "vid2", "Song 2")
+
+    # Trigger download processing
+    qm._process_download_queue()
+
+    # Simulate successful download (triggers cache cleanup)
+    assert captured_callback is not None
+    captured_callback("ready", "/path/to/video.mp4", None)
+
+    # Verify cleanup_cache was called with protected keys
+    mock_video_manager.cleanup_cache.assert_called()
+    call_args = mock_video_manager.cleanup_cache.call_args[0][0]
+    assert ("youtube", "vid1") in call_args
+    assert ("youtube", "vid2") in call_args
+
+
+def test_stuck_download_recovery_uses_video_manager(temp_db, user_manager):
+    """Test that stuck download recovery checks video_manager.get_cached_path."""
+    from pathlib import Path
+
+    mock_video_manager = MagicMock()
+    mock_video_manager.download.return_value = None
+    mock_video_manager.cleanup_cache.return_value = 0
+
+    # Simulate that the file exists (download completed but callback failed)
+    mock_path = MagicMock(spec=Path)
+    mock_path.exists.return_value = True
+    mock_path.__str__ = lambda self: "/recovered/path/video.mp4"
+    mock_video_manager.get_cached_path.return_value = mock_path
+
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm.stop_download_monitor()
+
+    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+
+    # Manually set to downloading (simulating a stuck download)
+    qm.update_download_status(item_id, QueueManager.STATUS_DOWNLOADING)
+
+    # Trigger the stuck download check
+    qm._process_download_queue()
+
+    # Verify get_cached_path was called
+    mock_video_manager.get_cached_path.assert_called_with("youtube", "test_vid")
+
+    # Verify item was recovered to ready status
+    item = qm.get_item(item_id)
+    assert item.download_status == QueueManager.STATUS_READY
+    assert item.download_path == "/recovered/path/video.mp4"
