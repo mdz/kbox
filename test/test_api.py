@@ -8,66 +8,19 @@ Tests all API endpoints with:
 
 import os
 import tempfile
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from kbox.cache import CacheManager
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
 from kbox.user import UserManager
-from kbox.video_source import VideoManager, VideoSource
+from kbox.video_source import VideoManager
 from kbox.web.server import create_app
-
-
-class FakeVideoSource(VideoSource):
-    """Fake video source for API testing."""
-
-    def __init__(self, cache_dir: str, source_id: str = "youtube"):
-        self._source_id = source_id
-        self._cache_dir = Path(cache_dir)
-        self._search_results: List[Dict[str, Any]] = []
-        self._video_info: Dict[str, Dict[str, Any]] = {}
-
-    @property
-    def source_id(self) -> str:
-        return self._source_id
-
-    def is_configured(self) -> bool:
-        return True
-
-    def set_search_results(self, results: List[Dict[str, Any]]) -> None:
-        self._search_results = results
-
-    def set_video_info(self, video_id: str, info: Dict[str, Any]) -> None:
-        self._video_info[video_id] = info
-
-    def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
-        return self._search_results[:max_results]
-
-    def get_video_info(self, video_id: str) -> Optional[Dict[str, Any]]:
-        return self._video_info.get(video_id)
-
-    def download(
-        self,
-        video_id: str,
-        queue_item_id: int,
-        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> Optional[str]:
-        return None  # Async download
-
-    def get_cached_path(self, video_id: str, touch: bool = True) -> Optional[Path]:
-        return None
-
-    def is_cached(self, video_id: str) -> bool:
-        return False
-
 
 # Test user IDs
 ALICE_ID = "alice-uuid-1234"
@@ -152,54 +105,44 @@ def mock_playback():
 
 
 @pytest.fixture
-def mock_video_manager(temp_cache_dir):
-    """Create a VideoManager with FakeVideoSource for API testing."""
-    # Create a mock config manager
-    mock_config = Mock()
-    mock_config.get.side_effect = lambda key, default=None: {
-        "youtube_api_key": "test_key",
-        "cache_directory": temp_cache_dir,
-        "video_max_resolution": "480",
-        "cache_max_size_gb": "10",
-    }.get(key, default)
-    mock_config.get_int.side_effect = lambda key, default=None: {
-        "video_max_resolution": 480,
-        "cache_max_size_gb": 10,
-    }.get(key, default)
+def mock_video_manager():
+    """Create a mock VideoManager for API testing.
 
-    # Create cache manager
-    cache_manager = CacheManager(mock_config)
+    API tests focus on the HTTP layer, not video logic, so we use a simple mock.
+    """
+    video_manager = Mock(spec=VideoManager)
 
-    # Create video manager and register fake source
-    video_manager = VideoManager(mock_config, cache_manager)
+    # Configure search to return test results
+    video_manager.search.return_value = [
+        {"id": "test123", "title": "Test Song", "duration_seconds": 180}
+    ]
 
-    # Create and configure a fake source (using "youtube" as source_id for API compatibility)
-    fake_source = FakeVideoSource(temp_cache_dir, source_id="youtube")
-    fake_source.set_search_results(
-        [{"id": "test123", "title": "Test Song", "duration_seconds": 180}]
-    )
-    fake_source.set_video_info(
-        "test123",
-        {
-            "id": "test123",
-            "title": "Test Song",
-            "duration_seconds": 180,
-            "thumbnail_url": "https://example.com/thumb.jpg",
-            "channel": "Test Channel",
-        },
-    )
-    video_manager._register_source(fake_source)
+    # Configure get_video_info to return test data
+    video_manager.get_video_info.return_value = {
+        "id": "test123",
+        "title": "Test Song",
+        "duration_seconds": 180,
+        "thumbnail_url": "https://example.com/thumb.jpg",
+        "channel": "Test Channel",
+    }
 
-    yield video_manager
+    # Configure other methods
+    video_manager.download.return_value = None  # Async download
+    video_manager.get_cached_path.return_value = None
+    video_manager.is_cached.return_value = False
+    video_manager.is_source_configured.return_value = True
+    video_manager.cleanup_cache.return_value = 0
+
+    return video_manager
 
 
 @pytest.fixture
 def app_components(temp_db, temp_cache_dir, mock_streaming, mock_video_manager, mock_playback):
     """Create all app components with mocked dependencies.
 
-    Uses mock playback controller since API tests focus on the HTTP layer,
-    not playback logic. Only test_playback and test_integration use the
-    real PlaybackController.
+    Uses mock playback and video_manager since API tests focus on the HTTP layer,
+    not playback or video logic. Only test_playback and test_integration use the
+    real controllers.
     """
     config_manager = ConfigManager(temp_db)
     config_manager.set("youtube_api_key", "test_key")
