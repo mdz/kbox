@@ -14,17 +14,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build Docker image
-        run: docker build -t kbox .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: kbox:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Lint with ruff
-        run: docker run --rm kbox ruff check .
+        run: docker run --rm kbox:latest ruff check .
 
       - name: Check formatting with ruff
-        run: docker run --rm kbox ruff format --check .
+        run: docker run --rm kbox:latest ruff format --check .
 
       - name: Type check with mypy
-        run: docker run --rm kbox mypy kbox
+        run: docker run --rm kbox:latest mypy kbox
 
       - name: Run tests
-        run: docker run --rm kbox pytest -v
+        run: docker run --rm kbox:latest pytest -v
