@@ -246,14 +246,20 @@ class VideoLibrary:
 
         Returns:
             List of video dictionaries with opaque 'id' field
+
+        Raises:
+            Exception: If all configured sources fail
         """
         results = []
+        errors = []
+        sources_tried = 0
 
         for source_id, source in self._sources.items():
             if not source.is_configured():
                 self.logger.debug("Skipping unconfigured source: %s", source_id)
                 continue
 
+            sources_tried += 1
             try:
                 source_results = source.search(query, max_results)
                 # Convert source-specific IDs to opaque library IDs
@@ -263,6 +269,12 @@ class VideoLibrary:
                 results.extend(source_results)
             except Exception as e:
                 self.logger.error("Error searching %s: %s", source_id, e, exc_info=True)
+                errors.append((source_id, e))
+
+        # If all sources failed, propagate the error
+        if sources_tried > 0 and len(errors) == sources_tried:
+            # Re-raise the first error (or last, depending on preference)
+            raise errors[0][1]
 
         return results
 

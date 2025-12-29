@@ -29,6 +29,7 @@ class FakeVideoSource(VideoSource):
         self._video_info: Optional[Dict[str, Any]] = None
         self.download_calls: List[tuple] = []
         self.download_should_succeed = True
+        self.search_error: Optional[Exception] = None
 
     @property
     def source_id(self) -> str:
@@ -38,6 +39,8 @@ class FakeVideoSource(VideoSource):
         return self._configured
 
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        if self.search_error:
+            raise self.search_error
         return self._search_results[:max_results]
 
     def get_video_info(self, video_id: str) -> Optional[Dict[str, Any]]:
@@ -235,6 +238,33 @@ class TestSearch:
 
         results = library.search("test query")
         assert all("unconfigured" not in r.get("id", "") for r in results)
+
+    def test_search_propagates_error_when_all_sources_fail(self, config_manager):
+        """Search should propagate exception when all configured sources fail."""
+        library = VideoLibrary(config_manager)
+
+        failing_source = FakeVideoSource("youtube")
+        failing_source.search_error = RuntimeError("API error")
+        library.register_source(failing_source)
+
+        with pytest.raises(RuntimeError, match="API error"):
+            library.search("test query")
+
+    def test_search_returns_partial_results_when_some_sources_fail(self, config_manager):
+        """Search should return results from working sources even if others fail."""
+        library = VideoLibrary(config_manager)
+
+        working_source = FakeVideoSource("youtube")
+        working_source._search_results = [{"id": "vid1", "title": "Video 1"}]
+        library.register_source(working_source)
+
+        failing_source = FakeVideoSource("vimeo")
+        failing_source.search_error = RuntimeError("API error")
+        library.register_source(failing_source)
+
+        results = library.search("test query")
+        assert len(results) == 1
+        assert results[0]["id"] == "youtube:vid1"
 
 
 # =============================================================================
