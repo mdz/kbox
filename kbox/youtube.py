@@ -16,31 +16,24 @@ import yt_dlp
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .video_source import VideoSource
+from .video_library import VideoSource
 
 if TYPE_CHECKING:
-    from .cache import CacheManager
     from .config_manager import ConfigManager
 
 
 class YouTubeSource(VideoSource):
     """YouTube video source implementation."""
 
-    def __init__(
-        self,
-        config_manager: "ConfigManager",
-        cache_manager: "CacheManager",
-    ):
+    def __init__(self, config_manager: "ConfigManager"):
         """
         Initialize YouTubeSource.
 
         Args:
             config_manager: ConfigManager for runtime config access
-            cache_manager: CacheManager for cache operations
         """
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
-        self.cache_manager = cache_manager
 
         # Lazy-initialized YouTube API client
         self._youtube = None
@@ -268,55 +261,22 @@ class YouTubeSource(VideoSource):
             self.logger.error("Error getting video info: %s", e, exc_info=True)
             return None
 
-    def get_cached_path(self, video_id: str, touch: bool = True) -> Optional[Path]:
-        """
-        Get the path to a cached video file if it exists.
-
-        Args:
-            video_id: YouTube video ID
-            touch: If True, update file mtime for LRU tracking (default True)
-
-        Returns:
-            Path to video file if exists, None otherwise
-        """
-        return self.cache_manager.get_file_path(self.source_id, video_id, touch=touch)
-
-    def is_cached(self, video_id: str) -> bool:
-        """
-        Check if a video is already cached.
-
-        Args:
-            video_id: YouTube video ID
-
-        Returns:
-            True if video is cached
-        """
-        return self.cache_manager.is_cached(self.source_id, video_id)
-
     def download(
         self,
         video_id: str,
-        queue_item_id: int,
+        output_dir: Path,
         status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> Optional[str]:
+    ) -> None:
         """
         Download a video using yt-dlp.
 
         Args:
             video_id: YouTube video ID
-            queue_item_id: Queue item ID (for callback)
+            output_dir: Directory to download into
             status_callback: Callback function(status, path, error) for status updates
-
-        Returns:
-            Path to downloaded file if already cached, None if download started async
         """
-        # Check if already downloaded
-        existing_path = self.get_cached_path(video_id)
-        if existing_path:
-            self.logger.info("Video %s already cached at %s", video_id, existing_path)
-            if status_callback:
-                status_callback("ready", str(existing_path), None)
-            return str(existing_path)
+        # Ensure output directory exists
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Download in background thread
         def download_thread():
@@ -333,7 +293,8 @@ class YouTubeSource(VideoSource):
                     status_callback("downloading", None, None)
 
                 # Configure yt-dlp options
-                output_template = self.cache_manager.get_output_template(self.source_id, video_id)
+                # Use video.%(ext)s pattern for predictable naming
+                output_template = str(output_dir / "video.%(ext)s")
 
                 # Get max resolution from config (allows runtime changes)
                 max_res = self.config_manager.get_int("video_max_resolution", 480)
@@ -362,7 +323,7 @@ class YouTubeSource(VideoSource):
                     ydl.download([url])
 
                 # Find the downloaded file
-                downloaded_path = self.get_cached_path(video_id)
+                downloaded_path = self._find_downloaded_file(output_dir)
 
                 if downloaded_path and downloaded_path.exists():
                     self.logger.info("Downloaded video %s to %s", video_id, downloaded_path)
@@ -394,4 +355,11 @@ class YouTubeSource(VideoSource):
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()
 
-        return None  # Download is async, path will be available via callback
+    def _find_downloaded_file(self, output_dir: Path) -> Optional[Path]:
+        """Find the downloaded video file in the output directory."""
+        video_extensions = [".mp4", ".mkv", ".webm"]
+        for ext in video_extensions:
+            path = output_dir / f"video{ext}"
+            if path.exists():
+                return path
+        return None

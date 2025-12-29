@@ -1994,11 +1994,10 @@
             // Fetch saved settings for this video and user (pitch preset, etc.)
             let savedPitch = 0;
             try {
-                const source = video.source || 'youtube';
-                const settingsResponse = await fetch(`/api/queue/settings/${source}/${video.id}?user_id=${encodeURIComponent(userId)}`);
+                const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}?user_id=${encodeURIComponent(userId)}`);
                 if (settingsResponse.ok) {
                     const settingsData = await settingsResponse.json();
-                    savedPitch = settingsData.settings.pitch_semitones || 0;
+                    savedPitch = settingsData.settings?.pitch_semitones || 0;
                 }
             } catch (e) {
                 // If fetch fails, just use default 0
@@ -2051,8 +2050,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         user_id: userId,
-                        source: currentVideoToAdd.source || 'youtube',
-                        source_id: currentVideoToAdd.id,
+                        video_id: currentVideoToAdd.id,
                         title: currentVideoToAdd.title,
                         duration_seconds: currentVideoToAdd.duration_seconds,
                         thumbnail_url: currentVideoToAdd.thumbnail,

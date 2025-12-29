@@ -13,7 +13,7 @@ from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
-    from .video_source import VideoManager
+    from .video_library import VideoLibrary
 
 
 class QueueManager:
@@ -28,19 +28,19 @@ class QueueManager:
     def __init__(
         self,
         database: Database,
-        video_manager: "VideoManager",
+        video_library: "VideoLibrary",
     ):
         """
         Initialize QueueManager.
 
         Args:
             database: Database instance for persistence
-            video_manager: VideoManager for video search/download
+            video_library: VideoLibrary for video search/download
         """
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
-        self.video_manager = video_manager
+        self.video_library = video_library
         self.logger = logging.getLogger(__name__)
 
         # Download monitoring
@@ -99,10 +99,8 @@ class QueueManager:
         def on_status(status: str, path: Optional[str], error: Optional[str]):
             self._on_download_status(item_id, status, path, error)
 
-        # Use video manager to download (routes to correct source)
-        cached_path = self.video_manager.download(
-            item.source, item.source_id, item.id, status_callback=on_status
-        )
+        # Use video library to request the video
+        cached_path = self.video_library.request(item.video_id, callback=on_status)
 
         if cached_path:
             # Already cached or completed synchronously - mark as ready
@@ -117,7 +115,7 @@ class QueueManager:
     def _check_stuck_download(self, item: QueueItem):
         """Check if a download is stuck and recover if possible."""
         # Check if file exists (download completed but callback failed)
-        cached_path = self.video_manager.get_cached_path(item.source, item.source_id)
+        cached_path = self.video_library.get_path(item.video_id)
         if cached_path and cached_path.exists():
             self.logger.info(
                 "Found completed download for %s (ID: %s), updating status",
@@ -145,8 +143,8 @@ class QueueManager:
         if status == "ready" and path:
             self.update_download_status(item_id, self.STATUS_READY, download_path=path)
             self.logger.info("Download complete for queue item %s: %s", item_id, path)
-            # Trigger cache cleanup after successful download
-            self._cleanup_cache()
+            # Trigger storage cleanup after successful download
+            self._cleanup_storage()
         elif status == "error" and error:
             self.update_download_status(item_id, self.STATUS_ERROR, error_message=error)
             self.logger.error("Download failed for queue item %s: %s", item_id, error)
@@ -167,14 +165,14 @@ class QueueManager:
 
         self.logger.info("Download monitor stopped")
 
-    def _cleanup_cache(self) -> None:
-        """Trigger cache cleanup with queue items protected from eviction."""
+    def _cleanup_storage(self) -> None:
+        """Trigger storage cleanup with queue items protected from eviction."""
         try:
             queue = self.get_queue(include_played=False)
-            protected = {(item.source, item.source_id) for item in queue}
-            self.video_manager.cleanup_cache(protected)
+            protected = {item.video_id for item in queue}
+            self.video_library.manage_storage(protected)
         except Exception as e:
-            self.logger.error("Error during cache cleanup: %s", e, exc_info=True)
+            self.logger.error("Error during storage cleanup: %s", e, exc_info=True)
 
     # =========================================================================
     # Queue Operations
@@ -183,8 +181,7 @@ class QueueManager:
     def add_song(
         self,
         user: User,
-        source: str,
-        source_id: str,
+        video_id: str,
         title: str,
         duration_seconds: Optional[int] = None,
         thumbnail_url: Optional[str] = None,
@@ -196,8 +193,7 @@ class QueueManager:
 
         Args:
             user: User who requested the song
-            source: Source type (e.g., 'youtube')
-            source_id: Source-specific identifier (e.g., video ID)
+            video_id: Opaque video ID (e.g., "youtube:abc123")
             title: Song title
             duration_seconds: Duration in seconds (optional)
             thumbnail_url: Thumbnail URL (optional)
@@ -216,15 +212,15 @@ class QueueManager:
         settings = SongSettings(pitch_semitones=pitch_semitones)
 
         item_id = self.repository.add(
-            user=user, source=source, source_id=source_id, metadata=metadata, settings=settings
+            user=user, video_id=video_id, metadata=metadata, settings=settings
         )
 
         self.logger.info(
-            "Added song to queue: %s by %s (ID: %s, source: %s, pitch: %s)",
+            "Added song to queue: %s by %s (ID: %s, video_id: %s, pitch: %s)",
             title,
             user.display_name,
             item_id,
-            source,
+            video_id,
             pitch_semitones,
         )
         return item_id

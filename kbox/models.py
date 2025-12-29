@@ -44,8 +44,7 @@ class QueueItem:
     position: int
     user_id: str
     user_name: str
-    source: str
-    source_id: str
+    video_id: str  # Opaque video ID like "youtube:abc123"
     metadata: SongMetadata
     settings: SongSettings
     download_status: str = "pending"
@@ -60,8 +59,7 @@ class HistoryRecord:
     """Playback history record."""
 
     id: int
-    source: str
-    source_id: str
+    video_id: str  # Opaque video ID like "youtube:abc123"
     user_id: str
     user_name: str
     metadata: SongMetadata

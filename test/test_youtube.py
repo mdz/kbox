@@ -4,34 +4,31 @@ Unit tests for YouTubeSource.
 Uses mocks to avoid actual API calls.
 """
 
+import shutil
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
-from kbox.cache import CacheManager
 from kbox.youtube import YouTubeSource
 
 
 @pytest.fixture
-def temp_cache_dir():
-    """Create a temporary cache directory."""
+def temp_storage_dir():
+    """Create a temporary storage directory."""
     temp_dir = tempfile.mkdtemp()
     yield temp_dir
-    # Cleanup
-    import shutil
-
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.fixture
-def mock_config_manager(temp_cache_dir):
+def mock_config_manager(temp_storage_dir):
     """Create a mock ConfigManager for tests."""
     config = Mock()
     config.get.side_effect = lambda key, default=None: {
         "youtube_api_key": "fake_api_key",
-        "cache_directory": temp_cache_dir,
+        "cache_directory": temp_storage_dir,
         "video_max_resolution": "480",
         "cache_max_size_gb": "10",
     }.get(key, default)
@@ -43,18 +40,12 @@ def mock_config_manager(temp_cache_dir):
 
 
 @pytest.fixture
-def cache_manager(mock_config_manager):
-    """Create a CacheManager instance."""
-    return CacheManager(mock_config_manager)
-
-
-@pytest.fixture
-def youtube_source(temp_cache_dir, mock_config_manager, cache_manager):
-    """Create a YouTubeSource instance with mocked API and CacheManager."""
+def youtube_source(mock_config_manager):
+    """Create a YouTubeSource instance with mocked API."""
     with patch("kbox.youtube.build") as mock_build:
         mock_youtube = Mock()
         mock_build.return_value = mock_youtube
-        source = YouTubeSource(mock_config_manager, cache_manager=cache_manager)
+        source = YouTubeSource(mock_config_manager)
         # Force initialization of the lazy client
         source._youtube = mock_youtube
         source._last_api_key = "fake_api_key"
@@ -204,54 +195,30 @@ def test_get_video_info_not_found(youtube_source):
     assert info is None
 
 
-def test_is_cached(youtube_source, temp_cache_dir):
-    """Test checking if video is cached."""
-    # Not cached
-    assert youtube_source.is_cached("vid1") is False
+def test_find_downloaded_file(youtube_source, temp_storage_dir):
+    """Test finding downloaded file in output directory."""
+    output_dir = Path(temp_storage_dir) / "test_video"
+    output_dir.mkdir(parents=True)
 
-    # Create a fake cached file in youtube subdirectory
-    youtube_dir = Path(temp_cache_dir) / "youtube"
-    youtube_dir.mkdir(exist_ok=True)
-    fake_file = youtube_dir / "vid1.mp4"
-    fake_file.touch()
+    # No file yet
+    assert youtube_source._find_downloaded_file(output_dir) is None
 
-    assert youtube_source.is_cached("vid1") is True
+    # Create video file
+    video_file = output_dir / "video.mp4"
+    video_file.touch()
 
-
-def test_get_cached_path(youtube_source, temp_cache_dir):
-    """Test getting cached path."""
-    # Not cached
-    assert youtube_source.get_cached_path("vid1") is None
-
-    # Create a fake cached file in youtube subdirectory
-    youtube_dir = Path(temp_cache_dir) / "youtube"
-    youtube_dir.mkdir(exist_ok=True)
-    fake_file = youtube_dir / "vid1.mp4"
-    fake_file.touch()
-
-    path = youtube_source.get_cached_path("vid1")
-    assert path is not None
-    assert path.exists()
+    found = youtube_source._find_downloaded_file(output_dir)
+    assert found == video_file
 
 
-def test_download_already_cached(youtube_source, temp_cache_dir):
-    """Test download when video is already cached."""
-    # Create a fake cached file in youtube subdirectory
-    youtube_dir = Path(temp_cache_dir) / "youtube"
-    youtube_dir.mkdir(exist_ok=True)
-    fake_file = youtube_dir / "vid1.mp4"
-    fake_file.touch()
+def test_find_downloaded_file_webm(youtube_source, temp_storage_dir):
+    """Test finding downloaded file with webm extension."""
+    output_dir = Path(temp_storage_dir) / "test_video"
+    output_dir.mkdir(parents=True)
 
-    callback_calls = []
+    # Create webm file
+    video_file = output_dir / "video.webm"
+    video_file.touch()
 
-    def status_callback(status, path, error):
-        callback_calls.append((status, path, error))
-
-    result = youtube_source.download("vid1", 1, status_callback)
-
-    # Should return path immediately
-    assert result == str(fake_file)
-    # Callback should be called with ready status
-    assert len(callback_calls) == 1
-    assert callback_calls[0][0] == "ready"
-    assert callback_calls[0][1] == str(fake_file)
+    found = youtube_source._find_downloaded_file(output_dir)
+    assert found == video_file
