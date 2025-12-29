@@ -320,17 +320,15 @@ class YouTubeSource(VideoSource):
                 url = f"https://www.youtube.com/watch?v={video_id}"
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    info = ydl.extract_info(url, download=True)
+                    downloaded_path = Path(ydl.prepare_filename(info))
 
-                # Find the downloaded file
-                downloaded_path = self._find_downloaded_file(output_dir)
-
-                if downloaded_path and downloaded_path.exists():
+                if downloaded_path.exists():
                     self.logger.info("Downloaded video %s to %s", video_id, downloaded_path)
                     if status_callback:
                         status_callback("ready", str(downloaded_path), None)
                 else:
-                    raise FileNotFoundError("Downloaded file not found")
+                    raise FileNotFoundError(f"Downloaded file not found: {downloaded_path}")
 
             except Exception as e:
                 error_msg = str(e)
@@ -354,12 +352,3 @@ class YouTubeSource(VideoSource):
         # Start download in background
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()
-
-    def _find_downloaded_file(self, output_dir: Path) -> Optional[Path]:
-        """Find the downloaded video file in the output directory."""
-        video_extensions = [".mp4", ".mkv", ".webm"]
-        for ext in video_extensions:
-            path = output_dir / f"video{ext}"
-            if path.exists():
-                return path
-        return None

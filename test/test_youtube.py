@@ -6,7 +6,6 @@ Uses mocks to avoid actual API calls.
 
 import shutil
 import tempfile
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -193,32 +192,3 @@ def test_get_video_info_not_found(youtube_source):
 
     info = youtube_source.get_video_info("nonexistent")
     assert info is None
-
-
-def test_find_downloaded_file(youtube_source, temp_storage_dir):
-    """Test finding downloaded file in output directory."""
-    output_dir = Path(temp_storage_dir) / "test_video"
-    output_dir.mkdir(parents=True)
-
-    # No file yet
-    assert youtube_source._find_downloaded_file(output_dir) is None
-
-    # Create video file
-    video_file = output_dir / "video.mp4"
-    video_file.touch()
-
-    found = youtube_source._find_downloaded_file(output_dir)
-    assert found == video_file
-
-
-def test_find_downloaded_file_webm(youtube_source, temp_storage_dir):
-    """Test finding downloaded file with webm extension."""
-    output_dir = Path(temp_storage_dir) / "test_video"
-    output_dir.mkdir(parents=True)
-
-    # Create webm file
-    video_file = output_dir / "video.webm"
-    video_file.touch()
-
-    found = youtube_source._find_downloaded_file(output_dir)
-    assert found == video_file
