@@ -297,9 +297,9 @@ class TestGetInfo:
         assert info is None
 
     def test_get_info_invalid_video_id(self, video_library):
-        """get_info should return None for invalid video ID format."""
-        info = video_library.get_info("invalid-no-colon")
-        assert info is None
+        """get_info should raise ValueError for invalid video ID format."""
+        with pytest.raises(ValueError):
+            video_library.get_info("invalid-no-colon")
 
 
 # =============================================================================

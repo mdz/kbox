@@ -287,12 +287,11 @@ class VideoLibrary:
 
         Returns:
             Video dictionary with metadata, or None if not found
+
+        Raises:
+            ValueError: If video_id format is invalid
         """
-        try:
-            source, source_id = self._parse_video_id(video_id)
-        except ValueError as e:
-            self.logger.warning("Invalid video ID: %s", e)
-            return None
+        source, source_id = self._parse_video_id(video_id)
 
         source_obj = self._sources.get(source)
         if not source_obj:
@@ -339,6 +338,9 @@ class VideoLibrary:
 
         Returns:
             Path to video file if already available, None if download started
+
+        Raises:
+            ValueError: If video_id format is invalid
         """
         # Check if already available
         path = self.get_path(video_id)
@@ -349,13 +351,7 @@ class VideoLibrary:
             return str(path)
 
         # Start download
-        try:
-            source, source_id = self._parse_video_id(video_id)
-        except ValueError as e:
-            self.logger.error("Invalid video ID: %s", e)
-            if callback:
-                callback("error", None, str(e))
-            return None
+        source, source_id = self._parse_video_id(video_id)
 
         source_obj = self._sources.get(source)
         if not source_obj:
@@ -394,11 +390,11 @@ class VideoLibrary:
 
         Returns:
             Path to video file if exists, None otherwise
+
+        Raises:
+            ValueError: If video_id format is invalid
         """
-        try:
-            video_dir = self._get_video_directory(video_id)
-        except ValueError:
-            return None
+        video_dir = self._get_video_directory(video_id)
 
         path = self._find_video_file(video_dir)
         if path and touch:
