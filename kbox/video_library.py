@@ -112,6 +112,7 @@ class VideoLibrary:
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
         self._sources: Dict[str, VideoSource] = {}
+        self._download_semaphore = threading.Semaphore(1)  # Limit concurrent downloads
 
         self.logger.info("VideoLibrary initialized")
 
@@ -361,6 +362,7 @@ class VideoLibrary:
 
         # Start download in background thread
         def download_thread():
+            self._download_semaphore.acquire()
             try:
                 if callback:
                     callback("downloading", None, None)
@@ -372,6 +374,8 @@ class VideoLibrary:
                 self.logger.error("Download failed for %s: %s", video_id, e, exc_info=True)
                 if callback:
                     callback("error", None, str(e))
+            finally:
+                self._download_semaphore.release()
 
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()

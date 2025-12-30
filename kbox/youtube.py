@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -38,9 +37,6 @@ class YouTubeSource(VideoSource):
         # Lazy-initialized YouTube API client
         self._youtube = None
         self._last_api_key: Optional[str] = None
-
-        # Semaphore to limit concurrent downloads to 1 (avoid abusing YouTube)
-        self._download_semaphore = threading.Semaphore(1)
 
         self.logger.info("YouTubeSource initialized")
 
@@ -284,8 +280,6 @@ class YouTubeSource(VideoSource):
         except (OSError, AttributeError):
             pass  # Windows doesn't support nice(), or permission denied
 
-        # Acquire semaphore to limit concurrent downloads
-        self._download_semaphore.acquire()
         try:
             output_template = str(output_dir / "video.%(ext)s")
             max_res = self.config_manager.get_int("video_max_resolution", 480)
@@ -328,5 +322,3 @@ class YouTubeSource(VideoSource):
 
             self.logger.error("Error downloading video %s: %s", video_id, error_msg)
             raise RuntimeError(error_msg) from e
-        finally:
-            self._download_semaphore.release()
