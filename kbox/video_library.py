@@ -11,6 +11,7 @@ internal detail managed by the library.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -72,25 +73,19 @@ class VideoSource(ABC):
         ...
 
     @abstractmethod
-    def download(
-        self,
-        video_id: str,
-        output_dir: Path,
-        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> None:
+    def download(self, video_id: str, output_dir: Path) -> Path:
         """
-        Download a video to the specified directory.
-
-        The source should download the video to output_dir with a predictable name
-        (e.g., video.webm). The actual path is returned via the status_callback.
+        Download a video to the specified directory (synchronous).
 
         Args:
             video_id: Source-specific video identifier
             output_dir: Directory to download into (will be created if needed)
-            status_callback: Callback function(status, path, error) for status updates
-                - status: "downloading", "ready", or "error"
-                - path: Path to downloaded file (when status="ready")
-                - error: Error message (when status="error")
+
+        Returns:
+            Path to the downloaded video file
+
+        Raises:
+            Exception: If download fails
         """
         ...
 
@@ -350,7 +345,7 @@ class VideoLibrary:
                 callback("ready", str(path), None)
             return str(path)
 
-        # Start download
+        # Parse and validate
         source, source_id = self._parse_video_id(video_id)
 
         source_obj = self._sources.get(source)
@@ -364,8 +359,22 @@ class VideoLibrary:
         video_dir = self._get_video_directory(video_id)
         video_dir.mkdir(parents=True, exist_ok=True)
 
-        # Start download to directory
-        source_obj.download(source_id, video_dir, callback)
+        # Start download in background thread
+        def download_thread():
+            try:
+                if callback:
+                    callback("downloading", None, None)
+                downloaded_path = source_obj.download(source_id, video_dir)
+                self.logger.info("Downloaded %s to %s", video_id, downloaded_path)
+                if callback:
+                    callback("ready", str(downloaded_path), None)
+            except Exception as e:
+                self.logger.error("Download failed for %s: %s", video_id, e, exc_info=True)
+                if callback:
+                    callback("error", None, str(e))
+
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
         return None
 
     def is_available(self, video_id: str) -> bool:

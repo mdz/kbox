@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from unittest.mock import Mock
 
 import pytest
@@ -48,23 +48,16 @@ class FakeVideoSource(VideoSource):
             return self._video_info.copy()
         return None
 
-    def download(
-        self,
-        video_id: str,
-        output_dir: Path,
-        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> None:
-        self.download_calls.append((video_id, output_dir, status_callback))
+    def download(self, video_id: str, output_dir: Path) -> Path:
+        self.download_calls.append((video_id, output_dir))
         if self.download_should_succeed:
             # Simulate download by creating file
             output_dir.mkdir(parents=True, exist_ok=True)
             video_file = output_dir / "video.mp4"
             video_file.write_bytes(b"x" * 1000)
-            if status_callback:
-                status_callback("ready", str(video_file), None)
+            return video_file
         else:
-            if status_callback:
-                status_callback("error", None, "Download failed")
+            raise RuntimeError("Download failed")
 
 
 def _set_mtime(path: Path, seconds_ago: float) -> None:

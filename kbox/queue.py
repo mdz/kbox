@@ -100,17 +100,12 @@ class QueueManager:
             self._on_download_status(item_id, status, path, error)
 
         # Use video library to request the video
+        # The callback will handle all status updates (downloading, ready, error)
         cached_path = self.video_library.request(item.video_id, callback=on_status)
 
         if cached_path:
-            # Already cached or completed synchronously - mark as ready
-            self.update_download_status(item.id, self.STATUS_READY, download_path=cached_path)
-        else:
-            # Check if callback already updated status (e.g., sync error)
-            current = self.get_item(item.id)
-            if current and current.download_status == self.STATUS_PENDING:
-                # Async download started - mark as downloading
-                self.update_download_status(item.id, self.STATUS_DOWNLOADING)
+            # Already cached - callback already marked as ready
+            pass
 
     def _check_stuck_download(self, item: QueueItem):
         """Check if a download is stuck and recover if possible."""
@@ -140,7 +135,9 @@ class QueueManager:
         self, item_id: int, status: str, path: Optional[str], error: Optional[str]
     ):
         """Callback for download status updates."""
-        if status == "ready" and path:
+        if status == "downloading":
+            self.update_download_status(item_id, self.STATUS_DOWNLOADING)
+        elif status == "ready" and path:
             self.update_download_status(item_id, self.STATUS_READY, download_path=path)
             self.logger.info("Download complete for queue item %s: %s", item_id, path)
             # Trigger storage cleanup after successful download

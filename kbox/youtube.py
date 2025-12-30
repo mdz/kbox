@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import yt_dlp
 from googleapiclient.discovery import build
@@ -261,94 +261,72 @@ class YouTubeSource(VideoSource):
             self.logger.error("Error getting video info: %s", e, exc_info=True)
             return None
 
-    def download(
-        self,
-        video_id: str,
-        output_dir: Path,
-        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> None:
+    def download(self, video_id: str, output_dir: Path) -> Path:
         """
-        Download a video using yt-dlp.
+        Download a video using yt-dlp (synchronous).
 
         Args:
             video_id: YouTube video ID
             output_dir: Directory to download into
-            status_callback: Callback function(status, path, error) for status updates
+
+        Returns:
+            Path to the downloaded video file
+
+        Raises:
+            Exception: If download fails
         """
         # Ensure output directory exists
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Download in background thread
-        def download_thread():
-            # Lower thread priority to avoid interfering with GStreamer playback
-            try:
-                os.nice(10)  # Increase niceness = lower scheduling priority
-            except (OSError, AttributeError):
-                pass  # Windows doesn't support nice(), or permission denied
+        # Lower thread priority to avoid interfering with GStreamer playback
+        try:
+            os.nice(10)
+        except (OSError, AttributeError):
+            pass  # Windows doesn't support nice(), or permission denied
 
-            # Acquire semaphore to limit concurrent downloads to 1
-            self._download_semaphore.acquire()
-            try:
-                if status_callback:
-                    status_callback("downloading", None, None)
+        # Acquire semaphore to limit concurrent downloads
+        self._download_semaphore.acquire()
+        try:
+            output_template = str(output_dir / "video.%(ext)s")
+            max_res = self.config_manager.get_int("video_max_resolution", 480)
 
-                # Configure yt-dlp options
-                # Use video.%(ext)s pattern for predictable naming
-                output_template = str(output_dir / "video.%(ext)s")
+            ydl_opts = {
+                "format": f"bestvideo[height<={max_res}]+bestaudio/best",
+                "outtmpl": output_template,
+                "quiet": False,
+                "no_warnings": False,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "web"],
+                    }
+                },
+                "retries": 3,
+                "fragment_retries": 3,
+                "cookiefile": None,
+            }
 
-                # Get max resolution from config (allows runtime changes)
-                max_res = self.config_manager.get_int("video_max_resolution", 480)
+            url = f"https://www.youtube.com/watch?v={video_id}"
 
-                ydl_opts = {
-                    "format": f"bestvideo[height<={max_res}]+bestaudio/best",
-                    "outtmpl": output_template,
-                    "quiet": False,
-                    "no_warnings": False,
-                    # Try multiple clients for better compatibility
-                    "extractor_args": {
-                        "youtube": {
-                            "player_client": ["android", "web"],
-                        }
-                    },
-                    # Retry on errors
-                    "retries": 3,
-                    "fragment_retries": 3,
-                    # Use cookies if available (for YouTube Premium)
-                    "cookiefile": None,  # Can be set via config later
-                }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                downloaded_path = Path(ydl.prepare_filename(info))
 
-                url = f"https://www.youtube.com/watch?v={video_id}"
+            if not downloaded_path.exists():
+                raise FileNotFoundError(f"Downloaded file not found: {downloaded_path}")
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    downloaded_path = Path(ydl.prepare_filename(info))
+            self.logger.info("Downloaded video %s to %s", video_id, downloaded_path)
+            return downloaded_path
 
-                if downloaded_path.exists():
-                    self.logger.info("Downloaded video %s to %s", video_id, downloaded_path)
-                    if status_callback:
-                        status_callback("ready", str(downloaded_path), None)
-                else:
-                    raise FileNotFoundError(f"Downloaded file not found: {downloaded_path}")
+        except Exception as e:
+            error_msg = str(e)
+            if "403" in error_msg or "Forbidden" in error_msg:
+                error_msg = "YouTube blocked the download (403 Forbidden). Try updating yt-dlp."
+            elif "Private video" in error_msg:
+                error_msg = "Video is private or unavailable"
+            elif "Video unavailable" in error_msg:
+                error_msg = "Video is unavailable or has been removed"
 
-            except Exception as e:
-                error_msg = str(e)
-                # Provide more helpful error messages
-                if "403" in error_msg or "Forbidden" in error_msg:
-                    error_msg = "YouTube blocked the download (403 Forbidden). This may be due to age restrictions, region blocking, or YouTube policy changes. Try updating yt-dlp: pip install --upgrade yt-dlp"
-                elif "Private video" in error_msg:
-                    error_msg = "Video is private or unavailable"
-                elif "Video unavailable" in error_msg:
-                    error_msg = "Video is unavailable or has been removed"
-
-                self.logger.error(
-                    "Error downloading video %s: %s", video_id, error_msg, exc_info=True
-                )
-                if status_callback:
-                    status_callback("error", None, error_msg)
-            finally:
-                # Always release semaphore when download completes or fails
-                self._download_semaphore.release()
-
-        # Start download in background
-        thread = threading.Thread(target=download_thread, daemon=True)
-        thread.start()
+            self.logger.error("Error downloading video %s: %s", video_id, error_msg)
+            raise RuntimeError(error_msg) from e
+        finally:
+            self._download_semaphore.release()

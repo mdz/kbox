@@ -7,8 +7,9 @@ Tests the integration between components without external dependencies.
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from unittest.mock import Mock
 
 import pytest
@@ -68,25 +69,27 @@ class FakeVideoSource(VideoSource):
     def get_video_info(self, video_id: str) -> Optional[Dict[str, Any]]:
         return self._video_info.get(video_id)
 
-    def download(
-        self,
-        video_id: str,
-        output_dir: Path,
-        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> None:
+    def download(self, video_id: str, output_dir: Path) -> Path:
         """Create a fake cached file synchronously."""
         if self._fail_downloads:
-            if status_callback:
-                status_callback("error", None, self._fail_message)
-            return
+            raise RuntimeError(self._fail_message)
 
         # Create fake video file in the output directory
         output_dir.mkdir(parents=True, exist_ok=True)
         video_file = output_dir / "video.mp4"
         video_file.write_bytes(b"fake video content for " + video_id.encode())
+        return video_file
 
-        if status_callback:
-            status_callback("ready", str(video_file), None)
+
+def wait_for_download(queue, item_id, expected_status, timeout=0.5):
+    """Wait for a download to reach the expected status."""
+    iterations = int(timeout / 0.01)
+    for _ in range(iterations):
+        item = queue.get_item(item_id)
+        if item and item.download_status == expected_status:
+            return item
+        time.sleep(0.01)
+    return queue.get_item(item_id)
 
 
 @pytest.fixture
@@ -264,8 +267,10 @@ def test_download_and_ready_status(full_system):
     # Trigger download processing directly
     system["queue"]._process_download_queue()
 
+    # Wait for async download to complete
+    item = wait_for_download(system["queue"], item_id, QueueManager.STATUS_READY)
+
     # Song should be ready after download
-    item = system["queue"].get_item(item_id)
     assert item.download_status == QueueManager.STATUS_READY
     assert item.download_path is not None
 
@@ -287,8 +292,10 @@ def test_download_error_handling(full_system):
     # Trigger download processing
     system["queue"]._process_download_queue()
 
+    # Wait for async download to complete
+    item = wait_for_download(system["queue"], item_id, QueueManager.STATUS_ERROR)
+
     # Song should have error status
-    item = system["queue"].get_item(item_id)
     assert item.download_status == QueueManager.STATUS_ERROR
     assert item.error_message == "Test error message"
 
@@ -369,8 +376,16 @@ def test_storage_cleanup_integration(full_system):
             f"Cleanup Test Song {i}",
         )
 
+    # Get item IDs for waiting
+    queue_items = system["queue"].get_queue()
+    item_ids = [item.id for item in queue_items]
+
     # Trigger downloads
     system["queue"]._process_download_queue()
+
+    # Wait for all downloads to complete
+    for item_id in item_ids:
+        wait_for_download(system["queue"], item_id, QueueManager.STATUS_READY)
 
     # Verify files were created
     storage_dir = Path(system["storage_dir"])
@@ -409,8 +424,10 @@ def test_search_to_queue_flow(full_system):
     # Trigger download
     system["queue"]._process_download_queue()
 
+    # Wait for download to complete
+    item = wait_for_download(system["queue"], item_id, QueueManager.STATUS_READY)
+
     # Verify it's ready
-    item = system["queue"].get_item(item_id)
     assert item.download_status == QueueManager.STATUS_READY
 
 
