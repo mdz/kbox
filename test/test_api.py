@@ -63,6 +63,7 @@ def mock_streaming():
     streaming.seek = Mock(return_value=True)
     streaming.show_notification = Mock()
     streaming.display_image = Mock()
+    streaming.reinitialize_pipeline = Mock()
     streaming.server = None
     return streaming
 
@@ -633,6 +634,54 @@ class TestConfigEndpoints:
         response = client.patch("/api/config", json={"key": "test_key", "value": "test_value"})
         assert response.status_code == 200
         assert response.json()["status"] == "updated"
+
+    def test_update_non_streaming_config_no_restart(self, client):
+        """PATCH /api/config - non-streaming config changes don't restart streaming."""
+        set_operator(client)
+        response = client.patch("/api/config", json={"key": "operator_pin", "value": "5678"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert "restarted" not in data  # Should not include restart flag
+
+    def test_update_audio_config_restarts_streaming(self, client, mock_streaming):
+        """PATCH /api/config - audio config changes reinitialize pipeline."""
+        set_operator(client)
+
+        # Get the streaming controller
+        streaming = client.app.state.streaming_controller
+
+        # Update audio config
+        response = client.patch(
+            "/api/config", json={"key": "audio_output_device", "value": "test_device"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data.get("restarted") is True
+        assert "message" in data
+
+        # Verify reinitialize_pipeline was called on the same controller
+        streaming.reinitialize_pipeline.assert_called_once()
+
+    def test_update_video_config_restarts_streaming(self, client, mock_streaming):
+        """PATCH /api/config - video overlay config changes reinitialize pipeline."""
+        set_operator(client)
+
+        # Get the streaming controller
+        streaming = client.app.state.streaming_controller
+
+        # Update video config
+        response = client.patch(
+            "/api/config", json={"key": "overlay_qr_position", "value": "bottom-right"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data.get("restarted") is True
+
+        # Verify reinitialize_pipeline was called on the same controller
+        streaming.reinitialize_pipeline.assert_called_once()
 
 
 # =============================================================================

@@ -653,6 +653,52 @@ class StreamingController:
 
         self.logger.info("Streaming controller stopped")
 
+    def reinitialize_pipeline(self):
+        """
+        Reinitialize the pipeline with fresh configuration.
+
+        Used when audio/video config changes to apply new settings without
+        restarting the entire application. Rebuilds the GStreamer pipeline
+        while preserving display state.
+        """
+        self.logger.info("Reinitializing pipeline with updated configuration...")
+
+        # Save current display state
+        was_showing_interstitial = self._is_interstitial
+        current_file_backup = self.current_file
+
+        # Stop bus polling
+        self._stop_bus_polling()
+
+        # Set pipeline to NULL and release resources
+        if self.playbin:
+            Gst = _get_gst()
+            self.playbin.set_state(Gst.State.NULL)
+            # Pipeline will be garbage collected
+            self.playbin = None
+            self.audio_bin = None
+            self.video_bin = None
+            self.pitch_shift_element = None
+            self.qr_overlay = None
+            self.text_overlay = None
+
+        # Reset state
+        self.state = "idle"
+        self.current_file = None
+        self._is_interstitial = False
+
+        # Recreate the pipeline with fresh config
+        self._create_persistent_pipeline()
+
+        # Restore display if there was an interstitial showing
+        if was_showing_interstitial and current_file_backup:
+            try:
+                self.display_image(current_file_backup)
+            except Exception as e:
+                self.logger.warning("Could not restore interstitial display: %s", e)
+
+        self.logger.info("Pipeline reinitialized successfully")
+
     # =========================================================================
     # Pitch Control
     # =========================================================================

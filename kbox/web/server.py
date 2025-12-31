@@ -598,15 +598,59 @@ def create_app(
 
     @app.patch("/api/config")
     async def update_config(
+        request: Request,
         request_data: ConfigUpdateRequest,
         config: ConfigManager = Depends(get_config_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
         """Update configuration (operator only)."""
         if not is_operator:
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
+        # Save the configuration
         config.set(request_data.key, request_data.value)
+
+        # Check if this config change requires streaming subsystem restart
+        STREAMING_CONFIG_KEYS = {
+            "audio_output_device",
+            "audio_output_channels",
+            "overlay_qr_position",
+            "overlay_qr_size_percent",
+        }
+
+        needs_restart = request_data.key in STREAMING_CONFIG_KEYS
+
+        if needs_restart and request.app.state.streaming_controller:
+            try:
+                logger.info("Applying streaming config change: %s", request_data.key)
+
+                # Stop playback
+                playback.stop_playback()
+
+                # Reinitialize the pipeline with new config
+                streaming = request.app.state.streaming_controller
+                streaming.reinitialize_pipeline()
+
+                # Show idle screen so display stays active
+                playback.show_idle_screen("Settings applied - ready to play!")
+
+                logger.info("Streaming configuration applied successfully")
+
+                return {
+                    "status": "updated",
+                    "key": request_data.key,
+                    "value": request_data.value,
+                    "restarted": True,
+                    "message": "Configuration updated and streaming subsystem restarted",
+                }
+            except Exception as e:
+                logger.error("Error restarting streaming subsystem: %s", e, exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Config saved but failed to restart streaming: {str(e)}",
+                )
+
         return {
             "status": "updated",
             "key": request_data.key,
