@@ -249,7 +249,7 @@ class QueueManager:
         Returns:
             The ready song at the offset, or None if not found
         """
-        queue = self.get_queue()
+        queue = self.repository.get_all()
         ready_songs = [item for item in queue if item.download_status == self.STATUS_READY]
 
         if not ready_songs:
