@@ -206,10 +206,10 @@ def test_reinitialize_pipeline_preserves_interstitial(controller):
         # Reinitialize the pipeline
         controller.reinitialize_pipeline()
 
-        # The interstitial should be restored
-        # Note: current_file is cleared during reinit, but the image should be redisplayed
-        assert controller.state == "idle"
-        # The _is_interstitial flag will be set again if display_image succeeded
+        # The interstitial should be restored (state is "playing" when showing image)
+        # If the image was successfully redisplayed, state should be "playing" and _is_interstitial should be True
+        assert controller.state == "playing"
+        assert controller._is_interstitial is True
 
     finally:
         # Cleanup
