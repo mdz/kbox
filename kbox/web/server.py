@@ -623,28 +623,19 @@ def create_app(
 
         if needs_restart and request.app.state.streaming_controller:
             try:
-                logger.info(
-                    "Restarting streaming subsystem due to config change: %s", request_data.key
-                )
+                logger.info("Applying streaming config change: %s", request_data.key)
 
                 # Stop playback
                 playback.stop_playback()
 
-                # Stop old streaming controller
-                old_streaming = request.app.state.streaming_controller
-                old_streaming.stop()
+                # Reinitialize the pipeline with new config
+                streaming = request.app.state.streaming_controller
+                streaming.reinitialize_pipeline()
 
-                # Create new streaming controller
-                new_streaming = StreamingController(config, request.app.state)
+                # Show idle screen so display stays active
+                playback.show_idle_screen("Settings applied - ready to play!")
 
-                # Wire up callbacks
-                new_streaming.set_eos_callback(playback.on_song_end)
-
-                # Update references
-                playback.streaming_controller = new_streaming
-                request.app.state.streaming_controller = new_streaming
-
-                logger.info("Streaming subsystem restarted successfully")
+                logger.info("Streaming configuration applied successfully")
 
                 return {
                     "status": "updated",
