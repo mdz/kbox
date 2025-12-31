@@ -634,6 +634,88 @@ class TestConfigEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "updated"
 
+    def test_update_non_streaming_config_no_restart(self, client):
+        """PATCH /api/config - non-streaming config changes don't restart streaming."""
+        set_operator(client)
+        response = client.patch("/api/config", json={"key": "operator_pin", "value": "5678"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert "restarted" not in data  # Should not include restart flag
+
+    def test_update_audio_config_restarts_streaming(self, client, mock_streaming, monkeypatch):
+        """PATCH /api/config - audio config changes restart streaming."""
+        from kbox.web import server as server_module
+
+        # Mock StreamingController to return a new mock instead of creating real one
+        new_mock = Mock()
+        new_mock.stop = Mock()
+        new_mock.set_eos_callback = Mock()
+
+        def mock_streaming_init(config_manager, server, use_fakesinks=False):
+            return new_mock
+
+        monkeypatch.setattr(server_module, "StreamingController", mock_streaming_init)
+
+        set_operator(client)
+
+        # Get the original streaming controller
+        original_streaming = client.app.state.streaming_controller
+
+        # Update audio config
+        response = client.patch(
+            "/api/config", json={"key": "audio_output_device", "value": "test_device"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data.get("restarted") is True
+        assert "message" in data
+
+        # Verify streaming controller was replaced
+        new_streaming = client.app.state.streaming_controller
+        assert new_streaming is new_mock
+        assert new_streaming is not original_streaming
+
+        # Verify old streaming was stopped
+        original_streaming.stop.assert_called_once()
+
+    def test_update_video_config_restarts_streaming(self, client, mock_streaming, monkeypatch):
+        """PATCH /api/config - video overlay config changes restart streaming."""
+        from kbox.web import server as server_module
+
+        # Mock StreamingController to return a new mock instead of creating real one
+        new_mock = Mock()
+        new_mock.stop = Mock()
+        new_mock.set_eos_callback = Mock()
+
+        def mock_streaming_init(config_manager, server, use_fakesinks=False):
+            return new_mock
+
+        monkeypatch.setattr(server_module, "StreamingController", mock_streaming_init)
+
+        set_operator(client)
+
+        # Get the original streaming controller
+        original_streaming = client.app.state.streaming_controller
+
+        # Update video config
+        response = client.patch(
+            "/api/config", json={"key": "overlay_qr_position", "value": "bottom-right"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "updated"
+        assert data.get("restarted") is True
+
+        # Verify streaming controller was replaced
+        new_streaming = client.app.state.streaming_controller
+        assert new_streaming is new_mock
+        assert new_streaming is not original_streaming
+
+        # Verify old streaming was stopped
+        original_streaming.stop.assert_called_once()
+
 
 # =============================================================================
 # User Endpoints - Smoke Tests
