@@ -32,6 +32,18 @@ CONFIG_SCHEMA = {
         "options_provider": "get_audio_devices",  # Dynamic options from platform.py
         "allow_custom": True,  # Allow manual entry for advanced users
     },
+    "audio_output_channels": {
+        "group": "audio",
+        "label": "Audio Output Channels",
+        "description": "Number of audio channels to output. Increase for USB mixers that route different channel pairs to different outputs.",
+        "control": "select",
+        "options": [
+            {"value": "2", "label": "2 (Stereo)"},
+            {"value": "4", "label": "4"},
+            {"value": "6", "label": "6"},
+            {"value": "8", "label": "8"},
+        ],
+    },
     "default_youtube_volume": {
         "group": "audio",
         "label": "Default Music Volume",
@@ -160,6 +172,7 @@ class ConfigManager:
     # Default configuration values (merged with platform-specific)
     DEFAULTS = {
         "audio_output_device": None,  # Overridden by platform defaults
+        "audio_output_channels": "2",  # Number of output channels (2=stereo, 4+ for USB mixers)
         "gstreamer_source": None,  # Overridden by platform defaults
         "gstreamer_sink": None,  # Overridden by platform defaults
         "rubberband_plugin": None,  # Overridden by platform defaults
