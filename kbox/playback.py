@@ -1145,8 +1145,7 @@ class PlaybackController:
         self.history_manager.record_performance(
             user_id=queue_item.user_id,
             user_name=queue_item.user_name,
-            source=queue_item.source,
-            source_id=queue_item.source_id,
+            video_id=queue_item.video_id,
             metadata=queue_item.metadata,
             settings=queue_item.settings,
             played_duration_seconds=played_duration_seconds,

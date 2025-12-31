@@ -35,8 +35,7 @@ class HistoryManager:
         self,
         user_id: str,
         user_name: str,
-        source: str,
-        source_id: str,
+        video_id: str,
         metadata: SongMetadata,
         settings: SongSettings,
         played_duration_seconds: int,
@@ -49,8 +48,7 @@ class HistoryManager:
         Args:
             user_id: User ID
             user_name: User display name
-            source: Source type (e.g., 'youtube')
-            source_id: Source-specific identifier
+            video_id: Opaque video ID (e.g., "youtube:abc123")
             metadata: Song metadata
             settings: Song settings
             played_duration_seconds: How long the song played
@@ -70,39 +68,34 @@ class HistoryManager:
         history_id = self.repository.record(
             user_id=user_id,
             user_name=user_name,
-            source=source,
-            source_id=source_id,
+            video_id=video_id,
             metadata=metadata,
             settings=settings,
             performance=performance,
         )
 
         self.logger.info(
-            "Recorded history: %s sang %s (source=%s, id=%s, %.1f%% complete)",
+            "Recorded history: %s sang %s (video_id=%s, %.1f%% complete)",
             user_name,
             metadata.title,
-            source,
-            source_id,
+            video_id,
             completion_percentage,
         )
 
         return history_id
 
-    def get_last_settings(
-        self, source: str, source_id: str, user_id: str
-    ) -> Optional[SongSettings]:
+    def get_last_settings(self, video_id: str, user_id: str) -> Optional[SongSettings]:
         """
         Get the last used settings for a song from playback history for a specific user.
 
         Args:
-            source: Source type (e.g., 'youtube')
-            source_id: Source-specific identifier
+            video_id: Opaque video ID (e.g., "youtube:abc123")
             user_id: User ID
 
         Returns:
             SongSettings if found, None otherwise
         """
-        return self.repository.get_last_settings(source, source_id, user_id)
+        return self.repository.get_last_settings(video_id, user_id)
 
     def get_user_history(self, user_id: str, limit: int = 50) -> List[HistoryRecord]:
         """

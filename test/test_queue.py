@@ -4,6 +4,7 @@ Unit tests for QueueManager.
 
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,20 +32,20 @@ def user_manager(temp_db):
 
 
 @pytest.fixture
-def mock_video_manager():
-    """Create a mock VideoManager for testing."""
+def mock_video_library():
+    """Create a mock VideoLibrary for testing."""
     mock = MagicMock()
-    mock.download.return_value = None  # Async download
-    mock.get_cached_path.return_value = None
-    mock.is_cached.return_value = False
-    mock.cleanup_cache.return_value = 0
+    mock.request.return_value = None  # Async download
+    mock.get_path.return_value = None
+    mock.is_available.return_value = False
+    mock.manage_storage.return_value = 0
     return mock
 
 
 @pytest.fixture
-def queue_manager(temp_db, mock_video_manager):
+def queue_manager(temp_db, mock_video_library):
     """Create a QueueManager instance for testing."""
-    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm = QueueManager(temp_db, video_library=mock_video_library)
     yield qm
     qm.stop_download_monitor()
 
@@ -68,8 +69,7 @@ def test_add_song(queue_manager, test_users):
     """Test adding a song to the queue."""
     item_id = queue_manager.add_song(
         user=test_users["alice"],
-        source="youtube",
-        source_id="test123",
+        video_id="youtube:test123",
         title="Test Song",
         duration_seconds=180,
         thumbnail_url="http://example.com/thumb.jpg",
@@ -81,9 +81,8 @@ def test_add_song(queue_manager, test_users):
     queue = queue_manager.get_queue()
     assert len(queue) == 1
     assert queue[0].user_id == ALICE_ID
-    assert queue[0].user_name == "Alice"  # Display name from users table
-    assert queue[0].source == "youtube"
-    assert queue[0].source_id == "test123"
+    assert queue[0].user_name == "Alice"
+    assert queue[0].video_id == "youtube:test123"
     assert queue[0].metadata.title == "Test Song"
     assert queue[0].metadata.duration_seconds == 180
     assert queue[0].settings.pitch_semitones == 2
@@ -93,9 +92,9 @@ def test_add_song(queue_manager, test_users):
 
 def test_add_multiple_songs(queue_manager, test_users):
     """Test adding multiple songs maintains order."""
-    queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
-    queue_manager.add_song(test_users["charlie"], "youtube", "vid3", "Song 3")
+    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
 
     queue = queue_manager.get_queue()
     assert len(queue) == 3
@@ -109,9 +108,9 @@ def test_add_multiple_songs(queue_manager, test_users):
 
 def test_remove_song(queue_manager, test_users):
     """Test removing a song from the queue."""
-    id1 = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
-    id3 = queue_manager.add_song(test_users["charlie"], "youtube", "vid3", "Song 3")
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    id3 = queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
 
     # Remove middle song
     result = queue_manager.remove_song(id2)
@@ -121,8 +120,8 @@ def test_remove_song(queue_manager, test_users):
     assert len(queue) == 2
     assert queue[0].position == 1
     assert queue[1].position == 2
-    assert queue[0].source_id == "vid1"
-    assert queue[1].source_id == "vid3"
+    assert queue[0].video_id == "youtube:vid1"
+    assert queue[1].video_id == "youtube:vid3"
 
 
 def test_remove_nonexistent_song(queue_manager):
@@ -133,18 +132,18 @@ def test_remove_nonexistent_song(queue_manager):
 
 def test_reorder_song(queue_manager, test_users):
     """Test reordering songs in the queue."""
-    id1 = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
-    id3 = queue_manager.add_song(test_users["charlie"], "youtube", "vid3", "Song 3")
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    id3 = queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
 
     # Move last to first
     result = queue_manager.reorder_song(id3, 1)
     assert result is True
 
     queue = queue_manager.get_queue()
-    assert queue[0].source_id == "vid3"
-    assert queue[1].source_id == "vid1"
-    assert queue[2].source_id == "vid2"
+    assert queue[0].video_id == "youtube:vid3"
+    assert queue[1].video_id == "youtube:vid1"
+    assert queue[2].video_id == "youtube:vid2"
     assert queue[0].position == 1
     assert queue[1].position == 2
     assert queue[2].position == 3
@@ -152,7 +151,7 @@ def test_reorder_song(queue_manager, test_users):
 
 def test_reorder_invalid_position(queue_manager, test_users):
     """Test reordering with invalid position."""
-    id1 = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
     # Try to move to position 0 (invalid)
     result = queue_manager.reorder_song(id1, 0)
@@ -165,8 +164,8 @@ def test_reorder_invalid_position(queue_manager, test_users):
 
 def test_get_next_song(queue_manager, test_users):
     """Test getting next ready song."""
-    id1 = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
 
     # No ready songs yet
     next_song = queue_manager.get_next_song()
@@ -185,7 +184,7 @@ def test_get_next_song(queue_manager, test_users):
 
 def test_update_download_status(queue_manager, test_users):
     """Test updating download status."""
-    item_id = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
+    item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
     # Update to downloading
     result = queue_manager.update_download_status(item_id, QueueManager.STATUS_DOWNLOADING)
@@ -207,7 +206,7 @@ def test_update_download_status(queue_manager, test_users):
 
 def test_update_download_status_error(queue_manager, test_users):
     """Test updating download status with error."""
-    item_id = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
+    item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
     result = queue_manager.update_download_status(
         item_id, QueueManager.STATUS_ERROR, error_message="Download failed"
@@ -221,7 +220,7 @@ def test_update_download_status_error(queue_manager, test_users):
 
 def test_mark_played(queue_manager, test_users):
     """Test marking a song as played."""
-    item_id = queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
+    item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
     result = queue_manager.mark_played(item_id)
     assert result is True
@@ -233,7 +232,7 @@ def test_mark_played(queue_manager, test_users):
 def test_update_pitch(queue_manager, test_users):
     """Test updating pitch for a queue item."""
     item_id = queue_manager.add_song(
-        test_users["alice"], "youtube", "vid1", "Song 1", pitch_semitones=0
+        test_users["alice"], "youtube:vid1", "Song 1", pitch_semitones=0
     )
 
     result = queue_manager.update_pitch(item_id, 3)
@@ -245,9 +244,9 @@ def test_update_pitch(queue_manager, test_users):
 
 def test_clear_queue(queue_manager, test_users):
     """Test clearing the entire queue."""
-    queue_manager.add_song(test_users["alice"], "youtube", "vid1", "Song 1")
-    queue_manager.add_song(test_users["bob"], "youtube", "vid2", "Song 2")
-    queue_manager.add_song(test_users["charlie"], "youtube", "vid3", "Song 3")
+    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
 
     count = queue_manager.clear_queue()
     assert count == 3
@@ -256,20 +255,20 @@ def test_clear_queue(queue_manager, test_users):
     assert len(queue) == 0
 
 
-def test_queue_persistence(temp_db, user_manager, mock_video_manager):
+def test_queue_persistence(temp_db, user_manager, mock_video_library):
     """Test that queue persists across QueueManager instances."""
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
 
-    qm1 = QueueManager(temp_db, video_manager=mock_video_manager)
-    item_id = qm1.add_song(alice, "youtube", "vid1", "Song 1")
+    qm1 = QueueManager(temp_db, video_library=mock_video_library)
+    item_id = qm1.add_song(alice, "youtube:vid1", "Song 1")
     qm1.update_download_status(
         item_id, QueueManager.STATUS_READY, download_path="/path/to/video.mp4"
     )
     qm1.stop_download_monitor()
 
     # Create new QueueManager with same database
-    mock_video_manager2 = MagicMock()
-    qm2 = QueueManager(temp_db, video_manager=mock_video_manager2)
+    mock_video_library2 = MagicMock()
+    qm2 = QueueManager(temp_db, video_library=mock_video_library2)
     queue = qm2.get_queue()
     assert len(queue) == 1
     assert queue[0].user_id == ALICE_ID
@@ -279,55 +278,53 @@ def test_queue_persistence(temp_db, user_manager, mock_video_manager):
 
 
 # =============================================================================
-# VideoManager Integration Tests
+# VideoLibrary Integration Tests
 # =============================================================================
 
 
-def test_download_monitor_calls_video_manager(temp_db, user_manager):
-    """Test that download monitor calls video_manager.download for pending items."""
-    mock_video_manager = MagicMock()
-    mock_video_manager.download.return_value = None
-    mock_video_manager.get_cached_path.return_value = None
-    mock_video_manager.cleanup_cache.return_value = 0
+def test_download_monitor_calls_video_library(temp_db, user_manager):
+    """Test that download monitor calls video_library.request for pending items."""
+    mock_video_library = MagicMock()
+    mock_video_library.request.return_value = None
+    mock_video_library.get_path.return_value = None
+    mock_video_library.manage_storage.return_value = 0
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
-    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm = QueueManager(temp_db, video_library=mock_video_library)
     qm.stop_download_monitor()  # Stop background thread, we'll call directly
 
     # Add song (starts as pending)
-    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+    item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Directly trigger download processing (what the monitor does)
     qm._process_download_queue()
 
-    # Verify video_manager.download was called with correct args
-    mock_video_manager.download.assert_called()
-    call_args = mock_video_manager.download.call_args
-    assert call_args[0][0] == "youtube"  # source
-    assert call_args[0][1] == "test_vid"  # video_id
-    assert call_args[0][2] == item_id  # queue_item_id
-    assert call_args[1]["status_callback"] is not None  # callback provided
+    # Verify video_library.request was called with correct args
+    mock_video_library.request.assert_called()
+    call_args = mock_video_library.request.call_args
+    assert call_args[0][0] == "youtube:test_vid"  # video_id
+    assert call_args[1]["callback"] is not None  # callback provided
 
 
 def test_download_callback_updates_status_ready(temp_db, user_manager):
     """Test that download callback updates queue item to ready status."""
     captured_callback = None
 
-    def capture_callback(source, video_id, queue_item_id, status_callback=None):
+    def capture_callback(video_id, callback=None):
         nonlocal captured_callback
-        captured_callback = status_callback
+        captured_callback = callback
         return None
 
-    mock_video_manager = MagicMock()
-    mock_video_manager.download.side_effect = capture_callback
-    mock_video_manager.get_cached_path.return_value = None
-    mock_video_manager.cleanup_cache.return_value = 0
+    mock_video_library = MagicMock()
+    mock_video_library.request.side_effect = capture_callback
+    mock_video_library.get_path.return_value = None
+    mock_video_library.manage_storage.return_value = 0
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
-    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm = QueueManager(temp_db, video_library=mock_video_library)
     qm.stop_download_monitor()
 
-    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+    item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Directly trigger download processing
     qm._process_download_queue()
@@ -347,21 +344,21 @@ def test_download_callback_updates_status_error(temp_db, user_manager):
     """Test that download callback updates queue item to error status."""
     captured_callback = None
 
-    def capture_callback(source, video_id, queue_item_id, status_callback=None):
+    def capture_callback(video_id, callback=None):
         nonlocal captured_callback
-        captured_callback = status_callback
+        captured_callback = callback
         return None
 
-    mock_video_manager = MagicMock()
-    mock_video_manager.download.side_effect = capture_callback
-    mock_video_manager.get_cached_path.return_value = None
-    mock_video_manager.cleanup_cache.return_value = 0
+    mock_video_library = MagicMock()
+    mock_video_library.request.side_effect = capture_callback
+    mock_video_library.get_path.return_value = None
+    mock_video_library.manage_storage.return_value = 0
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
-    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm = QueueManager(temp_db, video_library=mock_video_library)
     qm.stop_download_monitor()
 
-    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+    item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Directly trigger download processing
     qm._process_download_queue()
@@ -377,61 +374,59 @@ def test_download_callback_updates_status_error(temp_db, user_manager):
     assert item.error_message == "Download failed: network error"
 
 
-def test_cleanup_cache_calls_video_manager(temp_db, user_manager):
-    """Test that cache cleanup calls video_manager.cleanup_cache with protected keys."""
+def test_cleanup_storage_calls_video_library(temp_db, user_manager):
+    """Test that storage cleanup calls video_library.manage_storage with protected keys."""
     captured_callback = None
 
-    def capture_and_succeed(source, video_id, queue_item_id, status_callback=None):
+    def capture_and_succeed(video_id, callback=None):
         nonlocal captured_callback
-        captured_callback = status_callback
+        captured_callback = callback
         return None
 
-    mock_video_manager = MagicMock()
-    mock_video_manager.download.side_effect = capture_and_succeed
-    mock_video_manager.get_cached_path.return_value = None
-    mock_video_manager.cleanup_cache.return_value = 0
+    mock_video_library = MagicMock()
+    mock_video_library.request.side_effect = capture_and_succeed
+    mock_video_library.get_path.return_value = None
+    mock_video_library.manage_storage.return_value = 0
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
-    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm = QueueManager(temp_db, video_library=mock_video_library)
     qm.stop_download_monitor()
 
     # Add songs that will be protected
-    qm.add_song(alice, "youtube", "vid1", "Song 1")
-    qm.add_song(alice, "youtube", "vid2", "Song 2")
+    qm.add_song(alice, "youtube:vid1", "Song 1")
+    qm.add_song(alice, "youtube:vid2", "Song 2")
 
     # Trigger download processing
     qm._process_download_queue()
 
-    # Simulate successful download (triggers cache cleanup)
+    # Simulate successful download (triggers storage cleanup)
     assert captured_callback is not None
     captured_callback("ready", "/path/to/video.mp4", None)
 
-    # Verify cleanup_cache was called with protected keys
-    mock_video_manager.cleanup_cache.assert_called()
-    call_args = mock_video_manager.cleanup_cache.call_args[0][0]
-    assert ("youtube", "vid1") in call_args
-    assert ("youtube", "vid2") in call_args
+    # Verify manage_storage was called with protected keys
+    mock_video_library.manage_storage.assert_called()
+    call_args = mock_video_library.manage_storage.call_args[0][0]
+    assert "youtube:vid1" in call_args
+    assert "youtube:vid2" in call_args
 
 
-def test_stuck_download_recovery_uses_video_manager(temp_db, user_manager):
-    """Test that stuck download recovery checks video_manager.get_cached_path."""
-    from pathlib import Path
-
-    mock_video_manager = MagicMock()
-    mock_video_manager.download.return_value = None
-    mock_video_manager.cleanup_cache.return_value = 0
+def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
+    """Test that stuck download recovery checks video_library.get_path."""
+    mock_video_library = MagicMock()
+    mock_video_library.request.return_value = None
+    mock_video_library.manage_storage.return_value = 0
 
     # Simulate that the file exists (download completed but callback failed)
     mock_path = MagicMock(spec=Path)
     mock_path.exists.return_value = True
     mock_path.__str__ = lambda self: "/recovered/path/video.mp4"
-    mock_video_manager.get_cached_path.return_value = mock_path
+    mock_video_library.get_path.return_value = mock_path
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
-    qm = QueueManager(temp_db, video_manager=mock_video_manager)
+    qm = QueueManager(temp_db, video_library=mock_video_library)
     qm.stop_download_monitor()
 
-    item_id = qm.add_song(alice, "youtube", "test_vid", "Test Song")
+    item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Manually set to downloading (simulating a stuck download)
     qm.update_download_status(item_id, QueueManager.STATUS_DOWNLOADING)
@@ -439,8 +434,8 @@ def test_stuck_download_recovery_uses_video_manager(temp_db, user_manager):
     # Trigger the stuck download check
     qm._process_download_queue()
 
-    # Verify get_cached_path was called
-    mock_video_manager.get_cached_path.assert_called_with("youtube", "test_vid")
+    # Verify get_path was called
+    mock_video_library.get_path.assert_called_with("youtube:test_vid")
 
     # Verify item was recovered to ready status
     item = qm.get_item(item_id)

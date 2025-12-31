@@ -8,7 +8,6 @@ import logging
 
 import uvicorn
 
-from .cache import CacheManager
 from .config_manager import ConfigManager
 from .database import Database
 from .history import HistoryManager
@@ -18,8 +17,9 @@ from .playback import PlaybackController
 from .queue import QueueManager
 from .streaming import StreamingController
 from .user import UserManager
-from .video_source import VideoManager
+from .video_library import VideoLibrary
 from .web.server import create_app
+from .youtube import YouTubeSource
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -43,22 +43,20 @@ class KboxServer:
         # Initialize configuration manager
         self.config_manager = ConfigManager(self.database)
 
-        # Initialize cache manager
-        self.cache_manager = CacheManager(self.config_manager)
+        # Initialize video library and register sources
+        self.video_library = VideoLibrary(self.config_manager)
+        self.video_library.register_source(YouTubeSource(self.config_manager))
 
-        # Initialize video manager (automatically registers all sources)
-        self.video_manager = VideoManager(self.config_manager, self.cache_manager)
-
-        if not self.video_manager.is_source_configured("youtube"):
+        if not self.video_library.is_source_configured("youtube"):
             logger.warning(
                 "YouTube API key not configured. YouTube search will be unavailable. "
                 "Please set the API key via the web UI (/config)."
             )
 
-        # Initialize queue manager with video manager
+        # Initialize queue manager with video library
         self.queue_manager = QueueManager(
             self.database,
-            video_manager=self.video_manager,
+            video_library=self.video_library,
         )
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database)
@@ -77,7 +75,7 @@ class KboxServer:
         # Web server
         self.web_app = create_app(
             self.queue_manager,
-            self.video_manager,
+            self.video_library,
             self.playback_controller,
             self.config_manager,
             self.user_manager,

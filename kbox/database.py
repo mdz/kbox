@@ -18,6 +18,9 @@ from .models import ConfigEntry, HistoryRecord, QueueItem, SongMetadata, SongSet
 class Database:
     """Manages SQLite database connection and schema."""
 
+    # Schema version for migrations
+    SCHEMA_VERSION = 2  # Incremented for video_id migration
+
     def __init__(self, db_path: Optional[str] = None):
         """
         Initialize database connection.
@@ -39,11 +42,20 @@ class Database:
         self.logger.info("Database initialized at %s", self.db_path)
 
     def _ensure_schema(self):
-        """Ensure database schema exists (thread-safe)."""
-        # Create a temporary connection just to create schema
+        """Ensure database schema exists and is up to date (thread-safe)."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+
+        # Check current schema version
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY
+            )
+        """)
+        cursor.execute("SELECT version FROM schema_version LIMIT 1")
+        row = cursor.fetchone()
+        current_version = row["version"] if row else 0
 
         # Users table - UUID-based identity with display name
         cursor.execute("""
@@ -51,24 +63,6 @@ class Database:
                 id TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Queue items table - source-agnostic with JSON columns
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS queue_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                position INTEGER NOT NULL,
-                download_status TEXT DEFAULT 'pending',
-                played_at TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                user_id TEXT NOT NULL,
-                user_name TEXT NOT NULL,
-                source TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                song_metadata_json TEXT NOT NULL,
-                settings_json TEXT NOT NULL DEFAULT '{}',
-                download_json TEXT
             )
         """)
 
@@ -81,25 +75,151 @@ class Database:
             )
         """)
 
-        # Playback history table - permanent record of performances
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS playback_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL,
-                source_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                user_name TEXT NOT NULL,
-                performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                song_metadata_json TEXT NOT NULL,
-                settings_json TEXT NOT NULL DEFAULT '{}',
-                performance_json TEXT NOT NULL
-            )
-        """)
+        if current_version < 2:
+            # Version 2: Migrate to video_id from (source, source_id)
+            self._migrate_to_video_id(cursor, conn)
 
-        # Create indexes for common queries (use user_id for identity lookups)
+        # Store current schema version
+        cursor.execute("DELETE FROM schema_version")
+        cursor.execute("INSERT INTO schema_version (version) VALUES (?)", (self.SCHEMA_VERSION,))
+
+        conn.commit()
+        conn.close()
+        self.logger.debug("Database schema created/verified (version %d)", self.SCHEMA_VERSION)
+
+    def _migrate_to_video_id(self, cursor, conn):
+        """Migrate from (source, source_id) to video_id schema."""
+        self.logger.info("Migrating database to video_id schema...")
+
+        # Check if queue_items table exists with old schema
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='queue_items'")
+        queue_exists = cursor.fetchone() is not None
+
+        if queue_exists:
+            # Check if it has the old schema (source column)
+            cursor.execute("PRAGMA table_info(queue_items)")
+            columns = {row["name"] for row in cursor.fetchall()}
+
+            if "source" in columns and "video_id" not in columns:
+                self.logger.info("Migrating queue_items table...")
+                # Create new table with video_id
+                cursor.execute("""
+                    CREATE TABLE queue_items_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        position INTEGER NOT NULL,
+                        download_status TEXT DEFAULT 'pending',
+                        played_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        user_id TEXT NOT NULL,
+                        user_name TEXT NOT NULL,
+                        video_id TEXT NOT NULL,
+                        song_metadata_json TEXT NOT NULL,
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        download_json TEXT
+                    )
+                """)
+
+                # Copy data, combining source and source_id into video_id
+                cursor.execute("""
+                    INSERT INTO queue_items_new
+                    (id, position, download_status, played_at, created_at, user_id, user_name,
+                     video_id, song_metadata_json, settings_json, download_json)
+                    SELECT
+                        id, position, download_status, played_at, created_at, user_id, user_name,
+                        source || ':' || source_id, song_metadata_json, settings_json, download_json
+                    FROM queue_items
+                """)
+
+                # Drop old table and rename new one
+                cursor.execute("DROP TABLE queue_items")
+                cursor.execute("ALTER TABLE queue_items_new RENAME TO queue_items")
+                self.logger.info("queue_items migration complete")
+            elif "video_id" not in columns:
+                # Table exists but doesn't have either - create fresh
+                cursor.execute("DROP TABLE queue_items")
+                queue_exists = False
+
+        if not queue_exists:
+            # Create queue_items table with new schema
+            cursor.execute("""
+                CREATE TABLE queue_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    position INTEGER NOT NULL,
+                    download_status TEXT DEFAULT 'pending',
+                    played_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT NOT NULL,
+                    video_id TEXT NOT NULL,
+                    song_metadata_json TEXT NOT NULL,
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    download_json TEXT
+                )
+            """)
+
+        # Check if playback_history table exists with old schema
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_history'"
+        )
+        history_exists = cursor.fetchone() is not None
+
+        if history_exists:
+            cursor.execute("PRAGMA table_info(playback_history)")
+            columns = {row["name"] for row in cursor.fetchall()}
+
+            if "source" in columns and "video_id" not in columns:
+                self.logger.info("Migrating playback_history table...")
+                # Create new table with video_id
+                cursor.execute("""
+                    CREATE TABLE playback_history_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        video_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        user_name TEXT NOT NULL,
+                        performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        song_metadata_json TEXT NOT NULL,
+                        settings_json TEXT NOT NULL DEFAULT '{}',
+                        performance_json TEXT NOT NULL
+                    )
+                """)
+
+                # Copy data
+                cursor.execute("""
+                    INSERT INTO playback_history_new
+                    (id, video_id, user_id, user_name, performed_at,
+                     song_metadata_json, settings_json, performance_json)
+                    SELECT
+                        id, source || ':' || source_id, user_id, user_name, performed_at,
+                        song_metadata_json, settings_json, performance_json
+                    FROM playback_history
+                """)
+
+                # Drop old table and rename
+                cursor.execute("DROP TABLE playback_history")
+                cursor.execute("ALTER TABLE playback_history_new RENAME TO playback_history")
+                self.logger.info("playback_history migration complete")
+            elif "video_id" not in columns:
+                cursor.execute("DROP TABLE playback_history")
+                history_exists = False
+
+        if not history_exists:
+            cursor.execute("""
+                CREATE TABLE playback_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    video_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT NOT NULL,
+                    performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    song_metadata_json TEXT NOT NULL,
+                    settings_json TEXT NOT NULL DEFAULT '{}',
+                    performance_json TEXT NOT NULL
+                )
+            """)
+
+        # Create indexes
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_history_user_id_song
-            ON playback_history(user_id, source, source_id, performed_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_history_user_id_video
+            ON playback_history(user_id, video_id, performed_at DESC)
         """)
 
         cursor.execute("""
@@ -117,9 +237,7 @@ class Database:
             ON queue_items(user_id)
         """)
 
-        conn.commit()
-        conn.close()
-        self.logger.debug("Database schema created/verified")
+        self.logger.info("Database migration to video_id complete")
 
     def get_connection(self):
         """
@@ -374,8 +492,7 @@ class HistoryRepository:
         self,
         user_id: str,
         user_name: str,
-        source: str,
-        source_id: str,
+        video_id: str,
         metadata: SongMetadata,
         settings: SongSettings,
         performance: Dict[str, Any],
@@ -389,18 +506,16 @@ class HistoryRepository:
                 INSERT INTO playback_history (
                     user_id,
                     user_name,
-                    source,
-                    source_id,
+                    video_id,
                     song_metadata_json,
                     settings_json,
                     performance_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?)
             """,
                 (
                     user_id,
                     user_name,
-                    source,
-                    source_id,
+                    video_id,
                     self._encode_metadata(metadata),
                     self._encode_settings(settings),
                     self._encode_performance(performance),
@@ -409,19 +524,16 @@ class HistoryRepository:
             conn.commit()
             history_id = cursor.lastrowid
             self.logger.info(
-                "Recorded history: %s sang %s (source=%s, id=%s)",
+                "Recorded history: %s sang %s (video_id=%s)",
                 user_name,
                 metadata.title,
-                source,
-                source_id,
+                video_id,
             )
             return history_id
         finally:
             conn.close()
 
-    def get_last_settings(
-        self, source: str, source_id: str, user_id: str
-    ) -> Optional[SongSettings]:
+    def get_last_settings(self, video_id: str, user_id: str) -> Optional[SongSettings]:
         """Get the last used settings for a song from playback history."""
         conn = self.database.get_connection()
         try:
@@ -430,11 +542,11 @@ class HistoryRepository:
                 """
                 SELECT settings_json
                 FROM playback_history
-                WHERE source = ? AND source_id = ? AND user_id = ?
+                WHERE video_id = ? AND user_id = ?
                 ORDER BY performed_at DESC, id DESC
                 LIMIT 1
             """,
-                (source, source_id, user_id),
+                (video_id, user_id),
             )
             result = cursor.fetchone()
             if result:
@@ -452,8 +564,7 @@ class HistoryRepository:
                 """
                 SELECT
                     id,
-                    source,
-                    source_id,
+                    video_id,
                     user_id,
                     user_name,
                     performed_at,
@@ -473,8 +584,7 @@ class HistoryRepository:
                 records.append(
                     HistoryRecord(
                         id=row["id"],
-                        source=row["source"],
-                        source_id=row["source_id"],
+                        video_id=row["video_id"],
                         user_id=row["user_id"],
                         user_name=row["user_name"],
                         metadata=self._decode_metadata(row["song_metadata_json"]),
@@ -582,8 +692,7 @@ class QueueRepository:
             position=row["position"],
             user_id=row["user_id"],
             user_name=row["user_name"],
-            source=row["source"],
-            source_id=row["source_id"],
+            video_id=row["video_id"],
             metadata=self._decode_metadata(row["song_metadata_json"]),
             settings=self._decode_settings(row["settings_json"]),
             download_status=row["download_status"],
@@ -596,8 +705,7 @@ class QueueRepository:
     def add(
         self,
         user: User,
-        source: str,
-        source_id: str,
+        video_id: str,
         metadata: SongMetadata,
         settings: SongSettings,
     ) -> int:
@@ -615,16 +723,15 @@ class QueueRepository:
             cursor.execute(
                 """
                 INSERT INTO queue_items
-                (position, user_id, user_name, source, source_id, song_metadata_json,
+                (position, user_id, user_name, video_id, song_metadata_json,
                  settings_json, download_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     next_position,
                     user.id,
                     user.display_name,
-                    source,
-                    source_id,
+                    video_id,
                     self._encode_metadata(metadata),
                     self._encode_settings(settings),
                     self.STATUS_PENDING,
@@ -634,11 +741,11 @@ class QueueRepository:
             item_id = cursor.lastrowid
             conn.commit()
             self.logger.info(
-                "Added song to queue: %s by %s (ID: %s, source: %s)",
+                "Added song to queue: %s by %s (ID: %s, video_id: %s)",
                 metadata.title,
                 user.display_name,
                 item_id,
-                source,
+                video_id,
             )
             return item_id
         finally:
@@ -687,7 +794,7 @@ class QueueRepository:
 
             if include_played:
                 cursor.execute("""
-                    SELECT id, position, user_id, user_name, source, source_id,
+                    SELECT id, position, user_id, user_name, video_id,
                            song_metadata_json, settings_json, download_json,
                            download_status, created_at, played_at
                     FROM queue_items
@@ -695,7 +802,7 @@ class QueueRepository:
                 """)
             else:
                 cursor.execute("""
-                    SELECT id, position, user_id, user_name, source, source_id,
+                    SELECT id, position, user_id, user_name, video_id,
                            song_metadata_json, settings_json, download_json,
                            download_status, created_at, played_at
                     FROM queue_items
@@ -718,7 +825,7 @@ class QueueRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, position, user_id, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -754,7 +861,7 @@ class QueueRepository:
             # Get next ready song after current position
             cursor.execute(
                 """
-                SELECT id, position, user_id, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -790,7 +897,7 @@ class QueueRepository:
             # Get previous ready song before current position
             cursor.execute(
                 """
-                SELECT id, position, user_id, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items
@@ -1011,7 +1118,7 @@ class QueueRepository:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, position, user_id, user_name, source, source_id,
+                SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
                        download_status, created_at, played_at
                 FROM queue_items

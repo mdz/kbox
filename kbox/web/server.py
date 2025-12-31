@@ -18,7 +18,7 @@ from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..streaming import StreamingController
 from ..user import UserManager
-from ..video_source import VideoManager
+from ..video_library import VideoLibrary
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 # Request models
 class AddSongRequest(BaseModel):
     user_id: str  # UUID for identity
-    source: str = "youtube"  # Video source (default youtube for compatibility)
-    source_id: str  # Source-specific video ID
+    video_id: str  # Opaque video ID like "youtube:abc123"
     title: str
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
@@ -77,9 +76,9 @@ def get_queue_manager(request: Request) -> QueueManager:
     return request.app.state.queue_manager
 
 
-def get_video_manager(request: Request) -> VideoManager:
-    """Get VideoManager from app state."""
-    return request.app.state.video_manager
+def get_video_library(request: Request) -> VideoLibrary:
+    """Get VideoLibrary from app state."""
+    return request.app.state.video_library
 
 
 def get_playback_controller(request: Request) -> PlaybackController:
@@ -116,7 +115,7 @@ def check_operator(request: Request) -> bool:
 
 def create_app(
     queue_manager: QueueManager,
-    video_manager: VideoManager,
+    video_library: VideoLibrary,
     playback_controller: PlaybackController,
     config_manager: ConfigManager,
     user_manager: UserManager,
@@ -128,7 +127,7 @@ def create_app(
 
     Args:
         queue_manager: QueueManager instance
-        video_manager: VideoManager instance
+        video_library: VideoLibrary instance
         playback_controller: PlaybackController instance
         config_manager: ConfigManager instance
         user_manager: UserManager instance
@@ -144,7 +143,7 @@ def create_app(
 
     # Store components in app state
     app.state.queue_manager = queue_manager
-    app.state.video_manager = video_manager
+    app.state.video_library = video_library
     app.state.playback_controller = playback_controller
     app.state.config_manager = config_manager
     app.state.user_manager = user_manager
@@ -188,15 +187,14 @@ def create_app(
 
         return {"queue": queue, "current_song_id": current_song_id}
 
-    @app.get("/api/queue/settings/{source}/{source_id:path}")
+    @app.get("/api/queue/settings/{video_id:path}")
     async def get_song_settings(
-        source: str,
-        source_id: str,
+        video_id: str,
         user_id: str,
         history_mgr=Depends(get_history_manager),
     ):
         """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
-        settings = history_mgr.get_last_settings(source, source_id, user_id)
+        settings = history_mgr.get_last_settings(video_id, user_id)
         if settings:
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
@@ -217,11 +215,10 @@ def create_app(
                     status_code=400, detail="User not found. Please refresh the page."
                 )
 
-            # Add song with source-agnostic schema
+            # Add song with opaque video_id
             item_id = queue_mgr.add_song(
                 user=user,
-                source=request_data.source,
-                source_id=request_data.source_id,
+                video_id=request_data.video_id,
                 title=request_data.title,
                 duration_seconds=request_data.duration_seconds,
                 thumbnail_url=request_data.thumbnail_url,
@@ -383,25 +380,24 @@ def create_app(
         count = queue_mgr.clear_queue()
         return {"status": "cleared", "items_removed": count}
 
-    # Video search endpoints (source-agnostic)
+    # Video search endpoints
     @app.get("/api/search")
     async def search_videos(
         q: str,
         max_results: int = 10,
-        video_mgr: VideoManager = Depends(get_video_manager),
+        video_lib: VideoLibrary = Depends(get_video_library),
     ):
         """Search for videos across all configured sources."""
-        results = video_mgr.search(q, max_results)
+        results = video_lib.search(q, max_results)
         return {"results": results}
 
-    @app.get("/api/video/{source}/{video_id:path}")
+    @app.get("/api/video/{video_id:path}")
     async def get_video_info(
-        source: str,
         video_id: str,
-        video_mgr: VideoManager = Depends(get_video_manager),
+        video_lib: VideoLibrary = Depends(get_video_library),
     ):
-        """Get video information from a specific source."""
-        info = video_mgr.get_video_info(source, video_id)
+        """Get video information by opaque video ID."""
+        info = video_lib.get_info(video_id)
         if not info:
             raise HTTPException(status_code=404, detail="Video not found")
         return info
@@ -643,8 +639,7 @@ def create_app(
             history_dicts.append(
                 {
                     "id": record.id,
-                    "source": record.source,
-                    "source_id": record.source_id,
+                    "video_id": record.video_id,
                     "performed_at": record.performed_at.isoformat()
                     if record.performed_at
                     else None,

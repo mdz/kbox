@@ -14,7 +14,6 @@ from kbox.user import UserManager
 @pytest.fixture
 def database():
     """Create a test database."""
-    # Use a temporary file instead of :memory: to avoid connection issues
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = Database(path)
@@ -57,8 +56,7 @@ def test_record_performance(history_manager, test_users):
     history_id = history_manager.record_performance(
         user_id=user["id"],
         user_name=user["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=metadata,
         settings=settings,
         played_duration_seconds=150,
@@ -78,8 +76,7 @@ def test_get_last_settings(history_manager, test_users):
     history_manager.record_performance(
         user_id=user["id"],
         user_name=user["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=metadata,
         settings=settings,
         played_duration_seconds=150,
@@ -88,7 +85,7 @@ def test_get_last_settings(history_manager, test_users):
     )
 
     # Get settings back
-    retrieved_settings = history_manager.get_last_settings("youtube", "vid1", user["id"])
+    retrieved_settings = history_manager.get_last_settings("youtube:vid1", user["id"])
     assert retrieved_settings is not None
     assert retrieved_settings.pitch_semitones == -2
 
@@ -96,7 +93,7 @@ def test_get_last_settings(history_manager, test_users):
 def test_get_last_settings_no_history(history_manager, test_users):
     """Test getting settings when no history exists."""
     user = test_users["alice"]
-    settings = history_manager.get_last_settings("youtube", "nonexistent", user["id"])
+    settings = history_manager.get_last_settings("youtube:nonexistent", user["id"])
     assert settings is None
 
 
@@ -109,8 +106,7 @@ def test_get_last_settings_different_users(history_manager, test_users):
     history_manager.record_performance(
         user_id=alice["id"],
         user_name=alice["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=SongMetadata(title="Song", duration_seconds=180),
         settings=SongSettings(pitch_semitones=-2),
         played_duration_seconds=150,
@@ -122,8 +118,7 @@ def test_get_last_settings_different_users(history_manager, test_users):
     history_manager.record_performance(
         user_id=bob["id"],
         user_name=bob["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=SongMetadata(title="Song", duration_seconds=180),
         settings=SongSettings(pitch_semitones=3),
         played_duration_seconds=150,
@@ -132,8 +127,8 @@ def test_get_last_settings_different_users(history_manager, test_users):
     )
 
     # Each user should get their own settings
-    alice_settings = history_manager.get_last_settings("youtube", "vid1", alice["id"])
-    bob_settings = history_manager.get_last_settings("youtube", "vid1", bob["id"])
+    alice_settings = history_manager.get_last_settings("youtube:vid1", alice["id"])
+    bob_settings = history_manager.get_last_settings("youtube:vid1", bob["id"])
 
     assert alice_settings is not None
     assert alice_settings.pitch_semitones == -2
@@ -149,8 +144,7 @@ def test_get_last_settings_most_recent(history_manager, test_users):
     history_manager.record_performance(
         user_id=user["id"],
         user_name=user["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=SongMetadata(title="Song", duration_seconds=180),
         settings=SongSettings(pitch_semitones=-2),
         played_duration_seconds=150,
@@ -162,8 +156,7 @@ def test_get_last_settings_most_recent(history_manager, test_users):
     history_manager.record_performance(
         user_id=user["id"],
         user_name=user["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=SongMetadata(title="Song", duration_seconds=180),
         settings=SongSettings(pitch_semitones=1),
         played_duration_seconds=150,
@@ -172,7 +165,7 @@ def test_get_last_settings_most_recent(history_manager, test_users):
     )
 
     # Should get the most recent (+1)
-    settings = history_manager.get_last_settings("youtube", "vid1", user["id"])
+    settings = history_manager.get_last_settings("youtube:vid1", user["id"])
     assert settings is not None
     assert settings.pitch_semitones == 1
 
@@ -186,8 +179,7 @@ def test_get_user_history(history_manager, test_users):
     history_manager.record_performance(
         user_id=alice["id"],
         user_name=alice["name"],
-        source="youtube",
-        source_id="vid1",
+        video_id="youtube:vid1",
         metadata=SongMetadata(title="Song 1", duration_seconds=180),
         settings=SongSettings(pitch_semitones=-2),
         played_duration_seconds=150,
@@ -198,8 +190,7 @@ def test_get_user_history(history_manager, test_users):
     history_manager.record_performance(
         user_id=alice["id"],
         user_name=alice["name"],
-        source="youtube",
-        source_id="vid2",
+        video_id="youtube:vid2",
         metadata=SongMetadata(title="Song 2", duration_seconds=200),
         settings=SongSettings(pitch_semitones=0),
         played_duration_seconds=200,
@@ -211,8 +202,7 @@ def test_get_user_history(history_manager, test_users):
     history_manager.record_performance(
         user_id=bob["id"],
         user_name=bob["name"],
-        source="youtube",
-        source_id="vid3",
+        video_id="youtube:vid3",
         metadata=SongMetadata(title="Song 3", duration_seconds=220),
         settings=SongSettings(pitch_semitones=3),
         played_duration_seconds=220,
@@ -247,8 +237,7 @@ def test_get_user_history_limit(history_manager, test_users):
         history_manager.record_performance(
             user_id=user["id"],
             user_name=user["name"],
-            source="youtube",
-            source_id=f"vid{i}",
+            video_id=f"youtube:vid{i}",
             metadata=SongMetadata(title=f"Song {i}", duration_seconds=180),
             settings=SongSettings(pitch_semitones=0),
             played_duration_seconds=150,
@@ -260,9 +249,9 @@ def test_get_user_history_limit(history_manager, test_users):
     history = history_manager.get_user_history(user["id"], limit=3)
     assert len(history) == 3
     # Should be most recent 3 (vid4, vid3, vid2)
-    assert history[0].source_id == "vid4"
-    assert history[1].source_id == "vid3"
-    assert history[2].source_id == "vid2"
+    assert history[0].video_id == "youtube:vid4"
+    assert history[1].video_id == "youtube:vid3"
+    assert history[2].video_id == "youtube:vid2"
 
 
 def test_get_user_history_empty(history_manager):

@@ -8,46 +8,35 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import yt_dlp
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from .video_source import VideoSource
+from .video_library import VideoSource
 
 if TYPE_CHECKING:
-    from .cache import CacheManager
     from .config_manager import ConfigManager
 
 
 class YouTubeSource(VideoSource):
     """YouTube video source implementation."""
 
-    def __init__(
-        self,
-        config_manager: "ConfigManager",
-        cache_manager: "CacheManager",
-    ):
+    def __init__(self, config_manager: "ConfigManager"):
         """
         Initialize YouTubeSource.
 
         Args:
             config_manager: ConfigManager for runtime config access
-            cache_manager: CacheManager for cache operations
         """
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
-        self.cache_manager = cache_manager
 
         # Lazy-initialized YouTube API client
         self._youtube = None
         self._last_api_key: Optional[str] = None
-
-        # Semaphore to limit concurrent downloads to 1 (avoid abusing YouTube)
-        self._download_semaphore = threading.Semaphore(1)
 
         self.logger.info("YouTubeSource initialized")
 
@@ -268,130 +257,68 @@ class YouTubeSource(VideoSource):
             self.logger.error("Error getting video info: %s", e, exc_info=True)
             return None
 
-    def get_cached_path(self, video_id: str, touch: bool = True) -> Optional[Path]:
+    def download(self, video_id: str, output_dir: Path) -> Path:
         """
-        Get the path to a cached video file if it exists.
+        Download a video using yt-dlp (synchronous).
 
         Args:
             video_id: YouTube video ID
-            touch: If True, update file mtime for LRU tracking (default True)
+            output_dir: Directory to download into
 
         Returns:
-            Path to video file if exists, None otherwise
+            Path to the downloaded video file
+
+        Raises:
+            Exception: If download fails
         """
-        return self.cache_manager.get_file_path(self.source_id, video_id, touch=touch)
+        # Ensure output directory exists
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    def is_cached(self, video_id: str) -> bool:
-        """
-        Check if a video is already cached.
+        # Lower thread priority to avoid interfering with GStreamer playback
+        try:
+            os.nice(10)
+        except (OSError, AttributeError):
+            pass  # Windows doesn't support nice(), or permission denied
 
-        Args:
-            video_id: YouTube video ID
+        try:
+            output_template = str(output_dir / "video.%(ext)s")
+            max_res = self.config_manager.get_int("video_max_resolution", 480)
 
-        Returns:
-            True if video is cached
-        """
-        return self.cache_manager.is_cached(self.source_id, video_id)
+            ydl_opts = {
+                "format": f"bestvideo[height<={max_res}]+bestaudio/best",
+                "outtmpl": output_template,
+                "quiet": False,
+                "no_warnings": False,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["android", "web"],
+                    }
+                },
+                "retries": 3,
+                "fragment_retries": 3,
+                "cookiefile": None,
+            }
 
-    def download(
-        self,
-        video_id: str,
-        queue_item_id: int,
-        status_callback: Optional[Callable[[str, Optional[str], Optional[str]], None]] = None,
-    ) -> Optional[str]:
-        """
-        Download a video using yt-dlp.
+            url = f"https://www.youtube.com/watch?v={video_id}"
 
-        Args:
-            video_id: YouTube video ID
-            queue_item_id: Queue item ID (for callback)
-            status_callback: Callback function(status, path, error) for status updates
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                downloaded_path = Path(ydl.prepare_filename(info))
 
-        Returns:
-            Path to downloaded file if already cached, None if download started async
-        """
-        # Check if already downloaded
-        existing_path = self.get_cached_path(video_id)
-        if existing_path:
-            self.logger.info("Video %s already cached at %s", video_id, existing_path)
-            if status_callback:
-                status_callback("ready", str(existing_path), None)
-            return str(existing_path)
+            if not downloaded_path.exists():
+                raise FileNotFoundError(f"Downloaded file not found: {downloaded_path}")
 
-        # Download in background thread
-        def download_thread():
-            # Lower thread priority to avoid interfering with GStreamer playback
-            try:
-                os.nice(10)  # Increase niceness = lower scheduling priority
-            except (OSError, AttributeError):
-                pass  # Windows doesn't support nice(), or permission denied
+            self.logger.info("Downloaded video %s to %s", video_id, downloaded_path)
+            return downloaded_path
 
-            # Acquire semaphore to limit concurrent downloads to 1
-            self._download_semaphore.acquire()
-            try:
-                if status_callback:
-                    status_callback("downloading", None, None)
+        except Exception as e:
+            error_msg = str(e)
+            if "403" in error_msg or "Forbidden" in error_msg:
+                error_msg = "YouTube blocked the download (403 Forbidden). Try updating yt-dlp."
+            elif "Private video" in error_msg:
+                error_msg = "Video is private or unavailable"
+            elif "Video unavailable" in error_msg:
+                error_msg = "Video is unavailable or has been removed"
 
-                # Configure yt-dlp options
-                output_template = self.cache_manager.get_output_template(self.source_id, video_id)
-
-                # Get max resolution from config (allows runtime changes)
-                max_res = self.config_manager.get_int("video_max_resolution", 480)
-
-                ydl_opts = {
-                    "format": f"bestvideo[height<={max_res}]+bestaudio/best",
-                    "outtmpl": output_template,
-                    "quiet": False,
-                    "no_warnings": False,
-                    # Try multiple clients for better compatibility
-                    "extractor_args": {
-                        "youtube": {
-                            "player_client": ["android", "web"],
-                        }
-                    },
-                    # Retry on errors
-                    "retries": 3,
-                    "fragment_retries": 3,
-                    # Use cookies if available (for YouTube Premium)
-                    "cookiefile": None,  # Can be set via config later
-                }
-
-                url = f"https://www.youtube.com/watch?v={video_id}"
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-
-                # Find the downloaded file
-                downloaded_path = self.get_cached_path(video_id)
-
-                if downloaded_path and downloaded_path.exists():
-                    self.logger.info("Downloaded video %s to %s", video_id, downloaded_path)
-                    if status_callback:
-                        status_callback("ready", str(downloaded_path), None)
-                else:
-                    raise FileNotFoundError("Downloaded file not found")
-
-            except Exception as e:
-                error_msg = str(e)
-                # Provide more helpful error messages
-                if "403" in error_msg or "Forbidden" in error_msg:
-                    error_msg = "YouTube blocked the download (403 Forbidden). This may be due to age restrictions, region blocking, or YouTube policy changes. Try updating yt-dlp: pip install --upgrade yt-dlp"
-                elif "Private video" in error_msg:
-                    error_msg = "Video is private or unavailable"
-                elif "Video unavailable" in error_msg:
-                    error_msg = "Video is unavailable or has been removed"
-
-                self.logger.error(
-                    "Error downloading video %s: %s", video_id, error_msg, exc_info=True
-                )
-                if status_callback:
-                    status_callback("error", None, error_msg)
-            finally:
-                # Always release semaphore when download completes or fails
-                self._download_semaphore.release()
-
-        # Start download in background
-        thread = threading.Thread(target=download_thread, daemon=True)
-        thread.start()
-
-        return None  # Download is async, path will be available via callback
+            self.logger.error("Error downloading video %s: %s", video_id, error_msg)
+            raise RuntimeError(error_msg) from e
