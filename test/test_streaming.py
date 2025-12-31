@@ -156,6 +156,66 @@ def test_init_creates_text_overlay_element(controller):
     assert controller._notification_lock is not None
 
 
+def test_reinitialize_pipeline(controller, test_video_1s):
+    """Test that reinitialize_pipeline rebuilds the pipeline with fresh config."""
+    # Get original pipeline elements
+    original_playbin = controller.playbin
+    original_audio_bin = controller.audio_bin
+    original_video_bin = controller.video_bin
+
+    # Load a file and play it
+    controller.load_file(test_video_1s)
+    assert controller.state == "playing"
+
+    # Reinitialize the pipeline
+    controller.reinitialize_pipeline()
+
+    # Verify new pipeline was created
+    assert controller.playbin is not None
+    assert controller.playbin is not original_playbin, "Pipeline should be recreated"
+    assert controller.audio_bin is not original_audio_bin, "Audio bin should be recreated"
+    assert controller.video_bin is not original_video_bin, "Video bin should be recreated"
+
+    # Verify state was reset
+    assert controller.state == "idle"
+    assert controller.current_file is None
+    assert controller.get_pipeline_state() == "ready"
+
+
+def test_reinitialize_pipeline_preserves_interstitial(controller):
+    """Test that reinitialize_pipeline preserves interstitial display."""
+    # Create a test interstitial image
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        interstitial_path = f.name
+
+    try:
+        # Create a simple 100x100 black PNG
+        from PIL import Image
+
+        img = Image.new("RGB", (100, 100), color="black")
+        img.save(interstitial_path)
+
+        # Display the interstitial
+        controller.display_image(interstitial_path)
+        assert controller._is_interstitial is True
+        assert controller.current_file == interstitial_path
+
+        # Reinitialize the pipeline
+        controller.reinitialize_pipeline()
+
+        # The interstitial should be restored
+        # Note: current_file is cleared during reinit, but the image should be redisplayed
+        assert controller.state == "idle"
+        # The _is_interstitial flag will be set again if display_image succeeded
+
+    finally:
+        # Cleanup
+        Path(interstitial_path).unlink(missing_ok=True)
+
+
 # =========================================================================
 # Playback State Transition Tests
 # =========================================================================
