@@ -594,7 +594,24 @@ def create_app(
             - schema: Metadata for each editable key (control type, options, description)
             - groups: Group definitions for organizing the config UI
         """
-        return config.get_full_config()
+        config_data = config.get_full_config()
+
+        # Ensure current audio device is in the options list
+        # (DeviceMonitor may not return busy devices, but we still want to show the current one)
+        current_device = config_data["values"].get("audio_output_device")
+        if current_device:
+            audio_schema = config_data["schema"].get("audio_output_device")
+            if audio_schema and "options" in audio_schema:
+                device_values = [opt["value"] for opt in audio_schema["options"]]
+                if current_device not in device_values:
+                    audio_schema["options"].append(
+                        {
+                            "value": current_device,
+                            "label": f"{current_device} (current)",
+                        }
+                    )
+
+        return config_data
 
     @app.patch("/api/config")
     async def update_config(

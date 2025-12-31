@@ -60,15 +60,12 @@ def list_audio_output_devices() -> List[dict]:
                         # Check if this is an ALSA device
                         device_api = props.get_string("device.api")
                         if device_api == "alsa":
-                            # Get the actual ALSA device path (e.g., "plughw:CARD=USB,DEV=0")
-                            card = props.get_string("alsa.card")
+                            # Use alsa.id - the short ALSA card identifier (e.g., "USB", "ProFX")
+                            # Note: alsa.card is an integer so get_string() returns None
+                            alsa_id = props.get_string("alsa.id")
                             device_num = props.get_string("alsa.device") or "0"
-                            card_name = props.get_string("alsa.card_name")
-                            if card is not None:
-                                device_id = f"plughw:CARD={card},DEV={device_num}"
-                            elif card_name:
-                                # Some devices only expose the card name
-                                device_id = f"plughw:CARD={card_name},DEV={device_num}"
+                            if alsa_id:
+                                device_id = f"plughw:CARD={alsa_id},DEV={device_num}"
                         # For non-ALSA devices (e.g., PulseAudio), device_id stays None
                         # and falls through to the generic fallbacks below
 
