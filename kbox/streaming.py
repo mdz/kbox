@@ -166,11 +166,11 @@ class StreamingController:
         self.logger.info("Persistent pipeline created successfully")
 
     def _create_audio_sink_bin(self):
-        """Create audio sink bin with pitch shift element."""
+        """Create audio sink bin with pitch shift element and channel upmixing."""
         Gst = _get_gst()
         audio_bin = Gst.Bin.new("audio_sink_bin")
 
-        # Create elements: audioconvert -> pitch_shift -> audioconvert -> sink
+        # Create elements: audioconvert -> pitch_shift -> audioconvert -> [capsfilter] -> sink
         ac1 = Gst.ElementFactory.make("audioconvert", "ac1")
         if ac1 is None:
             raise RuntimeError("Failed to create audioconvert element")
@@ -182,23 +182,38 @@ class StreamingController:
         if ac2 is None:
             raise RuntimeError("Failed to create audioconvert element")
 
+        # Build element chain
+        elements = [ac1, self.pitch_shift_element, ac2]
+
+        # Add capsfilter for channel upmixing if configured for more than 2 channels
+        num_channels = self.config_manager.get_int("audio_output_channels", 2)
+        if num_channels > 2:
+            self.logger.info("Adding %d-channel upmix capsfilter", num_channels)
+            capsfilter = Gst.ElementFactory.make("capsfilter", "channel_caps")
+            if capsfilter is not None:
+                caps = Gst.Caps.from_string(f"audio/x-raw,channels={num_channels}")
+                capsfilter.set_property("caps", caps)
+                elements.append(capsfilter)
+            else:
+                self.logger.warning("Could not create capsfilter for channel upmix")
+
         # Create platform-appropriate audio sink
         from .platform import create_audio_sink
 
         audio_output_device = self.config_manager.get("audio_output_device")
         sink = create_audio_sink(use_fakesinks=self.use_fakesinks, device=audio_output_device)
+        elements.append(sink)
 
         # Add all elements to bin
-        for elem in [ac1, self.pitch_shift_element, ac2, sink]:
+        for elem in elements:
             audio_bin.add(elem)
 
-        # Link elements
-        if not ac1.link(self.pitch_shift_element):
-            raise RuntimeError("Failed to link audioconvert to pitch_shift")
-        if not self.pitch_shift_element.link(ac2):
-            raise RuntimeError("Failed to link pitch_shift to audioconvert")
-        if not ac2.link(sink):
-            raise RuntimeError("Failed to link audioconvert to sink")
+        # Link elements in order
+        for i in range(len(elements) - 1):
+            if not elements[i].link(elements[i + 1]):
+                raise RuntimeError(
+                    f"Failed to link {elements[i].get_name()} to {elements[i + 1].get_name()}"
+                )
 
         # Create ghost pad pointing to first element's sink pad
         sink_pad = ac1.get_static_pad("sink")
