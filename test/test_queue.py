@@ -162,24 +162,47 @@ def test_reorder_invalid_position(queue_manager, test_users):
     assert result is False
 
 
-def test_get_next_song(queue_manager, test_users):
-    """Test getting next ready song."""
+def test_get_ready_song_at_offset(queue_manager, test_users):
+    """Test getting ready song at offset."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
     id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    id3 = queue_manager.add_song(test_users["alice"], "youtube:vid3", "Song 3")
 
     # No ready songs yet
-    next_song = queue_manager.get_next_song()
+    next_song = queue_manager.get_ready_song_at_offset(None, 0)
     assert next_song is None
 
-    # Mark first as ready
+    # Mark first and second as ready
     queue_manager.update_download_status(
         id1, QueueManager.STATUS_READY, download_path="/path/to/vid1.mp4"
     )
+    queue_manager.update_download_status(
+        id2, QueueManager.STATUS_READY, download_path="/path/to/vid2.mp4"
+    )
 
-    next_song = queue_manager.get_next_song()
+    # Get first ready song
+    first_song = queue_manager.get_ready_song_at_offset(None, 0)
+    assert first_song is not None
+    assert first_song.id == id1
+    assert first_song.download_status == QueueManager.STATUS_READY
+
+    # Get next song after first
+    next_song = queue_manager.get_ready_song_at_offset(id1, +1)
     assert next_song is not None
-    assert next_song.id == id1
-    assert next_song.download_status == QueueManager.STATUS_READY
+    assert next_song.id == id2
+
+    # Get previous song before second
+    prev_song = queue_manager.get_ready_song_at_offset(id2, -1)
+    assert prev_song is not None
+    assert prev_song.id == id1
+
+    # No next song after second (third is not ready)
+    no_next = queue_manager.get_ready_song_at_offset(id2, +1)
+    assert no_next is None
+
+    # No previous song before first
+    no_prev = queue_manager.get_ready_song_at_offset(id1, -1)
+    assert no_prev is None
 
 
 def test_update_download_status(queue_manager, test_users):

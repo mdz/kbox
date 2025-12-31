@@ -19,8 +19,8 @@ def mock_queue_manager():
     qm = Mock(spec=QueueManager)
     # Configure get_item to return None by default (tests override as needed)
     qm.get_item.return_value = None
-    # Configure get_next_song_after to return None by default
-    qm.get_next_song_after.return_value = None
+    # Configure get_ready_song_at_offset to return None by default
+    qm.get_ready_song_at_offset.return_value = None
     return qm
 
 
@@ -113,7 +113,7 @@ def test_initial_state(playback_controller):
 
 def test_play_no_ready_songs(playback_controller, mock_queue_manager):
     """Test play when no ready songs in queue."""
-    mock_queue_manager.get_next_song.return_value = None
+    mock_queue_manager.get_ready_song_at_offset.return_value = None
 
     result = playback_controller.play()
 
@@ -131,8 +131,8 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager, mock_stre
         pitch_semitones=2,
         download_status=QueueManager.STATUS_READY,
     )
-    # Mock get_queue to return the song
-    mock_queue_manager.get_queue.return_value = [mock_song]
+    # Mock get_ready_song_at_offset to return the song (used by _load_and_play_next)
+    mock_queue_manager.get_ready_song_at_offset.return_value = mock_song
 
     result = playback_controller.play()
 
@@ -150,7 +150,7 @@ def test_play_no_download_path(playback_controller, mock_queue_manager):
     mock_song = create_mock_queue_item(
         id=1, title="Test Song", user_name="Alice", download_path=None
     )
-    mock_queue_manager.get_next_song.return_value = mock_song
+    mock_queue_manager.get_ready_song_at_offset.return_value = mock_song
 
     result = playback_controller.play()
 
@@ -213,8 +213,8 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
         pitch_semitones=0,
         download_status=QueueManager.STATUS_READY,
     )
-    # Mock get_next_song_after to return the next song
-    mock_queue_manager.get_next_song_after.return_value = mock_next_song
+    # Mock get_ready_song_at_offset to return the next song
+    mock_queue_manager.get_ready_song_at_offset.return_value = mock_next_song
 
     result = playback_controller.skip()
 
@@ -245,8 +245,8 @@ def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streami
 
     # Mock get_item to return current song data
     mock_queue_manager.get_item.return_value = current_song
-    # Mock get_next_song_after to return None (no next song)
-    mock_queue_manager.get_next_song_after.return_value = None
+    # Mock get_ready_song_at_offset to return None (no next song)
+    mock_queue_manager.get_ready_song_at_offset.return_value = None
 
     result = playback_controller.skip()
 
@@ -302,15 +302,15 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
         pitch_semitones=0,
         download_status=QueueManager.STATUS_READY,
     )
-    # Mock get_next_song_after to return the next song
-    mock_queue_manager.get_next_song_after.return_value = mock_next_song
+    # Mock get_ready_song_at_offset to return the next song
+    mock_queue_manager.get_ready_song_at_offset.return_value = mock_next_song
 
     playback_controller.on_song_end()
 
     # Should mark current song as played
     mock_queue_manager.mark_played.assert_called_once_with(1)
-    # Should call get_next_song_after with the finished song's ID
-    mock_queue_manager.get_next_song_after.assert_called_once_with(1)
+    # Should call get_ready_song_at_offset with the finished song's ID and offset +1
+    mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(1, 1)
     # Should reset pitch
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
     # Should display transition interstitial image
@@ -336,15 +336,15 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
 
     # Mock get_item to return current song data
     mock_queue_manager.get_item.return_value = current_song
-    # Mock get_next_song_after to return None (no next song)
-    mock_queue_manager.get_next_song_after.return_value = None
+    # Mock get_ready_song_at_offset to return None (no next song)
+    mock_queue_manager.get_ready_song_at_offset.return_value = None
 
     playback_controller.on_song_end()
 
     # Should mark current song as played
     mock_queue_manager.mark_played.assert_called_once_with(1)
-    # Should call get_next_song_after with the finished song's ID
-    mock_queue_manager.get_next_song_after.assert_called_once_with(1)
+    # Should call get_ready_song_at_offset with the finished song's ID and offset +1
+    mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(1, 1)
     assert playback_controller.current_song_id is None
     assert playback_controller.state == PlaybackState.IDLE
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(0)
@@ -617,8 +617,8 @@ def test_on_song_end_plays_next_in_queue_order(
         song_at_position_5,
     ]
 
-    # Mock get_next_song_after to return the song at position 3
-    mock_queue_manager.get_next_song_after.return_value = song_at_position_3
+    # Mock get_ready_song_at_offset to return the song at position 3
+    mock_queue_manager.get_ready_song_at_offset.return_value = song_at_position_3
 
     mock_queue_manager.mark_played.return_value = True
     mock_streaming_controller.get_position.return_value = 150
@@ -632,14 +632,8 @@ def test_on_song_end_plays_next_in_queue_order(
     # Wait for transition timer (set to 0 in fixture)
     time.sleep(0.2)
 
-    # The bug: without the fix, it plays the first song in the unplayed list (id=15 at position 3)
-    # which is correct! But if positions were shuffled, it would play the wrong one.
-    #
-    # Better test: if song at position 5 (id=25) was first in the list returned by get_queue
-    # due to some bug, it should still play song at position 3 (id=15) because that's NEXT.
-
-    # The key assertion: should call get_next_song_after with the ID of the song that just ended
-    mock_queue_manager.get_next_song_after.assert_called_once_with(10)
+    # The key assertion: should call get_ready_song_at_offset with the ID of the song that just ended and offset +1
+    mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(10, 1)
 
     # Should have started playing the next song
     assert playback_controller._next_song_pending == song_at_position_3
@@ -668,8 +662,8 @@ def test_auto_start_when_idle_with_ready_songs(
         download_path="/path/to/song.mp4",
     )
 
-    # Mock queue to return the ready song
-    mock_queue_manager.get_queue.return_value = [ready_song]
+    # Mock get_ready_song_at_offset to return the ready song
+    mock_queue_manager.get_ready_song_at_offset.return_value = ready_song
 
     # Call the check method (this is called by the monitor thread)
     playback_controller._check_auto_start_when_idle()

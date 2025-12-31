@@ -132,11 +132,7 @@ class PlaybackController:
         someone adds a song - once it finishes downloading, playback
         should start automatically without requiring operator intervention.
         """
-        # Check if there are any ready songs
-        queue = self.queue_manager.get_queue(include_played=False)
-        ready_songs = [item for item in queue if item.download_status == QueueManager.STATUS_READY]
-
-        if ready_songs:
+        if self.queue_manager.get_ready_song_at_offset(None, 0):
             self.logger.info("Idle with ready songs, auto-starting playback")
             self.play()
 
@@ -190,7 +186,7 @@ class PlaybackController:
         time_remaining = duration - current_position
         if time_remaining <= 15:
             # Get next song
-            next_song = self.queue_manager.get_next_song_after(self.current_song_id)
+            next_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, +1)
             if next_song:
                 overlay_text = f"Up next: {next_song.user_name}"
                 self.streaming_controller.set_overlay_text(overlay_text)
@@ -234,17 +230,13 @@ class PlaybackController:
             return self._load_and_play_next()
 
     def _load_and_play_next(self) -> bool:
-        """Load next ready song that hasn't been played yet and start playback."""
-        # Get unplayed songs only
-        queue = self.queue_manager.get_queue(include_played=False)
-        ready_songs = [item for item in queue if item.download_status == QueueManager.STATUS_READY]
+        """Load first ready song in the queue and start playback."""
+        next_song = self.queue_manager.get_ready_song_at_offset(None, 0)
 
-        if not ready_songs:
+        if not next_song:
             self._set_state(PlaybackState.IDLE, "no ready songs")
             return False
 
-        # Get the first ready song
-        next_song = ready_songs[0]
         return self._play_song(next_song)
 
     def _play_song(self, song: QueueItem) -> bool:
@@ -393,7 +385,7 @@ class PlaybackController:
             return False
 
         # Get next song after current
-        next_song = self.queue_manager.get_next_song_after(self.current_song_id)
+        next_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, +1)
 
         if not next_song:
             self.logger.info("No next song available to skip to")
@@ -513,7 +505,7 @@ class PlaybackController:
                 return False
 
             # Get previous song before current
-            prev_song = self.queue_manager.get_previous_song_before(self.current_song_id)
+            prev_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, -1)
 
             if not prev_song:
                 self.logger.info("No previous song available")
@@ -776,12 +768,7 @@ class PlaybackController:
         Note: Called with lock held.
         """
         # Get next ready song after the one that finished
-        if finished_song_id:
-            # Find the next song after the one that finished, by queue position
-            next_song = self.queue_manager.get_next_song_after(finished_song_id)
-        else:
-            # No finished song (e.g., starting fresh), get first ready song
-            next_song = self.queue_manager.get_next_song()
+        next_song = self.queue_manager.get_ready_song_at_offset(finished_song_id, +1)
 
         if not next_song:
             # No more songs - show end-of-queue screen
