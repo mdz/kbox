@@ -165,7 +165,7 @@ class QueueManager:
     def _cleanup_storage(self) -> None:
         """Trigger storage cleanup with queue items protected from eviction."""
         try:
-            queue = self.get_queue(include_played=False)
+            queue = self.repository.get_all(include_played=False)
             protected = {item.video_id for item in queue}
             self.video_library.manage_storage(protected)
         except Exception as e:
@@ -230,21 +230,46 @@ class QueueManager:
         """Move a song to a new position in the queue."""
         return self.repository.reorder(item_id, new_position)
 
-    def get_queue(self, include_played: bool = True) -> List[QueueItem]:
+    def get_queue(self) -> List[QueueItem]:
         """Get the entire queue ordered by position."""
-        return self.repository.get_all(include_played=include_played)
+        return self.repository.get_all()
 
-    def get_next_song(self) -> Optional[QueueItem]:
-        """Get the next ready song in the queue."""
-        return self.repository.get_next_ready()
+    def get_ready_song_at_offset(
+        self, from_song_id: Optional[int], offset: int
+    ) -> Optional[QueueItem]:
+        """
+        Get a ready song at an offset from a reference song.
 
-    def get_next_song_after(self, current_song_id: int) -> Optional[QueueItem]:
-        """Get the next ready song in the queue after the specified song."""
-        return self.repository.get_next_after(current_song_id)
+        Simple helper for queue navigation - finds songs relative to a position.
 
-    def get_previous_song_before(self, current_song_id: int) -> Optional[QueueItem]:
-        """Get the previous ready song in the queue before the specified song."""
-        return self.repository.get_previous_before(current_song_id)
+        Args:
+            from_song_id: Reference song ID (None = start from beginning/end)
+            offset: +1 for next, -1 for previous, 0 for first ready
+
+        Returns:
+            The ready song at the offset, or None if not found
+        """
+        queue = self.get_queue()
+        ready_songs = [item for item in queue if item.download_status == self.STATUS_READY]
+
+        if not ready_songs:
+            return None
+
+        if from_song_id is None:
+            # No reference - return first (offset >= 0) or last (offset < 0)
+            return ready_songs[0] if offset >= 0 else ready_songs[-1]
+
+        # Find reference song's index in ready songs
+        current_idx = next((i for i, s in enumerate(ready_songs) if s.id == from_song_id), None)
+        if current_idx is None:
+            # Reference song not found in ready songs - return first or last
+            return ready_songs[0] if offset >= 0 else ready_songs[-1]
+
+        target_idx = current_idx + offset
+        if 0 <= target_idx < len(ready_songs):
+            return ready_songs[target_idx]
+
+        return None
 
     def clear_queue(self) -> int:
         """Clear all items from the queue."""

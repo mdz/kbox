@@ -163,7 +163,7 @@ def create_app(
         from dataclasses import asdict
 
         # Get all queue items (including played ones for navigation)
-        queue_items = queue_mgr.get_queue(include_played=True)
+        queue_items = queue_mgr.get_queue()
 
         # Get current song from playback status
         status = playback.get_status()

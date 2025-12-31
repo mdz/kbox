@@ -25,3 +25,4 @@ echo ""
 echo "✓ API key configured! You can now start kbox with: docker-compose up"
 
 
+
