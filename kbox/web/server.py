@@ -226,10 +226,10 @@ def create_app(
                 pitch_semitones=request_data.pitch_semitones,
             )
 
-            # Show overlay notification
-            streaming = request.app.state.streaming_controller
-            if streaming:
-                streaming.show_notification(
+            # Show overlay notification via PlaybackController
+            playback = request.app.state.playback_controller
+            if playback:
+                playback.show_notification(
                     f"{user.display_name} added a song", duration_seconds=5.0
                 )
 

@@ -697,3 +697,34 @@ def test_auto_start_when_idle_no_ready_songs(
     # Should NOT have started playback
     mock_streaming_controller.load_file.assert_not_called()
     assert playback_controller.state == PlaybackState.IDLE
+
+
+def test_notification_restores_base_overlay(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that show_notification() restores the base overlay after the notification expires.
+
+    This is a regression test for the bug where the overlay would go blank
+    after a notification instead of returning to showing the current singer.
+    """
+    import time
+
+    # Set up a base overlay (simulating "Now singing: Alice")
+    playback_controller._set_base_overlay("Now singing: Alice")
+
+    # Verify base overlay was set
+    mock_streaming_controller.set_overlay_text.assert_called_with("Now singing: Alice")
+    mock_streaming_controller.reset_mock()
+
+    # Show a notification with a short duration
+    playback_controller.show_notification("Bob added a song", duration_seconds=0.1)
+
+    # Notification should be shown
+    mock_streaming_controller.set_overlay_text.assert_called_with("Bob added a song")
+    mock_streaming_controller.reset_mock()
+
+    # Wait for notification to expire
+    time.sleep(0.2)
+
+    # Base overlay should be restored
+    mock_streaming_controller.set_overlay_text.assert_called_with("Now singing: Alice")
