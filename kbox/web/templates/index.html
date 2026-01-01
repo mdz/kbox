@@ -168,6 +168,9 @@
             background: #333;
             color: #e0e0e0;
             font-size: 16px;
+            /* iOS Safari touch handling */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
         
         #search-input {
@@ -1935,6 +1938,13 @@
             if (e.key === 'Enter') {
                 search();
             }
+        });
+        
+        // iOS Safari fix: add touchend handler for search button
+        // This helps when the keyboard is open and click events don't fire properly
+        document.getElementById('search-button').addEventListener('touchend', function(e) {
+            e.preventDefault();
+            search();
         });
         
         // Search for videos
