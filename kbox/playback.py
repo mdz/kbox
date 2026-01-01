@@ -768,6 +768,12 @@ class PlaybackController:
         Note: Called with lock held.
         """
         # Get next ready song after the one that finished
+        # If finished_song_id is None, we have no reference point, so show end screen
+        if finished_song_id is None:
+            self._set_state(PlaybackState.IDLE, "queue exhausted")
+            self._show_end_of_queue_screen()
+            return
+
         next_song = self.queue_manager.get_ready_song_at_offset(finished_song_id, +1)
 
         if not next_song:
