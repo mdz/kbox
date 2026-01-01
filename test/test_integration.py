@@ -469,6 +469,41 @@ def test_playback_history_recording(full_system):
     assert history[0].settings.pitch_semitones == 2
 
 
+def test_end_of_queue_behavior(full_system):
+    """Test that when the last song ends, it shows end-of-queue screen and goes to IDLE."""
+    system = full_system
+
+    # Add a single song
+    item_id = system["queue"].add_song(
+        user=system["users"]["alice"],
+        video_id="fake:last_song",
+        title="Last Song",
+        duration_seconds=180,
+    )
+    system["queue"].update_download_status(
+        item_id, QueueManager.STATUS_READY, download_path="/path/to/last.mp4"
+    )
+
+    # Play the song
+    system["playback"].play()
+    assert system["playback"].state == PlaybackState.PLAYING
+    assert system["playback"].current_song_id == item_id
+
+    # Simulate song ending (no next song available)
+    system["playback"].on_song_end()
+
+    # Should go to IDLE state (end of queue)
+    assert system["playback"].state == PlaybackState.IDLE
+    assert system["playback"].current_song_id is None
+    # Should show end-of-queue screen
+    system["streaming"].display_image.assert_called()
+    # Should reset pitch
+    system["streaming"].set_pitch_shift.assert_any_call(0)
+    # Should mark the song as played
+    item = system["queue"].get_item(item_id)
+    assert item.played_at is not None
+
+
 def test_video_availability_check(full_system):
     """Test checking if a video is available."""
     system = full_system

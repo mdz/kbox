@@ -262,8 +262,8 @@ class QueueManager:
         # Find reference song's index in ready songs
         current_idx = next((i for i, s in enumerate(ready_songs) if s.id == from_song_id), None)
         if current_idx is None:
-            # Reference song not found in ready songs - return first or last
-            return ready_songs[0] if offset >= 0 else ready_songs[-1]
+            # Reference song not found in ready songs - cannot determine offset
+            return None
 
         target_idx = current_idx + offset
         if 0 <= target_idx < len(ready_songs):

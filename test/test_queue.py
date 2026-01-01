@@ -204,6 +204,15 @@ def test_get_ready_song_at_offset(queue_manager, test_users):
     no_prev = queue_manager.get_ready_song_at_offset(id1, -1)
     assert no_prev is None
 
+    # Reference song not in queue - should return None, NOT wrap to first song
+    # This is the key test for the wrap-around bug
+    nonexistent = queue_manager.get_ready_song_at_offset(9999, +1)
+    assert nonexistent is None
+
+    # Reference song exists but is not ready (id3) - should return None
+    not_ready_next = queue_manager.get_ready_song_at_offset(id3, +1)
+    assert not_ready_next is None
+
 
 def test_update_download_status(queue_manager, test_users):
     """Test updating download status."""
