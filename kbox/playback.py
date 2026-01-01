@@ -66,6 +66,12 @@ class PlaybackController:
         self._current_singer_shown = (
             False  # Track if "current singer" notification was shown for current song
         )
+
+        # Overlay management - PlaybackController owns overlay state
+        self._base_overlay_text = ""  # Persistent overlay (current singer, up next, etc.)
+        self._notification_timer: Optional[threading.Timer] = None
+        self._notification_lock = threading.Lock()
+
         self._start_monitor()
 
         # Set EOS callback
@@ -91,6 +97,55 @@ class PlaybackController:
             self.logger.info("State: %s -> %s (%s)", old_state.value, new_state.value, reason)
         else:
             self.logger.info("State: %s -> %s", old_state.value, new_state.value)
+
+    # =========================================================================
+    # Overlay Management
+    # =========================================================================
+
+    def _set_base_overlay(self, text: str):
+        """
+        Set the base (persistent) overlay text.
+
+        This is the text that should be shown when no transient notification
+        is active (e.g., "Now singing: Alice", "Up next: Bob").
+
+        Args:
+            text: The base overlay text, or empty string to clear
+        """
+        with self._notification_lock:
+            self._base_overlay_text = text
+            # Only update display if no notification is active
+            if self._notification_timer is None:
+                self.streaming_controller.set_overlay_text(text)
+
+    def show_notification(self, text: str, duration_seconds: float = 5.0):
+        """
+        Show a transient notification that auto-hides and restores the base overlay.
+
+        Args:
+            text: Notification text to display
+            duration_seconds: How long to show the notification (default 5s)
+        """
+        with self._notification_lock:
+            # Cancel any pending timer
+            if self._notification_timer:
+                self._notification_timer.cancel()
+                self._notification_timer = None
+
+            # Show the notification
+            self.streaming_controller.set_overlay_text(text)
+            self.logger.info("Showing notification: %s", text)
+
+            # Schedule restoration of base overlay
+            def restore_base_overlay():
+                with self._notification_lock:
+                    self._notification_timer = None
+                    self.streaming_controller.set_overlay_text(self._base_overlay_text)
+                    self.logger.debug("Restored base overlay: %s", self._base_overlay_text)
+
+            self._notification_timer = threading.Timer(duration_seconds, restore_base_overlay)
+            self._notification_timer.daemon = True
+            self._notification_timer.start()
 
     def _start_monitor(self):
         """Start background thread to monitor playback state and react accordingly."""
@@ -156,7 +211,7 @@ class PlaybackController:
             current_song = self.queue_manager.get_item(self.current_song_id)
             if current_song:
                 overlay_text = f"Now singing: {current_song.user_name}"
-                self.streaming_controller.set_overlay_text(overlay_text)
+                self._set_base_overlay(overlay_text)
                 self._current_singer_shown = True
                 self.logger.debug("Set current singer overlay for: %s", current_song.user_name)
 
@@ -189,7 +244,7 @@ class PlaybackController:
             next_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, +1)
             if next_song:
                 overlay_text = f"Up next: {next_song.user_name}"
-                self.streaming_controller.set_overlay_text(overlay_text)
+                self._set_base_overlay(overlay_text)
                 self._up_next_shown = True
                 self.logger.debug("Updated overlay to up next for: %s", next_song.user_name)
 
@@ -326,7 +381,7 @@ class PlaybackController:
         This is the ONLY place (besides _play_song) where current_song_id should be mutated.
         """
         self.streaming_controller.stop_playback()
-        self.streaming_controller.set_overlay_text("")  # Clear the singer/up next overlay
+        self._set_base_overlay("")  # Clear the singer/up next overlay
         self.current_song_id = None
         self._set_state(PlaybackState.STOPPED, "stopped by operator")
         self.show_idle_screen()
@@ -743,7 +798,7 @@ class PlaybackController:
             self.streaming_controller.set_pitch_shift(0)
 
             # Clear the singer/up next overlay
-            self.streaming_controller.set_overlay_text("")
+            self._set_base_overlay("")
 
             # Clear current song ID (natural end of song, transitioning to next or idle)
             # NOTE: This is one of only 3 places current_song_id is mutated:
