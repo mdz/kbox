@@ -11,6 +11,15 @@ services:
       - kbox-cache:/root/.kbox/cache  # Persist downloads
     restart: unless-stopped
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - kbox
+    restart: unless-stopped
+
 volumes:
   kbox-cache:
   kbox-data:
