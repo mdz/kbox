@@ -315,9 +315,13 @@ export function renderUpNext(statusData, queue) {
     
     const currentSong = statusData.current_song;
     
-    // Queue is already ordered by position. Find current song's index, everything after is upcoming.
-    const currentIndex = queue.findIndex(item => item.is_current);
-    const upcomingSongs = currentIndex >= 0 ? queue.slice(currentIndex + 1) : queue;
+    // Filter queue to only include unplayed, non-current songs that are ready
+    // This matches the backend's get_ready_song_at_offset logic
+    const upcomingSongs = queue.filter(item => 
+        !item.is_current && 
+        !item.is_played && 
+        item.download_status === 'ready'
+    );
     const nextSong = upcomingSongs[0];
     
     // Helper to format time
