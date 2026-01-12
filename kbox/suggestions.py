@@ -187,7 +187,9 @@ class SuggestionEngine:
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature,
-            "max_tokens": 4096,
+            "max_tokens": 16384,
+            # For reasoning models (GPT-5, o1, o3), use low effort - this is a simple task
+            "reasoning_effort": "low",
         }
 
         if base_url:
