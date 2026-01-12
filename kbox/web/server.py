@@ -8,9 +8,10 @@ import logging
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
@@ -121,6 +122,8 @@ def create_app(
     user_manager: UserManager,
     history_manager,  # HistoryManager - avoid circular import
     streaming_controller: Optional[StreamingController] = None,
+    access_token: Optional[str] = None,
+    session_secret: Optional[str] = None,
 ) -> FastAPI:
     """
     Create and configure FastAPI application.
@@ -132,16 +135,20 @@ def create_app(
         config_manager: ConfigManager instance
         user_manager: UserManager instance
         streaming_controller: StreamingController instance (optional, for overlays)
+        access_token: Access token for guest authentication (if None, auth disabled)
+        session_secret: Secret key for session cookies (defaults to random if not provided)
 
     Returns:
         Configured FastAPI app
     """
+    import secrets as secrets_module
+
     app = FastAPI(title="kbox", version="1.0.0")
 
-    # Add session middleware for operator authentication
-    app.add_middleware(SessionMiddleware, secret_key="kbox-secret-key-change-in-production")
+    # Use provided session secret or generate a random one
+    secret_key = session_secret or secrets_module.token_urlsafe(32)
 
-    # Store components in app state
+    # Store components in app state (needed before middleware setup)
     app.state.queue_manager = queue_manager
     app.state.video_library = video_library
     app.state.playback_controller = playback_controller
@@ -149,6 +156,80 @@ def create_app(
     app.state.user_manager = user_manager
     app.state.history_manager = history_manager
     app.state.streaming_controller = streaming_controller
+    app.state.access_token = access_token
+
+    # Middleware is added in LIFO order (last added runs first)
+    # So we add GuestAuthMiddleware BEFORE SessionMiddleware so it runs AFTER
+
+    # Add guest authentication middleware (if access token is configured)
+    if access_token:
+
+        class GuestAuthMiddleware(BaseHTTPMiddleware):
+            """Middleware to authenticate guests via access token."""
+
+            async def dispatch(self, request: Request, call_next):
+                # Check if already authenticated via session
+                if request.session.get("guest_authenticated"):
+                    return await call_next(request)
+
+                # Check for access token in query params
+                key = request.query_params.get("key")
+                if key == access_token:
+                    # Valid token - set session and redirect to clean URL
+                    request.session["guest_authenticated"] = True
+                    # Redirect to same path without the key param
+                    clean_url = str(request.url).split("?")[0]
+                    return RedirectResponse(url=clean_url, status_code=302)
+
+                # Not authenticated - return friendly error page
+                return HTMLResponse(
+                    content="""<!DOCTYPE html>
+<html>
+<head>
+    <title>kbox - Access Required</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        p { font-size: 1.2rem; opacity: 0.8; }
+        .qr-hint {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 kbox</h1>
+        <p>Karaoke queue system</p>
+        <div class="qr-hint">
+            <p>📱 Scan the QR code on the TV screen to join</p>
+        </div>
+    </div>
+</body>
+</html>""",
+                    status_code=401,
+                )
+
+        app.add_middleware(GuestAuthMiddleware)
+
+    # SessionMiddleware must be added AFTER GuestAuthMiddleware (runs first due to LIFO)
+    app.add_middleware(SessionMiddleware, secret_key=secret_key)
 
     # Templates
     templates = Jinja2Templates(directory="kbox/web/templates")

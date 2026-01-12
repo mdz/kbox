@@ -5,6 +5,7 @@ Initializes all components and starts the server.
 """
 
 import logging
+import secrets
 
 import uvicorn
 
@@ -42,6 +43,22 @@ class KboxServer:
 
         # Initialize configuration manager
         self.config_manager = ConfigManager(self.database)
+
+        # Get or create access token (persists across restarts)
+        self.access_token = self.config_manager.get("access_token")
+        if not self.access_token:
+            self.access_token = secrets.token_urlsafe(16)
+            self.config_manager.set("access_token", self.access_token)
+            logger.info("Generated new access token")
+        else:
+            logger.info("Using existing access token from database")
+
+        # Get or create session secret (persists across restarts)
+        self.session_secret = self.config_manager.get("session_secret")
+        if not self.session_secret:
+            self.session_secret = secrets.token_urlsafe(32)
+            self.config_manager.set("session_secret", self.session_secret)
+            logger.info("Generated new session secret")
 
         # Initialize video library and register sources
         self.video_library = VideoLibrary(self.config_manager)
@@ -81,6 +98,8 @@ class KboxServer:
             self.user_manager,
             self.history_manager,
             streaming_controller=self.streaming_controller,
+            access_token=self.access_token,
+            session_secret=self.session_secret,
         )
 
         # Uvicorn server instance (will be created in run())
@@ -122,9 +141,10 @@ class KboxServer:
                 web_url = f"http://{local_ip}:8000"
                 logger.info("Using auto-detected URL: %s", web_url)
 
-        # Generate QR code for the web UI URL
+        # Generate QR code for the web UI URL (with access token for remote access)
+        qr_url = f"{web_url}?key={self.access_token}"
         cache_dir = self.config_manager.get("cache_directory")
-        qr_path = generate_qr_code(web_url, size=100, cache_dir=cache_dir)
+        qr_path = generate_qr_code(qr_url, size=100, cache_dir=cache_dir)
         if qr_path:
             self.streaming_controller.update_qr_overlay(qr_path)
             logger.info("QR code overlay configured")
