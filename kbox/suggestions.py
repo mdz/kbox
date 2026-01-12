@@ -174,13 +174,16 @@ class SuggestionEngine:
                 {
                     "role": "system",
                     "content": (
-                        "You are a karaoke song recommender. You suggest popular, "
-                        "singable songs that are fun for karaoke. Always return valid JSON."
+                        "You are a karaoke song recommender with deep knowledge of music "
+                        "across all genres and eras. You help singers discover songs that "
+                        "suit their voice and taste - not just top-40 hits everyone knows. "
+                        "You understand vocal ranges, song keys, and what makes a song "
+                        "fun to perform at karaoke. Always return valid JSON."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.8,  # Some creativity
+            "temperature": 0.9,  # Higher creativity for diverse suggestions
             "max_tokens": 1000,
         }
 
@@ -202,29 +205,45 @@ class SuggestionEngine:
 
     def _build_prompt(self, context: Dict[str, Any], count: int) -> str:
         """Build the prompt for the LLM."""
-        parts = [f"Suggest {count} karaoke songs that would be great to sing."]
+        parts = [f"Suggest {count} karaoke songs for this singer."]
 
         if context.get("user_history"):
             history_str = ", ".join(
-                f'"{s["title"]}" by {s["artist"]}' for s in context["user_history"][:5]
+                f'"{s["title"]}" by {s["artist"]}' for s in context["user_history"][:8]
             )
-            parts.append(f"\nThe singer has previously performed: {history_str}")
+            parts.append(
+                f"\n\nThe singer has previously performed these songs: {history_str}"
+                "\n\nAnalyze their song choices to understand:"
+                "\n- Their likely vocal range and style"
+                "\n- Genres and eras they gravitate toward"
+                "\n- The emotional tone they prefer (upbeat, ballads, powerful, etc.)"
+            )
 
         if context.get("current_queue"):
             queue_str = ", ".join(
                 f'"{s["title"]}" by {s["artist"]}' for s in context["current_queue"][:5]
             )
-            parts.append(f"\nThe current karaoke queue includes: {queue_str}")
+            parts.append(f"\n\nThe current karaoke session includes: {queue_str}")
 
         if context.get("theme"):
-            parts.append(f'\nThe party theme is: "{context["theme"]}"')
+            parts.append(f'\n\nThe party theme is: "{context["theme"]}"')
 
         parts.append(
             "\n\nSuggest songs that:"
-            "\n- Are fun and popular for karaoke"
-            "\n- Match the vibe of the session"
-            "\n- Are different from songs already mentioned"
-            "\n- Have memorable melodies and are easy to sing along to"
+            "\n- Match this singer's apparent vocal range and style"
+            "\n- Fit their musical taste based on their history"
+            "\n- Are enjoyable to perform (good for showing off, crowd participation, etc.)"
+            "\n- Are NOT overplayed karaoke clichés that everyone has heard a million times"
+            "\n- Are still well-known enough that karaoke versions exist on YouTube"
+            "\n- Are different from songs already in the queue"
+        )
+
+        if context.get("theme"):
+            parts.append(f'\n- Fit the "{context["theme"]}" theme')
+
+        parts.append(
+            "\n\nThink beyond the obvious top-40 hits. Consider deep cuts, album tracks, "
+            "songs from similar artists, or lesser-known songs from well-known artists."
         )
 
         parts.append(
