@@ -17,6 +17,7 @@ from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
 from .queue import QueueManager
 from .streaming import StreamingController
+from .suggestions import SuggestionEngine
 from .user import UserManager
 from .video_library import VideoLibrary
 from .web.server import create_app
@@ -89,6 +90,14 @@ class KboxServer:
             self.history_manager,
         )
 
+        # SuggestionEngine for AI-powered song recommendations
+        self.suggestion_engine = SuggestionEngine(
+            self.config_manager,
+            self.history_manager,
+            self.queue_manager,
+            self.video_library,
+        )
+
         # Web server
         self.web_app = create_app(
             self.queue_manager,
@@ -97,6 +106,7 @@ class KboxServer:
             self.config_manager,
             self.user_manager,
             self.history_manager,
+            suggestion_engine=self.suggestion_engine,
             streaming_controller=self.streaming_controller,
             access_token=self.access_token,
             session_secret=self.session_secret,

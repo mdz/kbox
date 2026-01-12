@@ -6,6 +6,71 @@ import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd } from './sta
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
 
+// Get AI-powered song suggestions
+export async function getSuggestions() {
+    if (!userName) {
+        alert('Please enter your name first');
+        document.getElementById('name-modal').classList.remove('hidden');
+        return;
+    }
+    
+    const resultsDiv = document.getElementById('search-results');
+    const suggestButton = document.getElementById('suggest-button');
+    
+    // Show loading state
+    resultsDiv.innerHTML = '<div class="suggestions-loading">✨ Finding songs for you...</div>';
+    suggestButton.disabled = true;
+    suggestButton.textContent = '✨ Thinking...';
+    
+    try {
+        const response = await fetch(`/api/suggestions?user_id=${encodeURIComponent(userId)}`);
+        
+        if (!response.ok) {
+            const error = await response.json();
+            resultsDiv.innerHTML = `<div class="suggestions-error">${error.detail || 'Could not get suggestions'}</div>`;
+            return;
+        }
+        
+        const data = await response.json();
+        
+        if (!data.results || data.results.length === 0) {
+            resultsDiv.innerHTML = '<div class="suggestions-empty">No suggestions found. Try searching for a song!</div>';
+            return;
+        }
+        
+        // Display results (same format as search results)
+        resultsDiv.innerHTML = '<div class="suggestions-header">✨ Suggested for you</div>';
+        data.results.forEach(video => {
+            const div = document.createElement('div');
+            div.className = 'search-result';
+            div.tabIndex = 0;
+            div.setAttribute('role', 'button');
+            div.setAttribute('aria-label', `Add ${video.title} by ${video.channel} to queue`);
+            div.innerHTML = `
+                <img src="${video.thumbnail}" alt="${video.title}" />
+                <div class="search-result-info">
+                    <div class="search-result-title">${video.title}</div>
+                    <div class="search-result-channel">${video.channel}</div>
+                </div>
+            `;
+            div.onclick = () => showAddSongModal(video);
+            div.onkeydown = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    showAddSongModal(video);
+                }
+            };
+            resultsDiv.appendChild(div);
+        });
+    } catch (e) {
+        console.error('Error getting suggestions:', e);
+        resultsDiv.innerHTML = '<div class="suggestions-error">Error getting suggestions. Try again later.</div>';
+    } finally {
+        suggestButton.disabled = false;
+        suggestButton.textContent = '✨ Suggest for me';
+    }
+}
+
 // Search for videos
 export async function search() {
     const query = document.getElementById('search-input').value;
