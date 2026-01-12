@@ -808,3 +808,73 @@ def test_auto_start_does_not_restart_played_songs(
 
     # State should still be IDLE
     assert playback_controller.state == PlaybackState.IDLE
+
+
+def test_stop_remembers_current_song(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that stop_playback() remembers the current song for resume."""
+    # Set up: song is playing
+    current_song = create_mock_queue_item(id=5, title="Current Song")
+    mock_queue_manager.get_ready_song_at_offset.return_value = current_song
+    mock_queue_manager.get_item.return_value = current_song
+
+    # Start playing
+    playback_controller.play()
+    assert playback_controller.current_song_id == 5
+    assert playback_controller.state == PlaybackState.PLAYING
+
+    # Stop playback
+    result = playback_controller.stop_playback()
+
+    assert result is True
+    assert playback_controller.state == PlaybackState.STOPPED
+    # KEY: current_song_id should be preserved, not cleared
+    assert playback_controller.current_song_id == 5
+
+
+def test_play_after_stop_resumes_same_song(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that play() after stop_playback() resumes the same song."""
+    # Set up: song is stopped (simulating after stop_playback)
+    stopped_song = create_mock_queue_item(
+        id=5, title="Stopped Song", download_path="/path/to/stopped.mp4"
+    )
+    playback_controller.current_song_id = 5
+    playback_controller.state = PlaybackState.STOPPED
+    mock_queue_manager.get_item.return_value = stopped_song
+
+    # Play should resume the stopped song
+    mock_streaming_controller.load_file.reset_mock()
+    result = playback_controller.play()
+
+    assert result is True
+    assert playback_controller.state == PlaybackState.PLAYING
+    assert playback_controller.current_song_id == 5
+    # Should load the same song, not get a new one from the queue
+    mock_streaming_controller.load_file.assert_called_once_with("/path/to/stopped.mp4")
+
+
+def test_play_after_stop_song_deleted_falls_back(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that play() after stop falls back to first ready song if stopped song was deleted."""
+    # Set up: stopped state with a song ID that no longer exists
+    playback_controller.current_song_id = 5
+    playback_controller.state = PlaybackState.STOPPED
+    mock_queue_manager.get_item.return_value = None  # Song was deleted
+
+    # First ready song in queue
+    fallback_song = create_mock_queue_item(
+        id=10, title="Fallback Song", download_path="/path/to/fallback.mp4"
+    )
+    mock_queue_manager.get_ready_song_at_offset.return_value = fallback_song
+
+    # Play should fall back to first ready song
+    result = playback_controller.play()
+
+    assert result is True
+    assert playback_controller.state == PlaybackState.PLAYING
+    assert playback_controller.current_song_id == 10
+    mock_streaming_controller.load_file.assert_called_once_with("/path/to/fallback.mp4")

@@ -281,6 +281,15 @@ class PlaybackController:
                     self._next_song_pending = None
                     return self._play_song(next_song)
 
+            if self.state == PlaybackState.STOPPED:
+                if self.current_song_id:
+                    # Resume the stopped song
+                    song = self.queue_manager.get_item(self.current_song_id)
+                    if song and song.download_status == "ready":
+                        return self._play_song(song)
+                    # Song was deleted or not ready - fall through to load next
+                # No remembered song - fall through to load next
+
             # Start new song
             return self._load_and_play_next()
 
@@ -339,10 +348,10 @@ class PlaybackController:
                 return False
 
             # Mark song ID as currently playing
-            # NOTE: This is one of only 3 places current_song_id is mutated:
+            # NOTE: This is one of only 2 places current_song_id is mutated:
             #   1. _play_song() - sets it when starting playback
-            #   2. _stop_internal() - clears it when stopping playback
-            #   3. on_song_end() - clears it when song finishes naturally
+            #   2. on_song_end() - clears it when song finishes naturally
+            # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
             self._set_state(PlaybackState.PLAYING, f"playing: {song.metadata.title}")
             return True
@@ -375,14 +384,14 @@ class PlaybackController:
 
     def _stop_internal(self):
         """
-        Stop playback and clear current song.
+        Stop playback but remember current song.
 
         Helper method for stopping playback. Assumes lock is already held.
-        This is the ONLY place (besides _play_song) where current_song_id should be mutated.
+        The current_song_id is preserved so that play() can resume from the same song.
         """
         self.streaming_controller.stop_playback()
         self._set_base_overlay("")  # Clear the singer/up next overlay
-        self.current_song_id = None
+        # Note: current_song_id is NOT cleared - we remember the song for resume
         self._set_state(PlaybackState.STOPPED, "stopped by operator")
         self.show_idle_screen()
 
@@ -402,10 +411,7 @@ class PlaybackController:
                 self._transition_timer = None
             self._next_song_pending = None
 
-            if not self.current_song_id and self.state in (
-                PlaybackState.IDLE,
-                PlaybackState.STOPPED,
-            ):
+            if self.state in (PlaybackState.IDLE, PlaybackState.STOPPED):
                 self.logger.debug("Already stopped, nothing to stop")
                 return False
 
@@ -669,12 +675,11 @@ class PlaybackController:
 
     def move_to_next(self, item_id: int) -> bool:
         """
-        Move a song to play next in the queue.
+        Move a song to play next after the current song.
 
-        If a song is currently playing, moves the song to position+1 after it.
-        Otherwise, moves to position 1 (front of queue).
-
-        If the currently playing song is moved, its position is updated.
+        Works whether a song is playing or stopped. If there is a current song,
+        moves the selected song to position+1 after it. Otherwise (idle state
+        with no current song), moves to position 1 (front of queue).
 
         Args:
             item_id: ID of the queue item to move
@@ -810,10 +815,10 @@ class PlaybackController:
             self._set_base_overlay("")
 
             # Clear current song ID (natural end of song, transitioning to next or idle)
-            # NOTE: This is one of only 3 places current_song_id is mutated:
+            # NOTE: This is one of only 2 places current_song_id is mutated:
             #   1. _play_song() - sets it when starting playback
-            #   2. _stop_internal() - clears it when stopping playback
-            #   3. on_song_end() - clears it when song finishes naturally
+            #   2. on_song_end() - clears it when song finishes naturally
+            # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = None
 
             # Check for next song and show transition, using the ID of the song that just finished
