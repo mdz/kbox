@@ -32,6 +32,9 @@ export async function search() {
         data.results.forEach(video => {
             const div = document.createElement('div');
             div.className = 'search-result';
+            div.tabIndex = 0;
+            div.setAttribute('role', 'button');
+            div.setAttribute('aria-label', `Add ${video.title} by ${video.channel} to queue`);
             div.innerHTML = `
                 <img src="${video.thumbnail}" alt="${video.title}" />
                 <div class="search-result-info">
@@ -40,6 +43,12 @@ export async function search() {
                 </div>
             `;
             div.onclick = () => showAddSongModal(video);
+            div.onkeydown = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    showAddSongModal(video);
+                }
+            };
             resultsDiv.appendChild(div);
         });
     } catch (e) {
