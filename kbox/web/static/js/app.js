@@ -11,7 +11,7 @@ import {
     initializeUserIdentity, setupPinInputHandler
 } from './auth.js';
 import { adjustPitch } from './pitch.js';
-import { toggleControlsLock, togglePlaybackControlsLock } from './controls.js';
+import { toggleControlsLock, togglePlaybackControlsLock, resetPlaybackAutoLockTimer } from './controls.js';
 import {
     toggleConfigScreen, loadConfiguration, saveConfiguration,
     toggleCustomInput, updateSliderDisplay, selectPosition
@@ -43,6 +43,7 @@ window.adjustPitch = adjustPitch;
 // Controls
 window.toggleControlsLock = toggleControlsLock;
 window.togglePlaybackControlsLock = togglePlaybackControlsLock;
+window.resetPlaybackAutoLockTimer = resetPlaybackAutoLockTimer;
 
 // Config
 window.toggleConfigScreen = toggleConfigScreen;
