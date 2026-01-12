@@ -102,17 +102,22 @@ class SuggestionEngine:
         """Build context dict for the LLM prompt."""
         context: Dict[str, Any] = {}
 
-        # User's recent history
+        # User's recent history (deduplicated by video_id)
         try:
-            history = self.history.get_user_history(user_id, limit=20)
+            history = self.history.get_user_history(user_id, limit=50)
             if history:
-                context["user_history"] = [
-                    {
-                        "title": record.metadata.title,
-                        "artist": record.metadata.channel or "Unknown",
-                    }
-                    for record in history
-                ]
+                seen_videos: set[str] = set()
+                unique_songs = []
+                for record in history:
+                    if record.video_id not in seen_videos:
+                        seen_videos.add(record.video_id)
+                        unique_songs.append(
+                            {
+                                "title": record.metadata.title,
+                                "artist": record.metadata.channel or "Unknown",
+                            }
+                        )
+                context["user_history"] = unique_songs
         except Exception as e:
             self.logger.debug("Could not get user history: %s", e)
 
