@@ -238,19 +238,29 @@ class QueueManager:
         self, from_song_id: Optional[int], offset: int
     ) -> Optional[QueueItem]:
         """
-        Get a ready song at an offset from a reference song.
+        Get a ready, unplayed song at an offset from a reference song.
 
         Simple helper for queue navigation - finds songs relative to a position.
+        Only returns songs that are ready (downloaded) AND have not been played yet.
+
+        The reference song can be played (e.g., when finding the next song after one
+        that just finished). In that case, we find the next unplayed ready song
+        by comparing positions.
 
         Args:
             from_song_id: Reference song ID (None = start from beginning/end)
             offset: +1 for next, -1 for previous, 0 for first ready
 
         Returns:
-            The ready song at the offset, or None if not found
+            The ready unplayed song at the offset, or None if not found
         """
         queue = self.repository.get_all()
-        ready_songs = [item for item in queue if item.download_status == self.STATUS_READY]
+        # Filter for songs that are ready AND have not been played
+        ready_songs = [
+            item
+            for item in queue
+            if item.download_status == self.STATUS_READY and item.played_at is None
+        ]
 
         if not ready_songs:
             return None
@@ -259,15 +269,37 @@ class QueueManager:
             # No reference - return first (offset >= 0) or last (offset < 0)
             return ready_songs[0] if offset >= 0 else ready_songs[-1]
 
-        # Find reference song's index in ready songs
+        # Try to find reference song's index in the unplayed ready songs list
         current_idx = next((i for i, s in enumerate(ready_songs) if s.id == from_song_id), None)
-        if current_idx is None:
-            # Reference song not found in ready songs - cannot determine offset
+
+        if current_idx is not None:
+            # Reference song is in the ready list - use simple index offset
+            target_idx = current_idx + offset
+            if 0 <= target_idx < len(ready_songs):
+                return ready_songs[target_idx]
             return None
 
-        target_idx = current_idx + offset
-        if 0 <= target_idx < len(ready_songs):
-            return ready_songs[target_idx]
+        # Reference song is not in ready_songs (probably played) - find by position
+        # Look up the reference song's position from the full queue
+        ref_song = next((s for s in queue if s.id == from_song_id), None)
+        if ref_song is None:
+            # Reference song not found at all
+            return None
+
+        ref_position = ref_song.position
+
+        if offset > 0:
+            # Find unplayed ready songs AFTER the reference position
+            candidates = [s for s in ready_songs if s.position > ref_position]
+            if len(candidates) >= offset:
+                return candidates[offset - 1]  # offset=1 means first candidate
+        elif offset < 0:
+            # Find unplayed ready songs BEFORE the reference position
+            candidates = [s for s in ready_songs if s.position < ref_position]
+            candidates.reverse()  # Reverse to count backwards
+            if len(candidates) >= abs(offset):
+                return candidates[abs(offset) - 1]
+        # offset == 0 with a played reference song: return None (no current song)
 
         return None
 

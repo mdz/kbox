@@ -473,3 +473,89 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
     item = qm.get_item(item_id)
     assert item.download_status == QueueManager.STATUS_READY
     assert item.download_path == "/recovered/path/video.mp4"
+
+
+def test_get_ready_song_at_offset_excludes_played_songs(queue_manager, test_users):
+    """Test that get_ready_song_at_offset excludes songs that have been played.
+
+    This is a regression test for the bug where a single song in the queue
+    would loop forever because after the song finished and was marked as played,
+    get_ready_song_at_offset(None, 0) would still return it (since it was still
+    "ready" in download_status), causing auto-start to replay the same song.
+    """
+    # Add a single song and mark it as ready
+    item_id = queue_manager.add_song(
+        test_users["alice"], "youtube:only_song", "Only Song", duration_seconds=180
+    )
+    queue_manager.update_download_status(
+        item_id, QueueManager.STATUS_READY, download_path="/path/to/only_song.mp4"
+    )
+
+    # Before playing: should find the song
+    first_song = queue_manager.get_ready_song_at_offset(None, 0)
+    assert first_song is not None
+    assert first_song.id == item_id
+
+    # Simulate song finished playing - mark it as played
+    queue_manager.mark_played(item_id)
+
+    # After playing: should NOT find the song anymore
+    # This is the key assertion - if this fails, the bug is present
+    next_song = queue_manager.get_ready_song_at_offset(None, 0)
+    assert next_song is None, (
+        "get_ready_song_at_offset should return None when only song has been played, "
+        "otherwise it will cause infinite loop behavior"
+    )
+
+
+def test_get_ready_song_at_offset_with_mixed_played_and_unplayed(queue_manager, test_users):
+    """Test that get_ready_song_at_offset correctly navigates with played and unplayed songs."""
+    # Add three songs
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    id3 = queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
+
+    # Mark all as ready
+    queue_manager.update_download_status(
+        id1, QueueManager.STATUS_READY, download_path="/path/to/vid1.mp4"
+    )
+    queue_manager.update_download_status(
+        id2, QueueManager.STATUS_READY, download_path="/path/to/vid2.mp4"
+    )
+    queue_manager.update_download_status(
+        id3, QueueManager.STATUS_READY, download_path="/path/to/vid3.mp4"
+    )
+
+    # Simulate first song finished - mark as played
+    queue_manager.mark_played(id1)
+
+    # Get first ready unplayed song (should be song 2, not song 1)
+    first_unplayed = queue_manager.get_ready_song_at_offset(None, 0)
+    assert first_unplayed is not None
+    assert first_unplayed.id == id2, "Should return first unplayed ready song"
+
+    # Get next after song 1 (which is played)
+    # Should return song 2 (the next unplayed one)
+    next_after_1 = queue_manager.get_ready_song_at_offset(id1, +1)
+    assert next_after_1 is not None
+    assert next_after_1.id == id2
+
+    # Get next after song 2
+    next_after_2 = queue_manager.get_ready_song_at_offset(id2, +1)
+    assert next_after_2 is not None
+    assert next_after_2.id == id3
+
+    # Mark song 2 as played
+    queue_manager.mark_played(id2)
+
+    # Now get first ready unplayed (should be song 3)
+    first_unplayed_now = queue_manager.get_ready_song_at_offset(None, 0)
+    assert first_unplayed_now is not None
+    assert first_unplayed_now.id == id3
+
+    # Mark song 3 as played
+    queue_manager.mark_played(id3)
+
+    # All songs played - should return None
+    no_songs = queue_manager.get_ready_song_at_offset(None, 0)
+    assert no_songs is None
