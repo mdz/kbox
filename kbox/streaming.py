@@ -71,6 +71,7 @@ class StreamingController:
         self.text_overlay = None
         self._notification_timer = None
         self._notification_lock = None
+        self._qr_image_path: Optional[str] = None  # Track QR image path for reinit
 
         # Interstitial state
         self._is_interstitial = False  # True when displaying interstitial (not a song)
@@ -690,6 +691,11 @@ class StreamingController:
         # Recreate the pipeline with fresh config
         self._create_persistent_pipeline()
 
+        # Re-apply QR overlay image if we had one
+        if self._qr_image_path and self.qr_overlay:
+            self.logger.debug("Re-applying QR overlay after pipeline reinit")
+            self.update_qr_overlay(self._qr_image_path)
+
         # Restore display if there was an interstitial showing
         if was_showing_interstitial and current_file_backup:
             try:
@@ -905,6 +911,9 @@ class StreamingController:
         Args:
             image_path: Path to the QR code PNG image
         """
+        # Always store the path so we can re-apply after pipeline reinit
+        self._qr_image_path = image_path
+
         if not self.qr_overlay:
             self.logger.debug("QR overlay not available")
             return
