@@ -22,7 +22,8 @@ import {
     moveUpQueueItem, moveDownQueueItem, removeOwnQueueItem, clearQueue
 } from './queue.js';
 import {
-    search, showAddSongModal, cancelAddToQueue, confirmAddToQueue, setupSearchHandlers
+    search, showAddSongModal, cancelAddToQueue, confirmAddToQueue, setupSearchHandlers,
+    getSuggestions
 } from './search.js';
 import {
     togglePlayPause, stopPlayback, playback, restartSong, seekForward, seekBackward
@@ -69,6 +70,7 @@ window.search = search;
 window.showAddSongModal = showAddSongModal;
 window.cancelAddToQueue = cancelAddToQueue;
 window.confirmAddToQueue = confirmAddToQueue;
+window.getSuggestions = getSuggestions;
 
 // Playback
 window.togglePlayPause = togglePlayPause;

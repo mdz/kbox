@@ -18,6 +18,7 @@ from ..config_manager import ConfigManager
 from ..playback import PlaybackController
 from ..queue import DuplicateSongError, QueueManager
 from ..streaming import StreamingController
+from ..suggestions import SuggestionEngine
 from ..user import UserManager
 from ..video_library import VideoLibrary
 
@@ -107,6 +108,11 @@ def get_history_manager(request: Request):
     return request.app.state.history_manager
 
 
+def get_suggestion_engine(request: Request) -> SuggestionEngine:
+    """Get SuggestionEngine from app state."""
+    return request.app.state.suggestion_engine
+
+
 def check_operator(request: Request) -> bool:
     """
     Check if user is authenticated as operator.
@@ -121,6 +127,7 @@ def create_app(
     config_manager: ConfigManager,
     user_manager: UserManager,
     history_manager,  # HistoryManager - avoid circular import
+    suggestion_engine: Optional[SuggestionEngine] = None,
     streaming_controller: Optional[StreamingController] = None,
     access_token: Optional[str] = None,
     session_secret: Optional[str] = None,
@@ -134,6 +141,8 @@ def create_app(
         playback_controller: PlaybackController instance
         config_manager: ConfigManager instance
         user_manager: UserManager instance
+        history_manager: HistoryManager instance
+        suggestion_engine: SuggestionEngine instance (optional, for AI suggestions)
         streaming_controller: StreamingController instance (optional, for overlays)
         access_token: Access token for guest authentication (if None, auth disabled)
         session_secret: Secret key for session cookies (defaults to random if not provided)
@@ -155,6 +164,7 @@ def create_app(
     app.state.config_manager = config_manager
     app.state.user_manager = user_manager
     app.state.history_manager = history_manager
+    app.state.suggestion_engine = suggestion_engine
     app.state.streaming_controller = streaming_controller
     app.state.access_token = access_token
 
@@ -494,6 +504,32 @@ def create_app(
         """Search for videos across all configured sources."""
         results = video_lib.search(q, max_results)
         return {"results": results}
+
+    @app.get("/api/suggestions")
+    async def get_suggestions(
+        user_id: str,
+        max_results: int = 8,
+        suggestion_engine: SuggestionEngine = Depends(get_suggestion_engine),
+    ):
+        """
+        Get AI-powered song suggestions for a user.
+
+        Suggestions are based on user's history, current queue, and operator theme.
+        """
+        if not suggestion_engine:
+            raise HTTPException(
+                status_code=503,
+                detail="Suggestions not available. Configure AI settings first.",
+            )
+
+        if not suggestion_engine.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="AI not configured. Set up an AI model in Settings to get suggestions.",
+            )
+
+        results = suggestion_engine.get_suggestions(user_id, max_results)
+        return {"results": results, "source": "ai"}
 
     @app.get("/api/video/{video_id:path}")
     async def get_video_info(

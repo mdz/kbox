@@ -16,8 +16,9 @@ CONFIG_GROUPS = {
     "audio": {"label": "Audio Setup", "order": 1},
     "video": {"label": "Video & Display", "order": 2},
     "overlays": {"label": "Video Overlays", "order": 3},
-    "security": {"label": "Security", "order": 4},
-    "api": {"label": "API & Storage", "order": 5},
+    "suggestions": {"label": "AI Suggestions", "order": 4},
+    "security": {"label": "Security", "order": 5},
+    "api": {"label": "API & Storage", "order": 6},
 }
 
 # Schema defining metadata for each editable configuration key
@@ -106,6 +107,34 @@ CONFIG_SCHEMA = {
         "step": 1,
         "display_format": "seconds",
     },
+    # AI Suggestions
+    "suggestion_theme": {
+        "group": "suggestions",
+        "label": "Party Theme",
+        "description": "Theme for song suggestions (e.g., '80s dance party', 'rock ballads', 'Disney'). Leave empty for general suggestions.",
+        "control": "text",
+        "placeholder": "80s hits, rock classics, Disney...",
+    },
+    "llm_model": {
+        "group": "suggestions",
+        "label": "AI Model",
+        "description": "LLM model for suggestions. Examples: gpt-4o-mini, claude-3-haiku-20240307, gemini/gemini-1.5-flash, ollama/llama3.2",
+        "control": "text",
+        "placeholder": "gpt-4o-mini",
+    },
+    "llm_api_key": {
+        "group": "suggestions",
+        "label": "AI API Key",
+        "description": "API key for the AI provider (OpenAI, Anthropic, Google). Not needed for Ollama.",
+        "control": "password",
+    },
+    "llm_base_url": {
+        "group": "suggestions",
+        "label": "AI Base URL (Optional)",
+        "description": "Custom API endpoint. Use for Ollama (http://localhost:11434) or other self-hosted models.",
+        "control": "text",
+        "placeholder": "http://localhost:11434",
+    },
     # Security
     "operator_pin": {
         "group": "security",
@@ -189,6 +218,11 @@ class ConfigManager:
         "overlay_qr_size_percent": "10",  # QR size as percentage of video height (default 10%)
         # Interstitial settings
         "transition_duration_seconds": "5",  # Duration of transition screen between songs
+        # AI Suggestions
+        "suggestion_theme": "",  # Party theme for suggestions (e.g., "80s dance party")
+        "llm_model": "",  # LLM model (e.g., "gpt-4o-mini", "ollama/llama3.2")
+        "llm_api_key": "",  # API key for cloud LLM providers
+        "llm_base_url": "",  # Custom API endpoint (for Ollama or self-hosted)
     }
 
     # Editable keys are derived from CONFIG_SCHEMA
