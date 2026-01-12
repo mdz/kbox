@@ -234,6 +234,11 @@ def create_app(
     # Templates
     templates = Jinja2Templates(directory="kbox/web/templates")
 
+    # Static files (CSS, JS)
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/static", StaticFiles(directory="kbox/web/static"), name="static")
+
     # Queue endpoints
     @app.get("/api/queue")
     async def get_queue(
