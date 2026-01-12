@@ -230,7 +230,7 @@ class ConfigManager:
         "transition_duration_seconds": "5",  # Duration of transition screen between songs
         # AI Suggestions
         "suggestion_theme": "",  # Party theme for suggestions (e.g., "80s dance party")
-        "llm_model": "",  # LLM model (e.g., "gpt-4o-mini", "ollama/llama3.2")
+        "llm_model": "gpt-4o-mini",  # LLM model (e.g., "gpt-4o-mini", "ollama/llama3.2")
         "llm_api_key": "",  # API key for cloud LLM providers
         "llm_base_url": "",  # Custom API endpoint (for Ollama or self-hosted)
         "llm_temperature": "0.9",  # AI creativity (0.0-1.5)
