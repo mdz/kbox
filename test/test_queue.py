@@ -106,6 +106,40 @@ def test_add_multiple_songs(queue_manager, test_users):
     assert queue[2].user_id == CHARLIE_ID
 
 
+def test_add_duplicate_song_rejected(queue_manager, test_users):
+    """Test that adding the same song twice is rejected."""
+    from kbox.queue import DuplicateSongError
+
+    # Add a song
+    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+
+    # Try to add the same song again (same video_id)
+    with pytest.raises(DuplicateSongError):
+        queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
+
+    # Queue should still have only one song
+    queue = queue_manager.get_queue()
+    assert len(queue) == 1
+
+
+def test_add_same_song_after_played_allowed(queue_manager, test_users):
+    """Test that a song can be re-added after it's been played."""
+
+    # Add a song
+    item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+
+    # Mark it as played
+    queue_manager.mark_played(item_id)
+
+    # Now adding the same song again should work
+    item_id2 = queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
+    assert item_id2 is not None
+
+    # Queue should have two items (one played, one unplayed)
+    queue = queue_manager.get_queue()
+    assert len(queue) == 2
+
+
 def test_remove_song(queue_manager, test_users):
     """Test removing a song from the queue."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")

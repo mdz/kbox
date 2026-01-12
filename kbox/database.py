@@ -1036,3 +1036,20 @@ class QueueRepository:
             return self._row_to_queue_item(result)
         finally:
             conn.close()
+
+    def is_video_in_queue(self, video_id: str) -> bool:
+        """Check if a video is already in the queue (unplayed only)."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1 FROM queue_items
+                WHERE video_id = ? AND played_at IS NULL
+                LIMIT 1
+            """,
+                (video_id,),
+            )
+            return cursor.fetchone() is not None
+        finally:
+            conn.close()

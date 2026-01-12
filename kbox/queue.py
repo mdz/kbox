@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING, List, Optional
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
+
+class DuplicateSongError(Exception):
+    """Raised when attempting to add a song that's already in the queue."""
+
+    pass
+
+
 if TYPE_CHECKING:
     from .video_library import VideoLibrary
 
@@ -199,7 +206,14 @@ class QueueManager:
 
         Returns:
             ID of the created queue item
+
+        Raises:
+            DuplicateSongError: If the song is already in the queue
         """
+        # Check for duplicate
+        if self.repository.is_video_in_queue(video_id):
+            raise DuplicateSongError(f"Song is already in the queue: {title}")
+
         metadata = SongMetadata(
             title=title,
             duration_seconds=duration_seconds,
