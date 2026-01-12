@@ -202,6 +202,9 @@ class SuggestionEngine:
 
         self.logger.debug("Calling LLM for suggestions: model=%s", model)
 
+        # Drop unsupported params (e.g., reasoning_effort for non-reasoning models)
+        litellm.drop_params = True
+
         try:
             response = litellm.completion(**kwargs)
             message = response.choices[0].message
