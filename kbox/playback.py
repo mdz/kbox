@@ -527,7 +527,7 @@ class PlaybackController:
         """
         Stop current playback and switch to a different song.
 
-        Helper method for navigation operations (previous, bump_down, etc).
+        Helper method for navigation operations (previous, etc).
         Assumes lock is already held.
 
         Args:
@@ -569,24 +569,23 @@ class PlaybackController:
             # Switch to the previous song
             return self._switch_to_song(prev_song)
 
-    def bump_down(self, item_id: int) -> Dict[str, Any]:
+    def move_down(self, item_id: int) -> Dict[str, Any]:
         """
-        Bump a song down one position in the queue.
+        Move a song down one position in the queue.
 
-        If the song is currently playing, skip to the next song.
-        When that song completes, the bumped song will play.
+        Does not affect the currently playing song.
 
         Args:
-            item_id: ID of the queue item to bump down
+            item_id: ID of the queue item to move down
 
         Returns:
             Dictionary with status information:
-            - status: 'bumped_down', 'bumped_down_and_skipped', or 'already_at_end'
+            - status: 'moved_down' or 'already_at_end'
             - old_position: Original position
             - new_position: New position
         """
         with self.lock:
-            self.logger.info("Bumping down song %s", item_id)
+            self.logger.info("Moving down song %s", item_id)
 
             # Get current item
             item = self.queue_manager.get_item(item_id)
@@ -608,52 +607,62 @@ class PlaybackController:
                 self.logger.info("Song %s already at end of queue", item_id)
                 return {"status": "already_at_end", "position": current_position}
 
-            # Check if this is the currently playing song
-            is_currently_playing = (
-                self.current_song_id is not None and self.current_song_id == item_id
-            )
+            # Reorder the song
+            if not self.queue_manager.reorder_song(item_id, new_position):
+                self.logger.error("Failed to reorder song %s", item_id)
+                return {"status": "error"}
+
+            return {
+                "status": "moved_down",
+                "old_position": current_position,
+                "new_position": new_position,
+            }
+
+    def move_up(self, item_id: int) -> Dict[str, Any]:
+        """
+        Move a song up one position in the queue.
+
+        Does not affect the currently playing song.
+
+        Args:
+            item_id: ID of the queue item to move up
+
+        Returns:
+            Dictionary with status information:
+            - status: 'moved_up' or 'already_at_start'
+            - old_position: Original position
+            - new_position: New position
+        """
+        with self.lock:
+            self.logger.info("Moving up song %s", item_id)
+
+            # Get current item
+            item = self.queue_manager.get_item(item_id)
+            if not item:
+                self.logger.warning("Song %s not found", item_id)
+                return {"status": "not_found"}
+
+            current_position = item.position
+
+            # Get min position
+            queue = self.queue_manager.get_queue()
+            min_position = min((q.position for q in queue), default=1)
+
+            # Calculate new position (up 1, but not past the start)
+            new_position = max(current_position - 1, min_position)
+
+            if new_position == current_position:
+                # Already at the start
+                self.logger.info("Song %s already at start of queue", item_id)
+                return {"status": "already_at_start", "position": current_position}
 
             # Reorder the song
             if not self.queue_manager.reorder_song(item_id, new_position):
                 self.logger.error("Failed to reorder song %s", item_id)
                 return {"status": "error"}
 
-            # If currently playing, play the song that moved up to take its place
-            if is_currently_playing:
-                self.logger.info("Bumped song was playing, playing song that moved up")
-
-                # Find the song now at the old position (the one that moved up)
-                # After reordering, the song that was at position+1 is now at position
-                song_at_old_position = None
-                updated_queue = self.queue_manager.get_queue()
-                for song in updated_queue:
-                    if song.position == current_position:
-                        song_at_old_position = song
-                        break
-
-                if (
-                    song_at_old_position
-                    and song_at_old_position.download_status == QueueManager.STATUS_READY
-                ):
-                    # Play the song that moved up
-                    self._switch_to_song(song_at_old_position)
-                    return {
-                        "status": "bumped_down_and_skipped",
-                        "old_position": current_position,
-                        "new_position": new_position,
-                    }
-                else:
-                    # No ready song at that position, stop playback
-                    self.logger.info("No ready song to play after bump down, going idle")
-                    self._stop_internal()
-                    return {
-                        "status": "bumped_down_and_stopped",
-                        "old_position": current_position,
-                        "new_position": new_position,
-                    }
-
             return {
-                "status": "bumped_down",
+                "status": "moved_up",
                 "old_position": current_position,
                 "new_position": new_position,
             }

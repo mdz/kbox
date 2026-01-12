@@ -87,7 +87,8 @@ def mock_playback():
     # Movement operations return bool
     playback.move_to_next.return_value = True
     playback.move_to_end.return_value = True
-    playback.bump_down.return_value = True
+    playback.move_down.return_value = True
+    playback.move_up.return_value = True
     # Playback control operations return bool
     playback.play.return_value = False  # False = no songs to play
     playback.pause.return_value = True
@@ -428,8 +429,8 @@ class TestQueueEndpoints:
         response = client.post(f"/api/queue/{item_id}/move-to-end")
         assert response.status_code == 403
 
-    def test_bump_down_requires_operator(self, client, alice):
-        """POST /api/queue/{id}/bump-down - requires operator."""
+    def test_move_down_requires_operator(self, client, alice):
+        """POST /api/queue/{id}/move-down - requires operator."""
         add_response = client.post(
             "/api/queue",
             json={
@@ -440,7 +441,22 @@ class TestQueueEndpoints:
         )
         item_id = add_response.json()["id"]
 
-        response = client.post(f"/api/queue/{item_id}/bump-down")
+        response = client.post(f"/api/queue/{item_id}/move-down")
+        assert response.status_code == 403
+
+    def test_move_up_requires_operator(self, client, alice):
+        """POST /api/queue/{id}/move-up - requires operator."""
+        add_response = client.post(
+            "/api/queue",
+            json={
+                "user_id": ALICE_ID,
+                "video_id": "youtube:test123",
+                "title": "Test Song",
+            },
+        )
+        item_id = add_response.json()["id"]
+
+        response = client.post(f"/api/queue/{item_id}/move-up")
         assert response.status_code == 403
 
 

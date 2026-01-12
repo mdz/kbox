@@ -1892,12 +1892,12 @@
             }
         }
         
-        // Bump down in queue (move 3 positions down) - operator only
-        async function bumpDownQueueItem() {
+        // Move up in queue - operator only
+        async function moveUpQueueItem() {
             if (!currentQueueItemToEdit) return;
             
             try {
-                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/bump-down`, {method: 'POST'});
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/move-up`, {method: 'POST'});
                 if (response.ok) {
                     cancelEditQueueItem();
                     loadQueue();
@@ -1906,7 +1906,25 @@
                     alert('Error: ' + error.detail);
                 }
             } catch (e) {
-                alert('Error bumping song down');
+                alert('Error moving song up');
+            }
+        }
+        
+        // Move down in queue - operator only
+        async function moveDownQueueItem() {
+            if (!currentQueueItemToEdit) return;
+            
+            try {
+                const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}/move-down`, {method: 'POST'});
+                if (response.ok) {
+                    cancelEditQueueItem();
+                    loadQueue();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.detail);
+                }
+            } catch (e) {
+                alert('Error moving song down');
             }
         }
         
