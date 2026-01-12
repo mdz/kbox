@@ -249,6 +249,31 @@ class TestQueueEndpoints:
         assert response.status_code == 400
         assert "User not found" in response.json()["detail"]
 
+    def test_add_duplicate_song_returns_409(self, client, alice):
+        """POST /api/queue - duplicate song returns 409 Conflict."""
+        # Add a song first
+        response = client.post(
+            "/api/queue",
+            json={
+                "user_id": ALICE_ID,
+                "video_id": "youtube:duplicate123",
+                "title": "Duplicate Song",
+            },
+        )
+        assert response.status_code == 200
+
+        # Try to add the same song again
+        response = client.post(
+            "/api/queue",
+            json={
+                "user_id": ALICE_ID,
+                "video_id": "youtube:duplicate123",
+                "title": "Duplicate Song Again",
+            },
+        )
+        assert response.status_code == 409
+        assert "already in the queue" in response.json()["detail"]
+
     def test_get_queue_with_songs(self, client, alice, bob):
         """GET /api/queue - queue with songs."""
         # Add songs

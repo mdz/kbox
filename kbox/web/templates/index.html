@@ -2095,7 +2095,17 @@
                     loadQueue();
                     currentVideoToAdd = null;
                 } else {
-                    alert('Error adding song to queue');
+                    // Try to get error detail from response
+                    let errorMessage = 'Error adding song to queue';
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.detail) {
+                            errorMessage = errorData.detail;
+                        }
+                    } catch (parseError) {
+                        // Ignore parse errors, use default message
+                    }
+                    alert(errorMessage);
                 }
             } catch (e) {
                 alert('Error adding song to queue');
