@@ -197,14 +197,29 @@ class SuggestionEngine:
 
         try:
             response = litellm.completion(**kwargs)
-            content = response.choices[0].message.content
+            message = response.choices[0].message
+            content = message.content
+
+            # Log the raw response for debugging
+            if not content:
+                self.logger.warning(
+                    "LLM returned empty content. Model: %s, finish_reason: %s, message: %s",
+                    model,
+                    response.choices[0].finish_reason,
+                    message,
+                )
+                raise SuggestionError("AI model returned empty response. Try a different model.")
+
+            self.logger.debug("LLM response content: %s", content[:200] if content else None)
 
             # Parse JSON from response
             return self._parse_llm_response(content)
 
+        except SuggestionError:
+            raise
         except Exception as e:
-            self.logger.error("LLM call failed: %s", e)
-            return []
+            self.logger.error("LLM call failed: %s", e, exc_info=True)
+            raise SuggestionError(f"AI request failed: {e}")
 
     def _build_prompt(self, context: Dict[str, Any], count: int) -> str:
         """Build the prompt for the LLM."""
@@ -281,9 +296,19 @@ class SuggestionEngine:
                         suggestions.append(
                             {"title": str(item["title"]), "artist": str(item["artist"])}
                         )
-                return suggestions
+                if suggestions:
+                    return suggestions
+                else:
+                    self.logger.warning(
+                        "LLM response was valid JSON but contained no valid suggestions: %s",
+                        content[:500],
+                    )
+            else:
+                self.logger.warning("LLM response was not a JSON array: %s", content[:500])
         except json.JSONDecodeError as e:
-            self.logger.warning("Failed to parse LLM response as JSON: %s", e)
+            self.logger.warning(
+                "Failed to parse LLM response as JSON: %s. Content: %s", e, content[:500]
+            )
 
         return []
 
