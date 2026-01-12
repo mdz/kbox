@@ -187,7 +187,7 @@ class SuggestionEngine:
                 {"role": "user", "content": prompt},
             ],
             "temperature": temperature,
-            "max_tokens": 1000,
+            "max_tokens": 4096,
         }
 
         if base_url:
@@ -201,13 +201,18 @@ class SuggestionEngine:
             content = message.content
 
             # Log the raw response for debugging
+            finish_reason = response.choices[0].finish_reason
             if not content:
                 self.logger.warning(
                     "LLM returned empty content. Model: %s, finish_reason: %s, message: %s",
                     model,
-                    response.choices[0].finish_reason,
+                    finish_reason,
                     message,
                 )
+                if finish_reason == "length":
+                    raise SuggestionError(
+                        "AI response was cut off (token limit). Try a different model."
+                    )
                 raise SuggestionError("AI model returned empty response. Try a different model.")
 
             self.logger.debug("LLM response content: %s", content[:200] if content else None)
