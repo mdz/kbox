@@ -135,6 +135,16 @@ CONFIG_SCHEMA = {
         "control": "text",
         "placeholder": "http://localhost:11434",
     },
+    "llm_temperature": {
+        "group": "suggestions",
+        "label": "AI Creativity",
+        "description": "How creative/random the AI suggestions are. Lower = more predictable, higher = more adventurous.",
+        "control": "slider",
+        "min": 0,
+        "max": 1.5,
+        "step": 0.1,
+        "display_format": "decimal",
+    },
     # Security
     "operator_pin": {
         "group": "security",
@@ -223,6 +233,7 @@ class ConfigManager:
         "llm_model": "",  # LLM model (e.g., "gpt-4o-mini", "ollama/llama3.2")
         "llm_api_key": "",  # API key for cloud LLM providers
         "llm_base_url": "",  # Custom API endpoint (for Ollama or self-hosted)
+        "llm_temperature": "0.9",  # AI creativity (0.0-1.5)
     }
 
     # Editable keys are derived from CONFIG_SCHEMA

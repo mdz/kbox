@@ -156,6 +156,7 @@ class SuggestionEngine:
         model = self.config.get("llm_model")
         api_key = self.config.get("llm_api_key")
         base_url = self.config.get("llm_base_url")
+        temperature = self.config.get_float("llm_temperature", 0.9)
 
         # Configure litellm
         if api_key:
@@ -183,7 +184,7 @@ class SuggestionEngine:
                 },
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.9,  # Higher creativity for diverse suggestions
+            "temperature": temperature,
             "max_tokens": 1000,
         }
 
