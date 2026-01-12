@@ -156,8 +156,7 @@ class KboxServer:
 
         logger.info("=" * 60)
         logger.info("kbox is running!")
-        logger.info("Web UI: %s", web_url)
-        logger.info("API: %s/api", web_url)
+        logger.info("Web UI: %s", qr_url)
         logger.info("=" * 60)
 
         # Use uvicorn Server API for better control over shutdown
