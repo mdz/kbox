@@ -18,6 +18,7 @@ from kbox.database import Database
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
+from kbox.suggestions import SuggestionEngine, SuggestionError
 from kbox.user import UserManager
 from kbox.video_library import VideoLibrary
 from kbox.web.server import create_app
@@ -139,12 +140,33 @@ def mock_video_library():
 
 
 @pytest.fixture
-def app_components(temp_db, temp_cache_dir, mock_streaming, mock_video_library, mock_playback):
+def mock_suggestion_engine():
+    """Create a mock SuggestionEngine for API testing.
+
+    API tests focus on the HTTP layer, not suggestion logic.
+    """
+    engine = Mock(spec=SuggestionEngine)
+
+    # Default: not configured
+    engine.is_configured.return_value = False
+    engine.get_suggestions.side_effect = SuggestionError("AI suggestions not configured")
+
+    return engine
+
+
+@pytest.fixture
+def app_components(
+    temp_db,
+    temp_cache_dir,
+    mock_streaming,
+    mock_video_library,
+    mock_playback,
+    mock_suggestion_engine,
+):
     """Create all app components with mocked dependencies.
 
-    Uses mock playback and video_library since API tests focus on the HTTP layer,
-    not playback or video logic. Only test_playback and test_integration use the
-    real controllers.
+    Uses mock playback, video_library, and suggestion_engine since API tests
+    focus on the HTTP layer, not business logic.
     """
     config_manager = ConfigManager(temp_db)
     config_manager.set("youtube_api_key", "test_key")
@@ -164,6 +186,7 @@ def app_components(temp_db, temp_cache_dir, mock_streaming, mock_video_library, 
         "streaming": mock_streaming,
         "playback": mock_playback,
         "history": history_manager,
+        "suggestion_engine": mock_suggestion_engine,
     }
 
     # Cleanup
@@ -180,6 +203,7 @@ def client(app_components):
         config_manager=app_components["config"],
         user_manager=app_components["user"],
         history_manager=app_components["history"],
+        suggestion_engine=app_components["suggestion_engine"],
         streaming_controller=app_components["streaming"],
     )
     return TestClient(app)
@@ -867,3 +891,80 @@ class TestGuestAuthentication:
 
         response = client.get("/api/queue")
         assert response.status_code == 200
+
+
+# =============================================================================
+# Suggestions Endpoints
+# =============================================================================
+
+
+class TestSuggestionsEndpoints:
+    """Tests for AI suggestion endpoints.
+
+    Uses mock SuggestionEngine since API tests focus on HTTP layer.
+    """
+
+    def test_suggestions_returns_503_when_not_configured(self, client, alice):
+        """GET /api/suggestions - returns 503 when AI not configured."""
+        # Default mock raises SuggestionError("not configured")
+        response = client.get(f"/api/suggestions?user_id={ALICE_ID}")
+        assert response.status_code == 503
+        data = response.json()
+        assert "not configured" in data["detail"].lower()
+
+    def test_suggestions_requires_user_id(self, client):
+        """GET /api/suggestions - requires user_id parameter."""
+        response = client.get("/api/suggestions")
+        assert response.status_code == 422  # Validation error
+
+    def test_suggestions_returns_results_when_configured(self, client, app_components):
+        """GET /api/suggestions - returns suggestions when AI is configured."""
+        # Configure mock to return results
+        app_components["suggestion_engine"].get_suggestions.side_effect = None
+        app_components["suggestion_engine"].get_suggestions.return_value = [
+            {
+                "id": "youtube:result1",
+                "title": "Suggested Song Karaoke",
+                "channel": "Karaoke Channel",
+                "thumbnail": "https://example.com/thumb.jpg",
+            },
+            {
+                "id": "youtube:result2",
+                "title": "Another Song Karaoke",
+                "channel": "Karaoke Channel",
+                "thumbnail": "https://example.com/thumb2.jpg",
+            },
+        ]
+
+        response = client.get(f"/api/suggestions?user_id={ALICE_ID}")
+        assert response.status_code == 200
+        data = response.json()
+        assert "results" in data
+        assert data["source"] == "ai"
+        assert len(data["results"]) == 2
+
+    def test_suggestions_passes_max_results(self, client, app_components):
+        """GET /api/suggestions - passes max_results to engine."""
+        # Configure mock to return results
+        app_components["suggestion_engine"].get_suggestions.side_effect = None
+        app_components["suggestion_engine"].get_suggestions.return_value = [
+            {"id": "youtube:vid1", "title": "Song 1", "channel": "Test"},
+        ]
+
+        response = client.get(f"/api/suggestions?user_id={ALICE_ID}&max_results=5")
+        assert response.status_code == 200
+
+        # Verify max_results was passed to engine
+        app_components["suggestion_engine"].get_suggestions.assert_called_once_with(ALICE_ID, 5)
+
+    def test_suggestions_handles_engine_error(self, client, app_components):
+        """GET /api/suggestions - returns 503 on engine error."""
+        # Configure mock to raise error
+        app_components["suggestion_engine"].get_suggestions.side_effect = SuggestionError(
+            "Could not find karaoke videos"
+        )
+
+        response = client.get(f"/api/suggestions?user_id={ALICE_ID}")
+        assert response.status_code == 503
+        data = response.json()
+        assert "could not find" in data["detail"].lower()

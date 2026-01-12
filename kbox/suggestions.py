@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
     from .history import HistoryManager
     from .queue import QueueManager
     from .video_library import VideoLibrary
+
+# Type alias for LLM completion functions (litellm.completion signature)
+CompletionFn = Callable[..., Any]
 
 
 class SuggestionError(Exception):
@@ -33,6 +36,7 @@ class SuggestionEngine:
         history_manager: "HistoryManager",
         queue_manager: "QueueManager",
         video_library: "VideoLibrary",
+        completion_fn: Optional[CompletionFn] = None,
     ):
         """
         Initialize SuggestionEngine.
@@ -42,12 +46,14 @@ class SuggestionEngine:
             history_manager: For retrieving user's song history
             queue_manager: For getting current queue context
             video_library: For searching songs on YouTube
+            completion_fn: LLM completion function (defaults to litellm.completion)
         """
         self.config = config_manager
         self.history = history_manager
         self.queue = queue_manager
         self.video_library = video_library
         self.logger = logging.getLogger(__name__)
+        self._completion_fn = completion_fn
 
     def is_configured(self) -> bool:
         """Check if AI suggestions are properly configured."""
@@ -154,8 +160,6 @@ class SuggestionEngine:
 
         Returns list of {"title": ..., "artist": ...} dicts.
         """
-        import litellm
-
         # Build the prompt
         prompt = self._build_prompt(context, count)
 
@@ -165,15 +169,24 @@ class SuggestionEngine:
         base_url = self.config.get("llm_base_url")
         temperature = self.config.get_float("llm_temperature", 0.9)
 
-        # Configure litellm
-        if api_key:
-            # Set the appropriate API key based on model prefix
-            if model.startswith("claude") or model.startswith("anthropic"):
-                litellm.anthropic_key = api_key
-            elif model.startswith("gemini"):
-                litellm.gemini_key = api_key
-            else:
-                litellm.openai_key = api_key
+        # Get completion function (use litellm if not injected)
+        completion_fn = self._completion_fn
+        if completion_fn is None:
+            import litellm
+
+            # Configure litellm
+            if api_key:
+                # Set the appropriate API key based on model prefix
+                if model.startswith("claude") or model.startswith("anthropic"):
+                    litellm.anthropic_key = api_key
+                elif model.startswith("gemini"):
+                    litellm.gemini_key = api_key
+                else:
+                    litellm.openai_key = api_key
+
+            # Drop unsupported params (e.g., reasoning_effort for non-reasoning models)
+            litellm.drop_params = True
+            completion_fn = litellm.completion
 
         # Build completion kwargs
         kwargs: Dict[str, Any] = {
@@ -202,11 +215,8 @@ class SuggestionEngine:
 
         self.logger.debug("Calling LLM for suggestions: model=%s", model)
 
-        # Drop unsupported params (e.g., reasoning_effort for non-reasoning models)
-        litellm.drop_params = True
-
         try:
-            response = litellm.completion(**kwargs)
+            response = completion_fn(**kwargs)
             message = response.choices[0].message
             content = message.content
 
