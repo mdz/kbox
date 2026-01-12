@@ -306,7 +306,8 @@ export function renderNowPlaying(statusData) {
 }
 
 // Render Up Next section
-export function renderUpNext(statusData, queue) {
+// nextSong is provided by the backend (single source of truth)
+export function renderUpNext(statusData, nextSong) {
     const section = document.getElementById('up-next-section');
     const content = document.getElementById('up-next-content');
     if (!section || !content) return;
@@ -314,11 +315,6 @@ export function renderUpNext(statusData, queue) {
     section.style.display = 'block';
     
     const currentSong = statusData.current_song;
-    
-    // Queue is already ordered by position. Find current song's index, everything after is upcoming.
-    const currentIndex = queue.findIndex(item => item.is_current);
-    const upcomingSongs = currentIndex >= 0 ? queue.slice(currentIndex + 1) : queue;
-    const nextSong = upcomingSongs[0];
     
     // Helper to format time
     function formatTime(secs) {
@@ -348,19 +344,6 @@ export function renderUpNext(statusData, queue) {
     } else {
         const timeStr = formatTime(currentRemaining);
         html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong> in ${timeStr}</span>`;
-    }
-    
-    // If next is not the current user, find when they ARE up
-    if (!isNextYou && currentSong) {
-        const userSongIndex = upcomingSongs.findIndex(item => item.user_id === userId);
-        if (userSongIndex > 0) {
-            // Sum durations of songs before user's turn
-            let timeUntilYou = currentRemaining;
-            for (let i = 0; i < userSongIndex; i++) {
-                timeUntilYou += upcomingSongs[i].duration_seconds || 0;
-            }
-            html += `<br><span style="font-size: 0.95em; color: #4aff6e;">🎤 You're up in ${formatTime(timeUntilYou)}</span>`;
-        }
     }
     
     content.innerHTML = html;

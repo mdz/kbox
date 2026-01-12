@@ -271,7 +271,20 @@ def create_app(
             item_dict["is_played"] = item.played_at is not None
             queue.append(item_dict)
 
-        return {"queue": queue, "current_song_id": current_song_id}
+        # Get the next song that will play (unplayed, ready, after current)
+        # This is the single source of truth - frontend should just display this
+        next_song_item = queue_mgr.get_ready_song_at_offset(current_song_id, 1)
+        next_song = None
+        if next_song_item:
+            next_song = {
+                "id": next_song_item.id,
+                "user_id": next_song_item.user_id,
+                "user_name": next_song_item.user_name,
+                "title": next_song_item.metadata.title,
+                "duration_seconds": next_song_item.metadata.duration_seconds,
+            }
+
+        return {"queue": queue, "current_song_id": current_song_id, "next_song": next_song}
 
     @app.get("/api/queue/settings/{video_id:path}")
     async def get_song_settings(
