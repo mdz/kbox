@@ -7,6 +7,9 @@ import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock } from './controls.js';
 
+// Track the currently displayed song to detect song changes
+let currentDisplayedSongId = null;
+
 // Update play/pause toggle button based on state
 export function updatePlayPauseButton(state) {
     // Update button in playback controls section
@@ -210,6 +213,7 @@ export function renderNowPlaying(statusData) {
     // If no current song, just show message
     if (!currentSong) {
         container.innerHTML = '<div style="text-align: center; color: #666; padding: 15px;">Nothing playing</div>';
+        currentDisplayedSongId = null;  // Reset so next song triggers full render
         return;
     }
     
@@ -219,9 +223,13 @@ export function renderNowPlaying(statusData) {
     // Check if we already have pitch controls rendered
     const hasExistingControls = document.getElementById('now-playing-lock-button') !== null;
     
-    // Only do full render if controls state changed
-    if (hasExistingControls && hasControlAccess) {
-        // Controls already exist - just update values and visibility without destroying buttons
+    // Determine song identity (use video_id if available, fall back to title)
+    const songId = currentSong.video_id || currentSong.title;
+    const songChanged = songId !== currentDisplayedSongId;
+    
+    // Only do partial update if controls exist, user has access, AND song hasn't changed
+    if (hasExistingControls && hasControlAccess && !songChanged) {
+        // Controls already exist for same song - just update values and visibility without destroying buttons
         updateNowPlayingSongInfo(currentSong, statusData.position_seconds);
         updateNowPlayingPitchValue(currentSong.pitch_semitones || 0);
         
@@ -237,6 +245,9 @@ export function renderNowPlaying(statusData) {
         }
         return;
     }
+    
+    // Track current song for future change detection
+    currentDisplayedSongId = songId;
     
     // Full render - show song info
     renderSongSettings('now-playing-content', {
