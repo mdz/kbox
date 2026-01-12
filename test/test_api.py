@@ -745,3 +745,84 @@ class TestWebUIEndpoint:
         response = client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
+
+
+# =============================================================================
+# Authentication Tests
+# =============================================================================
+
+
+class TestGuestAuthentication:
+    """Tests for guest token authentication."""
+
+    @pytest.fixture
+    def auth_app(self, app_components):
+        """Create app with access token enabled."""
+        return create_app(
+            queue_manager=app_components["queue"],
+            video_library=app_components["video_library"],
+            playback_controller=app_components["playback"],
+            config_manager=app_components["config"],
+            user_manager=app_components["user"],
+            history_manager=app_components["history"],
+            streaming_controller=app_components["streaming"],
+            access_token="test-secret-token-123",
+            session_secret="test-session-secret",
+        )
+
+    @pytest.fixture
+    def auth_client(self, auth_app):
+        """Create test client for auth-enabled app."""
+        return TestClient(auth_app)
+
+    def test_unauthenticated_request_returns_401(self, auth_client):
+        """Request without token returns 401 with friendly page."""
+        response = auth_client.get("/", follow_redirects=False)
+        assert response.status_code == 401
+        assert "Scan the QR code" in response.text
+
+    def test_unauthenticated_api_request_returns_401(self, auth_client):
+        """API request without token returns 401."""
+        response = auth_client.get("/api/queue", follow_redirects=False)
+        assert response.status_code == 401
+
+    def test_valid_token_redirects_and_sets_session(self, auth_client):
+        """Valid token in query param redirects to clean URL."""
+        response = auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
+        assert response.status_code == 302
+        # Redirect location may include host (http://testserver/) or just path (/)
+        assert response.headers["location"].endswith("/")
+
+    def test_valid_token_establishes_session(self, auth_client):
+        """After valid token, subsequent requests work via session."""
+        # First request with token - should redirect
+        response = auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
+        assert response.status_code == 302
+
+        # Follow the redirect (session cookie should be set)
+        response = auth_client.get("/", follow_redirects=False)
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    def test_invalid_token_returns_401(self, auth_client):
+        """Invalid token returns 401."""
+        response = auth_client.get("/?key=wrong-token", follow_redirects=False)
+        assert response.status_code == 401
+
+    def test_session_persists_for_api_calls(self, auth_client):
+        """Once authenticated, API calls work via session."""
+        # Authenticate first
+        auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
+
+        # API call should work
+        response = auth_client.get("/api/queue")
+        assert response.status_code == 200
+
+    def test_no_token_configured_allows_all_requests(self, client):
+        """When no access token configured, all requests allowed."""
+        # The default 'client' fixture has no access_token
+        response = client.get("/")
+        assert response.status_code == 200
+
+        response = client.get("/api/queue")
+        assert response.status_code == 200
