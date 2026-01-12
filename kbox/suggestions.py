@@ -18,6 +18,12 @@ if TYPE_CHECKING:
     from .video_library import VideoLibrary
 
 
+class SuggestionError(Exception):
+    """Raised when song suggestions cannot be generated."""
+
+    pass
+
+
 class SuggestionEngine:
     """Generates AI-powered song suggestions for karaoke guests."""
 
@@ -73,28 +79,24 @@ class SuggestionEngine:
             List of video dictionaries (same format as search results)
         """
         if not self.is_configured():
-            self.logger.warning("AI suggestions not configured")
-            return []
+            raise SuggestionError("AI suggestions not configured")
 
-        try:
-            # Build context for the LLM
-            context = self._build_context(user_id)
+        # Build context for the LLM
+        context = self._build_context(user_id)
 
-            # Generate suggestions via LLM
-            suggestions = self._generate_suggestions(context, max_results)
+        # Generate suggestions via LLM
+        suggestions = self._generate_suggestions(context, max_results)
 
-            if not suggestions:
-                self.logger.info("LLM returned no suggestions, using fallback")
-                return self._fallback_suggestions(max_results)
+        if not suggestions:
+            raise SuggestionError("AI returned no suggestions. Try adjusting the temperature.")
 
-            # Search YouTube for each suggestion
-            results = self._search_suggestions(suggestions, max_results)
+        # Search YouTube for each suggestion
+        results = self._search_suggestions(suggestions, max_results)
 
-            return results
+        if not results:
+            raise SuggestionError("Could not find karaoke videos for the suggested songs.")
 
-        except Exception as e:
-            self.logger.error("Error generating suggestions: %s", e, exc_info=True)
-            return self._fallback_suggestions(max_results)
+        return results
 
     def _build_context(self, user_id: str) -> Dict[str, Any]:
         """Build context dict for the LLM prompt."""
@@ -310,15 +312,3 @@ class SuggestionEngine:
                 self.logger.debug("Search failed for %s: %s", query, e)
 
         return results
-
-    def _fallback_suggestions(self, max_results: int) -> List[Dict[str, Any]]:
-        """Return generic popular karaoke songs as fallback."""
-        # Get theme if configured for a slightly personalized fallback
-        theme = self.config.get("suggestion_theme")
-        query = f"{theme} karaoke hits" if theme else "popular karaoke songs"
-
-        try:
-            return self.video_library.search(query, max_results=max_results)
-        except Exception as e:
-            self.logger.error("Fallback search failed: %s", e)
-            return []

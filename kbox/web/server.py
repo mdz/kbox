@@ -18,7 +18,7 @@ from ..config_manager import ConfigManager
 from ..playback import PlaybackController
 from ..queue import DuplicateSongError, QueueManager
 from ..streaming import StreamingController
-from ..suggestions import SuggestionEngine
+from ..suggestions import SuggestionEngine, SuggestionError
 from ..user import UserManager
 from ..video_library import VideoLibrary
 
@@ -522,14 +522,16 @@ def create_app(
                 detail="Suggestions not available. Configure AI settings first.",
             )
 
-        if not suggestion_engine.is_configured():
+        try:
+            results = suggestion_engine.get_suggestions(user_id, max_results)
+            return {"results": results, "source": "ai"}
+        except SuggestionError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except Exception as e:
+            logger.error("Unexpected error generating suggestions: %s", e, exc_info=True)
             raise HTTPException(
-                status_code=503,
-                detail="AI not configured. Set up an AI model in Settings to get suggestions.",
+                status_code=500, detail="An error occurred while generating suggestions."
             )
-
-        results = suggestion_engine.get_suggestions(user_id, max_results)
-        return {"results": results, "source": "ai"}
 
     @app.get("/api/video/{video_id:path}")
     async def get_video_info(
