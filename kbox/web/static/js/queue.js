@@ -58,16 +58,19 @@ export function showEditQueueItemModal(item) {
 
     // Save button is in the modal footer, handled separately
 
-    // Show/hide operator options based on operator status
+    // Show/hide options based on ownership and operator status
+    const ownerOptions = document.getElementById('edit-queue-item-owner-options');
     const operatorOptions = document.getElementById('edit-queue-item-operator-options');
-    const userOptions = document.getElementById('edit-queue-item-user-options');
     const isOwnSong = userId && item.user_id === userId;
 
-    if (isOperator) {
-        operatorOptions.style.display = 'block';
-        userOptions.style.display = 'none'; // Operators use the full operator controls
+    // Owner options visible to song owner OR operator (superset principle)
+    ownerOptions.style.display = (isOwnSong || isOperator) ? 'block' : 'none';
 
-        // Enable/disable "Jump to Song" button based on download status
+    // Operator-only options visible only to operators
+    operatorOptions.style.display = isOperator ? 'block' : 'none';
+
+    // Enable/disable "Jump to Song" button based on download status
+    if (isOperator) {
         const jumpToButton = document.getElementById('jump-to-button');
         if (jumpToButton) {
             if (item.download_status === 'ready') {
@@ -79,10 +82,6 @@ export function showEditQueueItemModal(item) {
                 jumpToButton.title = 'Song must be ready to play';
             }
         }
-    } else {
-        operatorOptions.style.display = 'none';
-        // Show user options (remove own song) only for their own songs
-        userOptions.style.display = isOwnSong ? 'block' : 'none';
     }
 
     // Show modal
@@ -194,7 +193,7 @@ export async function moveToEndQueueItem() {
     }
 }
 
-// Remove from queue (operator only)
+// Remove from queue (works for song owner or operator)
 export async function removeQueueItem() {
     if (!currentQueueItemToEdit) return;
 
@@ -205,7 +204,8 @@ export async function removeQueueItem() {
     if (!confirm(`Remove "${displayName}" from queue?`)) return;
 
     try {
-        const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {method: 'DELETE'});
+        // Always pass user_id - server allows if operator OR if user owns the song
+        const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
         if (response.ok) {
             cancelEditQueueItem();
             loadQueue();
@@ -254,29 +254,6 @@ export async function moveDownQueueItem() {
     }
 }
 
-// Remove own song from queue - for regular users
-export async function removeOwnQueueItem() {
-    if (!currentQueueItemToEdit) return;
-
-    // Use extracted song name if available, otherwise title
-    const displayName = (currentQueueItemToEdit.artist && currentQueueItemToEdit.song_name)
-        ? `${currentQueueItemToEdit.song_name} by ${currentQueueItemToEdit.artist}`
-        : currentQueueItemToEdit.title;
-    if (!confirm(`Remove "${displayName}" from queue?`)) return;
-
-    try {
-        const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
-        if (response.ok) {
-            cancelEditQueueItem();
-            loadQueue();
-        } else {
-            const error = await response.json();
-            alert('Error: ' + error.detail);
-        }
-    } catch (e) {
-        alert('Error removing song');
-    }
-}
 
 // Clear queue
 export async function clearQueue() {

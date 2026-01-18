@@ -19,7 +19,7 @@ import {
 import {
     loadQueue, showEditQueueItemModal, cancelEditQueueItem, saveQueueItemPitch,
     jumpToQueueItem, playNextQueueItem, moveToEndQueueItem, removeQueueItem,
-    moveUpQueueItem, moveDownQueueItem, removeOwnQueueItem, clearQueue
+    moveUpQueueItem, moveDownQueueItem, clearQueue
 } from './queue.js';
 import {
     search, showAddSongModal, cancelAddToQueue, confirmAddToQueue, setupSearchHandlers,
@@ -63,7 +63,6 @@ window.moveToEndQueueItem = moveToEndQueueItem;
 window.removeQueueItem = removeQueueItem;
 window.moveUpQueueItem = moveUpQueueItem;
 window.moveDownQueueItem = moveDownQueueItem;
-window.removeOwnQueueItem = removeOwnQueueItem;
 window.clearQueue = clearQueue;
 
 // Search
