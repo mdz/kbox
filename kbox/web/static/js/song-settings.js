@@ -68,9 +68,15 @@ export function renderSongSettings(containerId, songData, options = {}) {
            </div>`
         : '';
     
+    // Show original title as secondary if we have extracted metadata
+    const originalTitleHTML = songData.original_title 
+        ? `<div style="color: #666; font-size: 0.8em; margin-top: 4px; font-style: italic;">${songData.original_title}</div>`
+        : '';
+    
     const infoHTML = `
         <div>
             <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${songData.title || 'Unknown'}</div>
+            ${originalTitleHTML}
             ${showUser && userText ? `<div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${userText}</div>` : ''}
             <div style="color: #888; font-size: 0.85em;" id="${context}-progress">${position !== undefined && position !== null ? '' : 'Duration: '}${durationText}</div>
             ${progressBarHTML}

@@ -275,6 +275,8 @@ def create_app(
             item_dict["duration_seconds"] = item.metadata.duration_seconds
             item_dict["thumbnail_url"] = item.metadata.thumbnail_url
             item_dict["channel"] = item.metadata.channel
+            item_dict["artist"] = item.metadata.artist
+            item_dict["song_name"] = item.metadata.song_name
             item_dict["pitch_semitones"] = item.settings.pitch_semitones
             # Add UI flags
             item_dict["is_current"] = item.id == current_song_id
@@ -311,7 +313,7 @@ def create_app(
                     status_code=400, detail="User not found. Please refresh the page."
                 )
 
-            # Add song with opaque video_id
+            # Add song to queue (metadata extraction handled by QueueManager)
             item_id = queue_mgr.add_song(
                 user=user,
                 video_id=request_data.video_id,
@@ -322,7 +324,7 @@ def create_app(
                 pitch_semitones=request_data.pitch_semitones,
             )
 
-            # Show overlay notification via PlaybackController
+            # Show overlay notification
             playback = request.app.state.playback_controller
             if playback:
                 playback.show_notification(

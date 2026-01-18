@@ -249,9 +249,14 @@ export function renderNowPlaying(statusData) {
     // Track current song for future change detection
     currentDisplayedSongId = songId;
     
+    // Format display title: prefer extracted artist/song
+    const hasExtracted = currentSong.artist && currentSong.song_name;
+    const displayTitle = hasExtracted ? `${currentSong.song_name} by ${currentSong.artist}` : currentSong.title;
+    
     // Full render - show song info
     renderSongSettings('now-playing-content', {
-        title: currentSong.title,
+        title: displayTitle,
+        original_title: hasExtracted ? currentSong.title : null,  // Show original as secondary if we have extracted
         thumbnail_url: currentSong.thumbnail_url,
         user_id: currentSong.user_id,
         user_name: currentSong.user_name,
