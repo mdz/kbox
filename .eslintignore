@@ -1,9 +1,3 @@
 # Ignore Jinja2 template files - they contain server-side template syntax
 # that JavaScript linters don't understand
 kbox/web/templates/*.html
-
-
-
-
-
-

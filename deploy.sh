@@ -64,6 +64,3 @@ echo "  cd ${PI_PATH}"
 echo "  source .venv/bin/activate"
 echo "  pkill -f 'kbox.main' || true"
 echo "  python -m kbox.main"
-
-
-

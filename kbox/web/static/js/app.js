@@ -91,22 +91,22 @@ window.hideHistoryModal = hideHistoryModal;
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize user identity
     initializeUserIdentity();
-    
+
     // Check operator status
     checkOperatorStatus();
-    
+
     // Set up PIN input handler
     setupPinInputHandler();
-    
+
     // Update operator button
     updateOperatorButton();
-    
+
     // Set up search handlers
     setupSearchHandlers();
-    
+
     // Load queue on page load
     loadQueue();
-    
+
     // Auto-refresh queue every 1 second
     setInterval(loadQueue, 1000);
 });

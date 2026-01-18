@@ -23,5 +23,3 @@ docker-compose run --rm kbox python3 configure_api_key.py "$API_KEY"
 
 echo ""
 echo "✓ API key configured! You can now start kbox with: docker-compose up"
-
-

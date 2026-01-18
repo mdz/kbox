@@ -33,7 +33,7 @@ export async function registerUser(uid, displayName) {
 export function saveUserName() {
     const nameInput = document.getElementById('name-modal-input');
     if (!nameInput) return;
-    
+
     const name = nameInput.value.trim();
     if (!name) {
         alert('Please enter your name');
@@ -46,10 +46,10 @@ export function saveUserName() {
     }
     localStorage.setItem('kbox_user_name', userName);
     localStorage.setItem('kbox_user_id', userId);
-    
+
     // Register with server
     registerUser(userId, userName);
-    
+
     // Hide modal
     const modal = document.getElementById('name-modal');
     if (modal) {
@@ -104,9 +104,9 @@ export function cancelOperatorPin() {
 export async function submitOperatorPin() {
     const pinInput = document.getElementById('operator-pin-input');
     const messageDiv = document.getElementById('operator-pin-message');
-    
+
     if (!pinInput) return;
-    
+
     const pin = pinInput.value.trim();
     if (!pin) {
         if (messageDiv) {
@@ -114,14 +114,14 @@ export async function submitOperatorPin() {
         }
         return;
     }
-    
+
     try {
         const response = await fetch('/api/auth/operator', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({pin: pin})
         });
-        
+
         if (response.ok) {
             const data = await response.json();
             setIsOperator(data.operator);
@@ -181,7 +181,7 @@ export function initializeUserIdentity() {
     const storedId = localStorage.getItem('kbox_user_id');
     setUserName(storedName);
     setUserId(storedId);
-    
+
     if (!userName || !userId) {
         // Show name prompt modal (will generate userId when name is entered)
         const modal = document.getElementById('name-modal');

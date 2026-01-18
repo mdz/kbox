@@ -14,7 +14,7 @@ import {
 // Toggle controls lock
 export function toggleControlsLock() {
     setControlsLocked(!controlsLocked);
-    
+
     if (!controlsLocked) {
         // Start auto-lock timer when unlocked
         resetAutoLockTimer();
@@ -25,13 +25,13 @@ export function toggleControlsLock() {
             setAutoLockTimer(null);
         }
     }
-    
+
     // Show/hide pitch controls and update button without destroying them
     const pitchSection = document.getElementById('now-playing-pitch-section');
     const lockButton = document.getElementById('now-playing-lock-button');
-    
+
     if (pitchSection) pitchSection.style.display = controlsLocked ? 'none' : 'block';
-    
+
     if (lockButton) {
         lockButton.innerHTML = controlsLocked ? '🔒 Unlock Controls' : '🔓 Lock Controls';
         lockButton.style.background = controlsLocked ? '#555' : '#666';
@@ -44,7 +44,7 @@ export function resetAutoLockTimer() {
     if (autoLockTimer) {
         clearTimeout(autoLockTimer);
     }
-    
+
     // Only set timer if controls are unlocked
     if (!controlsLocked) {
         setAutoLockTimer(setTimeout(() => {
@@ -53,7 +53,7 @@ export function resetAutoLockTimer() {
             // Hide pitch controls and update button
             const pitchSection = document.getElementById('now-playing-pitch-section');
             const lockButton = document.getElementById('now-playing-lock-button');
-            
+
             if (pitchSection) pitchSection.style.display = 'none';
             if (lockButton) {
                 lockButton.innerHTML = '🔒 Unlock Controls';
@@ -66,7 +66,7 @@ export function resetAutoLockTimer() {
 // Toggle playback controls lock
 export function togglePlaybackControlsLock() {
     setPlaybackControlsLocked(!playbackControlsLocked);
-    
+
     if (!playbackControlsLocked) {
         // Start auto-lock timer when unlocked
         resetPlaybackAutoLockTimer();
@@ -77,13 +77,13 @@ export function togglePlaybackControlsLock() {
             setPlaybackAutoLockTimer(null);
         }
     }
-    
+
     // Show/hide playback buttons and update button
     const buttonsSection = document.getElementById('playback-buttons-section');
     const lockButton = document.getElementById('playback-lock-button');
-    
+
     if (buttonsSection) buttonsSection.style.display = playbackControlsLocked ? 'none' : 'block';
-    
+
     if (lockButton) {
         lockButton.innerHTML = playbackControlsLocked ? '🔒 Unlock Controls' : '🔓 Lock Controls';
         lockButton.style.background = playbackControlsLocked ? '#555' : '#666';
@@ -96,7 +96,7 @@ export function resetPlaybackAutoLockTimer() {
     if (playbackAutoLockTimer) {
         clearTimeout(playbackAutoLockTimer);
     }
-    
+
     // Only set timer if controls are unlocked
     if (!playbackControlsLocked) {
         setPlaybackAutoLockTimer(setTimeout(() => {
@@ -105,7 +105,7 @@ export function resetPlaybackAutoLockTimer() {
             // Hide playback buttons and update button
             const buttonsSection = document.getElementById('playback-buttons-section');
             const lockButton = document.getElementById('playback-lock-button');
-            
+
             if (buttonsSection) buttonsSection.style.display = 'none';
             if (lockButton) {
                 lockButton.innerHTML = '🔒 Unlock Controls';

@@ -13,31 +13,31 @@ export async function getSuggestions() {
         document.getElementById('name-modal').classList.remove('hidden');
         return;
     }
-    
+
     const resultsDiv = document.getElementById('search-results');
     const suggestButton = document.getElementById('suggest-button');
-    
+
     // Show loading state
     resultsDiv.innerHTML = '<div class="suggestions-loading">✨ Finding songs for you...</div>';
     suggestButton.disabled = true;
     suggestButton.textContent = '✨ Thinking...';
-    
+
     try {
         const response = await fetch(`/api/suggestions?user_id=${encodeURIComponent(userId)}`);
-        
+
         if (!response.ok) {
             const error = await response.json();
             resultsDiv.innerHTML = `<div class="suggestions-error">${error.detail || 'Could not get suggestions'}</div>`;
             return;
         }
-        
+
         const data = await response.json();
-        
+
         if (!data.results || data.results.length === 0) {
             resultsDiv.innerHTML = '<div class="suggestions-empty">No suggestions found. Try searching for a song!</div>';
             return;
         }
-        
+
         // Display results (same format as search results)
         resultsDiv.innerHTML = '<div class="suggestions-header">✨ Suggested for you</div>';
         data.results.forEach(video => {
@@ -74,25 +74,25 @@ export async function getSuggestions() {
 // Search for videos
 export async function search() {
     const query = document.getElementById('search-input').value;
-    
+
     if (!query) {
         alert('Please enter a search query');
         return;
     }
-    
+
     if (!userName) {
         alert('Please enter your name first');
         document.getElementById('name-modal').classList.remove('hidden');
         return;
     }
-    
+
     const resultsDiv = document.getElementById('search-results');
     resultsDiv.innerHTML = 'Searching...';
-    
+
     try {
         const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
-        
+
         resultsDiv.innerHTML = '';
         data.results.forEach(video => {
             const div = document.createElement('div');
@@ -128,9 +128,9 @@ export async function showAddSongModal(video) {
         document.getElementById('name-modal').classList.remove('hidden');
         return;
     }
-    
+
     setCurrentVideoToAdd(video);
-    
+
     // Fetch saved settings for this video and user (pitch preset, etc.)
     let savedPitch = 0;
     try {
@@ -143,7 +143,7 @@ export async function showAddSongModal(video) {
         // If fetch fails, just use default 0
         console.debug('Could not fetch saved settings:', e);
     }
-    
+
     // Use reusable song settings component with saved pitch
     renderSongSettings('add-song-modal-content', {
         title: video.title,
@@ -158,7 +158,7 @@ export async function showAddSongModal(video) {
         showThumbnail: true,
         showUser: true
     });
-    
+
     // Show modal
     const modal = document.getElementById('add-song-modal');
     modal.classList.remove('hidden');
@@ -176,14 +176,14 @@ export function cancelAddToQueue() {
 // Confirm and add song to queue
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
-    
+
     const pitchInput = document.getElementById('add-song-pitch-input');
     if (!pitchInput) {
         alert('Pitch control not initialized');
         return;
     }
     const pitchSemitones = parseInt(pitchInput.value) || 0;
-    
+
     try {
         const response = await fetch('/api/queue', {
             method: 'POST',
@@ -197,7 +197,7 @@ export async function confirmAddToQueue() {
                 pitch_semitones: pitchSemitones
             })
         });
-        
+
         if (response.ok) {
             const modal = document.getElementById('add-song-modal');
             modal.classList.add('hidden');
@@ -232,7 +232,7 @@ export function setupSearchHandlers() {
             search();
         }
     });
-    
+
     // iOS Safari fix: add touchend handler for search button
     // This helps when the keyboard is open and click events don't fire properly
     document.getElementById('search-button').addEventListener('touchend', function(e) {
