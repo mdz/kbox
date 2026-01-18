@@ -19,7 +19,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 2  # Incremented for video_id migration
+    SCHEMA_VERSION = 3  # Incremented for song_metadata_cache table
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -78,6 +78,10 @@ class Database:
         if current_version < 2:
             # Version 2: Migrate to video_id from (source, source_id)
             self._migrate_to_video_id(cursor, conn)
+
+        if current_version < 3:
+            # Version 3: Add song_metadata_cache table
+            self._create_song_metadata_cache(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -238,6 +242,21 @@ class Database:
         """)
 
         self.logger.info("Database migration to video_id complete")
+
+    def _create_song_metadata_cache(self, cursor):
+        """Create song_metadata_cache table for caching LLM extractions."""
+        self.logger.info("Creating song_metadata_cache table...")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS song_metadata_cache (
+                video_id TEXT PRIMARY KEY,
+                artist TEXT NOT NULL,
+                song_name TEXT NOT NULL,
+                extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        self.logger.info("song_metadata_cache table created")
 
     def get_connection(self):
         """
@@ -438,6 +457,8 @@ class HistoryRepository:
                 "duration_seconds": metadata.duration_seconds,
                 "thumbnail_url": metadata.thumbnail_url,
                 "channel": metadata.channel,
+                "artist": metadata.artist,
+                "song_name": metadata.song_name,
             }
         )
 
@@ -453,6 +474,8 @@ class HistoryRepository:
                 duration_seconds=data.get("duration_seconds"),
                 thumbnail_url=data.get("thumbnail_url"),
                 channel=data.get("channel"),
+                artist=data.get("artist"),
+                song_name=data.get("song_name"),
             )
         except (json.JSONDecodeError, TypeError):
             return SongMetadata(title="Unknown")
@@ -622,6 +645,8 @@ class QueueRepository:
                 "duration_seconds": metadata.duration_seconds,
                 "thumbnail_url": metadata.thumbnail_url,
                 "channel": metadata.channel,
+                "artist": metadata.artist,
+                "song_name": metadata.song_name,
             }
         )
 
@@ -637,6 +662,8 @@ class QueueRepository:
                 duration_seconds=data.get("duration_seconds"),
                 thumbnail_url=data.get("thumbnail_url"),
                 channel=data.get("channel"),
+                artist=data.get("artist"),
+                song_name=data.get("song_name"),
             )
         except (json.JSONDecodeError, TypeError):
             return SongMetadata(title="Unknown")
@@ -994,6 +1021,48 @@ class QueueRepository:
                 )
             else:
                 self.logger.warning("Queue item %s not found", item_id)
+
+            return updated
+        finally:
+            conn.close()
+
+    def update_extracted_metadata(self, item_id: int, artist: str, song_name: str) -> bool:
+        """Update extracted artist/song metadata for a queue item."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+
+            # Get current metadata to merge
+            cursor.execute("SELECT song_metadata_json FROM queue_items WHERE id = ?", (item_id,))
+            result = cursor.fetchone()
+            if not result:
+                self.logger.warning("Queue item %s not found", item_id)
+                return False
+
+            metadata = self._decode_metadata(result["song_metadata_json"])
+            metadata.artist = artist
+            metadata.song_name = song_name
+
+            # Update metadata in queue item
+            cursor.execute(
+                """
+                UPDATE queue_items
+                SET song_metadata_json = ?
+                WHERE id = ?
+            """,
+                (self._encode_metadata(metadata), item_id),
+            )
+
+            updated = cursor.rowcount > 0
+            conn.commit()
+
+            if updated:
+                self.logger.debug(
+                    "Updated extracted metadata for item %s: '%s' by '%s'",
+                    item_id,
+                    song_name,
+                    artist,
+                )
 
             return updated
         finally:

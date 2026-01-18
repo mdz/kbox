@@ -22,10 +22,13 @@ class User:
 class SongMetadata:
     """Song metadata (title, duration, thumbnail, etc.)."""
 
-    title: str
+    title: str  # Original video title (always preserved)
     duration_seconds: Optional[int] = None
     thumbnail_url: Optional[str] = None
     channel: Optional[str] = None
+    # Extracted metadata (None if extraction failed/unavailable)
+    artist: Optional[str] = None  # e.g., "Journey"
+    song_name: Optional[str] = None  # e.g., "Don't Stop Believin'"
 
 
 @dataclass

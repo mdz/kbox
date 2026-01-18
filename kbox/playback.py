@@ -1018,6 +1018,8 @@ class PlaybackController:
                     current_song["duration_seconds"] = queue_item.metadata.duration_seconds
                     current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
                     current_song["channel"] = queue_item.metadata.channel
+                    current_song["artist"] = queue_item.metadata.artist
+                    current_song["song_name"] = queue_item.metadata.song_name
                     current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
 
             status = {
