@@ -120,6 +120,27 @@ def check_operator(request: Request) -> bool:
     return request.session.get("operator", False)
 
 
+def get_current_user_id(request: Request) -> Optional[str]:
+    """Get current user ID from session, or None if not authenticated."""
+    return request.session.get("user_id")
+
+
+def require_user(request: Request) -> str:
+    """
+    Require authenticated user, returning their user ID.
+
+    Raises HTTPException 401 if user is not authenticated (no user_id in session).
+    This ensures users cannot impersonate others by sending fake user_id values.
+    """
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated. Please refresh the page and enter your name.",
+        )
+    return user_id
+
+
 def create_app(
     queue_manager: QueueManager,
     video_library: VideoLibrary,
@@ -301,11 +322,14 @@ def create_app(
     @app.get("/api/queue/settings/{video_id:path}")
     async def get_song_settings(
         video_id: str,
-        user_id: str,
         history_mgr=Depends(get_history_manager),
+        current_user_id: str = Depends(require_user),
     ):
-        """Get saved settings (pitch, etc.) for a song from playback history for a specific user."""
-        settings = history_mgr.get_last_settings(video_id, user_id)
+        """
+        Get saved settings (pitch, etc.) for a song from playback history for current user.
+        User identity is determined from session to prevent viewing others' settings.
+        """
+        settings = history_mgr.get_last_settings(video_id, current_user_id)
         if settings:
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
@@ -316,11 +340,12 @@ def create_app(
         request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         user_mgr: UserManager = Depends(get_user_manager),
+        current_user_id: str = Depends(require_user),
     ):
         """Add song to queue."""
         try:
-            # Get user (they should already exist from registration)
-            user = user_mgr.get_user(request_data.user_id)
+            # Get user from session (ignore request_data.user_id to prevent impersonation)
+            user = user_mgr.get_user(current_user_id)
             if not user:
                 raise HTTPException(
                     status_code=400, detail="User not found. Please refresh the page."
@@ -356,15 +381,15 @@ def create_app(
     @app.delete("/api/queue/{item_id}")
     async def remove_song(
         item_id: int,
-        user_id: Optional[str] = None,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         is_operator: bool = Depends(check_operator),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
     ):
         """
         Remove song from queue.
 
-        Operators can remove any song. Users can remove their own songs
-        by providing their user_id as a query parameter.
+        Operators can remove any song. Users can remove their own songs.
+        User identity is determined from session (not query params) to prevent impersonation.
         """
         # Get the item to check ownership
         item = queue_mgr.get_item(item_id)
@@ -373,7 +398,7 @@ def create_app(
 
         # Check permissions: operator can remove any, users can only remove their own
         if not is_operator:
-            if not user_id or user_id != item.user_id:
+            if not current_user_id or current_user_id != item.user_id:
                 raise HTTPException(status_code=403, detail="You can only remove songs you added")
 
         if not queue_mgr.remove_song(item_id):
@@ -399,13 +424,14 @@ def create_app(
     async def update_queue_item(
         item_id: int,
         request_data: UpdateQueueItemRequest,
-        request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         is_operator: bool = Depends(check_operator),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
     ):
         """
         Update properties of a queue item.
         Operators can update any song, users can only update their own.
+        User identity is determined from session to prevent impersonation.
 
         Currently supported fields:
         - pitch_semitones: Pitch adjustment in semitones
@@ -417,7 +443,7 @@ def create_app(
 
         # Check permissions: operator can edit any, users can only edit their own
         if not is_operator:
-            if not request_data.user_id or request_data.user_id != item.user_id:
+            if not current_user_id or current_user_id != item.user_id:
                 raise HTTPException(status_code=403, detail="You can only edit songs you added")
 
         # Update pitch if provided
@@ -522,14 +548,15 @@ def create_app(
 
     @app.get("/api/suggestions")
     async def get_suggestions(
-        user_id: str,
         max_results: int = 8,
         suggestion_engine: SuggestionEngine = Depends(get_suggestion_engine),
+        current_user_id: str = Depends(require_user),
     ):
         """
-        Get AI-powered song suggestions for a user.
+        Get AI-powered song suggestions for current user.
 
         Suggestions are based on user's history, current queue, and operator theme.
+        User identity is determined from session to prevent impersonation.
         """
         if not suggestion_engine:
             raise HTTPException(
@@ -538,7 +565,7 @@ def create_app(
             )
 
         try:
-            results = suggestion_engine.get_suggestions(user_id, max_results)
+            results = suggestion_engine.get_suggestions(current_user_id, max_results)
             return {"results": results, "source": "ai"}
         except SuggestionError as e:
             raise HTTPException(status_code=503, detail=str(e))
@@ -657,12 +684,14 @@ def create_app(
     @app.post("/api/playback/pitch")
     async def set_pitch(
         request_data: PitchRequest,
-        request: Request,
         playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
     ):
         """
         Set pitch adjustment for current song.
         Allowed if: user owns the song OR user is an operator.
+        User identity is determined from session to prevent impersonation.
         """
         status = playback.get_status()
         current_song = status.get("current_song")
@@ -671,10 +700,9 @@ def create_app(
             raise HTTPException(status_code=400, detail="No song is currently playing")
 
         # Check authorization: user's own song OR operator
-        is_own_song = current_song.get("user_id") == request_data.user_id
-        is_op = check_operator(request)
+        is_own_song = current_song.get("user_id") == current_user_id
 
-        if not is_own_song and not is_op:
+        if not is_own_song and not is_operator:
             raise HTTPException(
                 status_code=403, detail="You can only adjust pitch for your own song"
             )
@@ -834,13 +862,29 @@ def create_app(
     # User endpoints
     @app.post("/api/users")
     async def register_user(
+        request: Request,
         request_data: UserRequest,
         user_mgr: UserManager = Depends(get_user_manager),
     ):
-        """Register or update a user."""
-        user = user_mgr.get_or_create_user(
-            user_id=request_data.user_id, display_name=request_data.display_name
-        )
+        """
+        Register or update a user.
+
+        On first call, binds the provided user_id to the session.
+        On subsequent calls, uses the session's user_id (ignores provided one).
+        This prevents user impersonation.
+        """
+        # Check if session already has a user_id
+        session_user_id = request.session.get("user_id")
+
+        if session_user_id:
+            # Session already bound - use the session's user_id, ignore request
+            user_id = session_user_id
+        else:
+            # First registration - bind this user_id to session
+            user_id = request_data.user_id
+            request.session["user_id"] = user_id
+
+        user = user_mgr.get_or_create_user(user_id=user_id, display_name=request_data.display_name)
         return user
 
     # History endpoints
@@ -848,8 +892,20 @@ def create_app(
     async def get_user_history(
         user_id: str,
         history_mgr=Depends(get_history_manager),
+        is_operator: bool = Depends(check_operator),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
     ):
-        """Get playback history for a specific user."""
+        """
+        Get playback history for a specific user.
+
+        Users can only view their own history. Operators can view anyone's history.
+        User identity is determined from session to prevent impersonation.
+        """
+        # Check permissions: operators can view any, users can only view their own
+        if not is_operator:
+            if not current_user_id or current_user_id != user_id:
+                raise HTTPException(status_code=403, detail="You can only view your own history")
+
         history = history_mgr.get_user_history(user_id, limit=50)
         # Convert HistoryRecord objects to dicts for JSON serialization
         history_dicts = []
