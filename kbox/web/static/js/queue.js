@@ -26,8 +26,13 @@ export function showEditQueueItemModal(item) {
     // Use reusable song settings component
     const additionalControls = !canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : '';
     
+    // Format display title: prefer extracted artist/song
+    const hasExtracted = item.artist && item.song_name;
+    const displayTitle = hasExtracted ? `${item.song_name} by ${item.artist}` : item.title;
+    
     renderSongSettings('edit-queue-item-content', {
-        title: item.title,
+        title: displayTitle,
+        original_title: hasExtracted ? item.title : null,  // Show original as secondary if we have extracted
         thumbnail_url: item.thumbnail_url,
         user_id: item.user_id,
         user_name: item.user_name,
@@ -193,7 +198,11 @@ export async function moveToEndQueueItem() {
 export async function removeQueueItem() {
     if (!currentQueueItemToEdit) return;
     
-    if (!confirm(`Remove "${currentQueueItemToEdit.title}" from queue?`)) return;
+    // Use extracted song name if available, otherwise title
+    const displayName = (currentQueueItemToEdit.artist && currentQueueItemToEdit.song_name)
+        ? `${currentQueueItemToEdit.song_name} by ${currentQueueItemToEdit.artist}`
+        : currentQueueItemToEdit.title;
+    if (!confirm(`Remove "${displayName}" from queue?`)) return;
     
     try {
         const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {method: 'DELETE'});
@@ -249,7 +258,11 @@ export async function moveDownQueueItem() {
 export async function removeOwnQueueItem() {
     if (!currentQueueItemToEdit) return;
     
-    if (!confirm(`Remove "${currentQueueItemToEdit.title}" from queue?`)) return;
+    // Use extracted song name if available, otherwise title
+    const displayName = (currentQueueItemToEdit.artist && currentQueueItemToEdit.song_name)
+        ? `${currentQueueItemToEdit.song_name} by ${currentQueueItemToEdit.artist}`
+        : currentQueueItemToEdit.title;
+    if (!confirm(`Remove "${displayName}" from queue?`)) return;
     
     try {
         const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}?user_id=${encodeURIComponent(userId)}`, {method: 'DELETE'});
@@ -343,10 +356,19 @@ export async function loadQueue() {
             const duration = item.duration_seconds || 0;
             const durationStr = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
             
+            // Format song display: use extracted artist/song if available, otherwise title
+            const hasExtracted = item.artist && item.song_name;
+            const primaryDisplay = hasExtracted 
+                ? `<strong>${item.song_name}</strong> <span style="color: #888;">by ${item.artist}</span>`
+                : item.title;
+            const secondaryDisplay = hasExtracted 
+                ? `<div class="queue-item-original" style="color: #666; font-size: 0.8em; margin-top: 2px;">${item.title}</div>`
+                : '';
+            
             div.innerHTML = `
                 <div class="queue-item-info">
                     <div class="queue-item-user">${item.user_name} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
-                    ${isOperator ? `<div class="queue-item-title">${item.title}</div>` : ''}
+                    ${isOperator ? `<div class="queue-item-title">${primaryDisplay}</div>${secondaryDisplay}` : ''}
                 </div>
                 <span class="queue-item-status ${statusClass}">${item.download_status}</span>
             `;

@@ -16,6 +16,7 @@ from .overlay import generate_qr_code
 from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
 from .queue import QueueManager
+from .song_metadata import SongMetadataExtractor
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
 from .user import UserManager
@@ -71,10 +72,17 @@ class KboxServer:
                 "Please set the API key via the web UI (/config)."
             )
 
-        # Initialize queue manager with video library
+        # SongMetadataExtractor for extracting artist/song from video titles
+        self.metadata_extractor = SongMetadataExtractor(
+            self.config_manager,
+            self.database,
+        )
+
+        # Initialize queue manager with video library and metadata extractor
         self.queue_manager = QueueManager(
             self.database,
             video_library=self.video_library,
+            metadata_extractor=self.metadata_extractor,
         )
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database)

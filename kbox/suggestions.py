@@ -108,6 +108,13 @@ class SuggestionEngine:
         """Build context dict for the LLM prompt."""
         context: Dict[str, Any] = {}
 
+        # Helper to get artist/title from metadata, preferring extracted values
+        def get_song_info(metadata):
+            # Use extracted values if available, otherwise fall back to title/channel
+            title = metadata.song_name or metadata.title
+            artist = metadata.artist or metadata.channel or "Unknown"
+            return {"title": title, "artist": artist}
+
         # User's recent history (deduplicated by video_id)
         try:
             history = self.history.get_user_history(user_id, limit=50)
@@ -117,12 +124,7 @@ class SuggestionEngine:
                 for record in history:
                     if record.video_id not in seen_videos:
                         seen_videos.add(record.video_id)
-                        unique_songs.append(
-                            {
-                                "title": record.metadata.title,
-                                "artist": record.metadata.channel or "Unknown",
-                            }
-                        )
+                        unique_songs.append(get_song_info(record.metadata))
                 context["user_history"] = unique_songs
         except Exception as e:
             self.logger.debug("Could not get user history: %s", e)
@@ -134,8 +136,7 @@ class SuggestionEngine:
             if unplayed:
                 context["current_queue"] = [
                     {
-                        "title": item.metadata.title,
-                        "artist": item.metadata.channel or "Unknown",
+                        **get_song_info(item.metadata),
                         "user": item.user_name,
                     }
                     for item in unplayed[:10]  # Limit to 10 for prompt size
