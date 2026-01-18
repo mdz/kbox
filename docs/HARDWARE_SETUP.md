@@ -17,15 +17,15 @@ flowchart LR
         BT[🎵 Backing Track]
         MIC[🎤 Microphone]
     end
-    
+
     subgraph Mixing
         MIX((Mix))
     end
-    
+
     subgraph Output
         SPK[🔊 Speakers]
     end
-    
+
     BT --> MIX
     MIC --> MIX
     MIX --> SPK
@@ -93,16 +93,16 @@ flowchart TB
     subgraph kbox["kbox (Raspberry Pi / Computer)"]
         SW[kbox Software]
     end
-    
+
     subgraph solo["Scarlett Solo"]
         DM[Direct Monitor Mix]
     end
-    
+
     MIC[🎤 Microphone] -->|XLR| solo
     kbox -->|USB Audio| solo
     kbox -->|HDMI| MON[🖥️ Display]
     solo -->|1/4 inch TRS| SPK[🔊 Powered Speaker]
-    
+
     style DM fill:#e1f5fe
 ```
 
@@ -137,21 +137,21 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. They have identi
    - The Solo will appear as an audio device
 
 2. **Disable MSD Mode (Linux only - IMPORTANT!)**
-   
+
    The Scarlett Solo 3rd gen ships with "MSD Mode" (Mass Storage Device mode) enabled by default. This mode is meant for initial setup on Windows/Mac but causes **distorted/clipped audio on Linux**.
-   
+
    Check if MSD mode is on:
    ```bash
    amixer -c USB sget 'MSD Mode'
    ```
-   
+
    If it shows `[on]`, disable it:
    ```bash
    amixer -c USB sset 'MSD Mode' off
    ```
-   
+
    **Then unplug and replug the Scarlett Solo.** The mode change only takes effect after re-enumeration.
-   
+
    > **Note**: This setting persists in the Scarlett's firmware - you only need to do this once.
 
 3. **Configure kbox to use the Scarlett as audio output**
@@ -161,18 +161,18 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. They have identi
      ```
    - Look for the Scarlett (usually `hw:CARD=USB` or similar)
    - Set `audio_output_device` in kbox config to `plughw:CARD=USB,DEV=0`
-   
+
    > **Tip**: Use `plughw:` (not `hw:`) to let ALSA handle sample format conversion automatically.
 
 4. **Connect your microphone(s)**
 
    **Option A: Wired XLR mic** → connect to the **XLR input**
    - Press **48V** for condenser mics; dynamic mics (SM58, XM8500) don't need it
-   
+
    **Option B: Wireless mic system** → connect receiver to the **1/4" input**
    - Leave the **INST** button OFF (wireless receivers output line level)
    - Works great for dual-mic systems like the TONOR TW-820
-   
+
    > **Why different inputs?** The XLR input has a mic preamp for low-level signals. The 1/4" input expects line-level signals. Wireless receivers have internal preamps, so using the XLR input would double-amplify and cause distortion.
 
 5. **Enable Direct Monitor**
@@ -204,16 +204,16 @@ flowchart TB
     subgraph kbox["kbox (Raspberry Pi / Computer)"]
         SW[kbox Software]
     end
-    
+
     subgraph solo["Scarlett Solo"]
         DM[Direct Monitor Mix]
     end
-    
+
     MIC[🎤 Wired Mic] -->|XLR| solo
     kbox -->|USB Audio| solo
     kbox -->|HDMI| MON[🖥️ Display]
     solo -->|1/4 inch TRS| SPK[🔊 Powered Speaker]
-    
+
     style DM fill:#e1f5fe
 ```
 
@@ -233,23 +233,23 @@ flowchart TB
         MIC2[🎤 Mic 2]
         RX[Receiver]
     end
-    
+
     subgraph solo["Scarlett Solo"]
         DM[Direct Monitor Mix]
     end
-    
+
     MIC1 -.->|wireless| RX
     MIC2 -.->|wireless| RX
     RX -->|1/4 inch| solo
-    
+
     subgraph kbox["kbox"]
         SW[Software]
     end
-    
+
     kbox -->|USB Audio| solo
     kbox -->|HDMI| MON[🖥️ Display]
     solo -->|1/4 inch TRS| SPK[🔊 Speaker]
-    
+
     style DM fill:#e1f5fe
 ```
 
@@ -274,11 +274,11 @@ flowchart LR
     subgraph mic["Microphone"]
         WM[🎤 Wireless Mic] --> RX[Receiver]
     end
-    
+
     subgraph solo["Scarlett Solo"]
         MIX[Direct Monitor Mix]
     end
-    
+
     RX -->|1/4 inch| MIX
     KBOX[kbox] -->|USB Audio| MIX
     MIX --> SPK[🔊 Speaker]
@@ -360,38 +360,38 @@ flowchart TB
     subgraph pi["Raspberry Pi"]
         KBOX[kbox]
     end
-    
+
     subgraph video["Video Path"]
         SPLIT[HDMI Splitter]
         INJ[HDMI Audio Injector]
     end
-    
+
     subgraph audio["Audio Path"]
         MIX[Mixer]
     end
-    
+
     subgraph outputs["Outputs"]
         RX[A/V Receiver]
         PROJ[📽️ Projector<br/>Audience Display]
         MON[🖥️ Monitor<br/>Performer Display]
         SPK[🔊 Speakers]
     end
-    
+
     MIC1[🎤 Mic 1] --> MIX
     MIC2[🎤 Mic 2] --> MIX
-    
+
     KBOX -->|USB Audio| MIX
     KBOX -->|HDMI| SPLIT
-    
+
     SPLIT -->|HDMI 1| INJ
     SPLIT -->|HDMI 2| MON
-    
+
     MIX -->|Analog Audio| INJ
     INJ -->|HDMI with mixed audio| RX
-    
+
     RX -->|HDMI| PROJ
     RX -->|Speaker Wire| SPK
-    
+
     style MIX fill:#fff3e0
     style INJ fill:#e8f5e9
     style RX fill:#e3f2fd
@@ -548,7 +548,7 @@ flowchart TB
     subgraph kbox["kbox (Raspberry Pi)"]
         SW[kbox Software]
     end
-    
+
     subgraph mixer["Digital Mixer"]
         CH1[Ch 1-4: Mics]
         USB[USB Input: Backing Track]
@@ -556,33 +556,33 @@ flowchart TB
         MAIN[Main Mix]
         AUX[Aux/Monitor Send]
     end
-    
+
     subgraph audio_out["Audio Outputs"]
         PA[🔊 PA Speakers<br/>Audience]
         MON[🔊 Stage Monitors<br/>Performers]
     end
-    
+
     subgraph video_out["Video Outputs"]
         SPLIT[HDMI Splitter]
         PROJ[📽️ Projector<br/>Audience]
         CM1[🖥️ Confidence Monitor 1]
         CM2[🖥️ Confidence Monitor 2]
     end
-    
+
     MIC1[🎤 Mic 1] --> CH1
     MIC2[🎤 Mic 2] --> CH1
     MIC3[🎤 Mic 3] --> CH1
     MIC4[🎤 Mic 4] --> CH1
-    
+
     kbox -->|USB Audio| USB
     CH1 --> FX
     USB --> MAIN
     FX --> MAIN
     CH1 --> AUX
-    
+
     MAIN --> PA
     AUX --> MON
-    
+
     kbox -->|HDMI| INJ[HDMI Audio Injector]
     MAIN -->|Analog| INJ
     INJ --> SPLIT
@@ -783,4 +783,3 @@ The [TONOR TW-820](https://www.amazon.com/dp/B07RJLKBRD) (~$100-110) is a great 
 For the **Simple Setup** (Scarlett Solo): Use the combined 1/4" output into the Solo's instrument input.
 
 For the **Advanced Setup** (Mixer): Use the dual XLR outputs so each mic gets its own channel with independent EQ and effects.
-

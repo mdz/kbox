@@ -21,10 +21,10 @@ export function getIntervalName(semitones) {
         11: 'Major Seventh',
         12: 'Octave'
     };
-    
+
     const absSemitones = Math.abs(semitones);
     const interval = intervals[absSemitones] || `${absSemitones} semitones`;
-    
+
     if (semitones === 0) {
         return interval;
     } else if (semitones < 0) {
@@ -38,7 +38,7 @@ export function getIntervalName(semitones) {
 export function updatePitchDisplay(displayId, value, fontSize = 24) {
     const display = document.getElementById(displayId);
     if (!display) return;
-    
+
     // Format value with + for positive numbers
     const formattedValue = value > 0 ? `+${value}` : value.toString();
     const intervalName = getIntervalName(value);
@@ -73,18 +73,18 @@ export async function adjustNowPlayingPitch(delta) {
     // Get current pitch from input
     const input = document.getElementById('now-playing-pitch-input');
     if (!input) return;
-    
+
     let currentValue = parseInt(input.value) || 0;
     let newValue = currentValue + delta;
-    
+
     // Clamp to -12 to +12 range
     newValue = Math.max(-12, Math.min(12, newValue));
-    
+
     // Update display immediately for responsive UI
     updatePitchDisplay('now-playing-pitch-display', newValue);
     input.value = newValue;
     updatePitchButtons('now-playing', newValue);
-    
+
     // Apply pitch change immediately via API
     try {
         const response = await fetch('/api/playback/pitch', {
@@ -95,7 +95,7 @@ export async function adjustNowPlayingPitch(delta) {
                 user_id: userId
             })
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             console.error('Error setting pitch:', error);
@@ -122,27 +122,27 @@ export function adjustPitch(context, delta) {
         adjustNowPlayingPitch(delta);
         return;
     }
-    
-    
+
+
     // For other contexts (add-song, edit-queue-item), just update the UI
-    const inputId = context === 'add-song' ? 'add-song-pitch-input' : 
+    const inputId = context === 'add-song' ? 'add-song-pitch-input' :
                    'edit-queue-item-pitch-input';
-    const displayId = context === 'add-song' ? 'add-song-pitch-display' : 
+    const displayId = context === 'add-song' ? 'add-song-pitch-display' :
                      'edit-queue-item-pitch-display';
-    
+
     const input = document.getElementById(inputId);
-    
+
     if (!input) return;
-    
+
     let currentValue = parseInt(input.value) || 0;
     let newValue = currentValue + delta;
-    
+
     // Clamp to -12 to +12 range
     newValue = Math.max(-12, Math.min(12, newValue));
-    
+
     input.value = newValue;
     updatePitchDisplay(displayId, newValue);
-    
+
     // Update button states
     if (context === 'edit-queue-item') {
         updatePitchButtons('edit-queue-item', newValue);

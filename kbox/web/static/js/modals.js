@@ -25,26 +25,26 @@ export async function showHistoryModal() {
         alert('Please set your name first');
         return;
     }
-    
+
     const modal = document.getElementById('history-modal');
     const content = document.getElementById('history-content');
-    
+
     // Show loading
     content.innerHTML = '<p style="text-align: center; color: #aaa;">Loading your history...</p>';
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
-    
+
     try {
         const response = await fetch(`/api/history/${encodeURIComponent(userId)}`);
         const data = await response.json();
-        
+
         if (data.history && data.history.length > 0) {
             content.innerHTML = data.history.map(record => {
                 const date = new Date(record.performed_at);
                 const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                 const pitchStr = record.pitch_semitones ? ` (${record.pitch_semitones > 0 ? '+' : ''}${record.pitch_semitones})` : '';
                 const completionStr = record.completion_percentage ? ` • ${Math.round(record.completion_percentage)}%` : '';
-                
+
                 return `
                     <div style="padding: 15px; margin-bottom: 10px; background: #2a2a2a; border-radius: 8px;">
                         <div style="font-weight: bold; margin-bottom: 5px;">${escapeHtml(record.title)}</div>

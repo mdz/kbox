@@ -32,4 +32,3 @@ export GST_DEBUG_NO_COLOR=1
 
 # Run kbox
 exec uv run python -m kbox.main "$@"
-
