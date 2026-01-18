@@ -157,7 +157,11 @@ class InterstitialGenerator:
         return output_path
 
     def generate_transition_screen(
-        self, singer_name: str, song_title: Optional[str] = None, web_url: Optional[str] = None
+        self,
+        singer_name: str,
+        song_title: Optional[str] = None,
+        artist: Optional[str] = None,
+        web_url: Optional[str] = None,
     ) -> str:
         """
         Generate the between-songs transition screen.
@@ -165,6 +169,7 @@ class InterstitialGenerator:
         Args:
             singer_name: Name of the next singer
             song_title: Optional song title (can be hidden for surprise)
+            artist: Optional artist name (from extracted metadata)
             web_url: URL for the web interface (for QR code)
 
         Returns:
@@ -183,15 +188,22 @@ class InterstitialGenerator:
         name_font = self._get_font(140, bold=True)
         self._center_text(draw, singer_name, self.height // 3 + 40, name_font, PRIMARY_TEXT_COLOR)
 
-        # Song title (optional, smaller)
+        # Song title and artist (optional, smaller)
+        song_y = self.height // 3 + 200
         if song_title:
             # Truncate if too long
             if len(song_title) > 50:
                 song_title = song_title[:47] + "..."
             title_font = self._get_font(36)
-            self._center_text(
-                draw, song_title, self.height // 3 + 200, title_font, SECONDARY_TEXT_COLOR
-            )
+            self._center_text(draw, song_title, song_y, title_font, SECONDARY_TEXT_COLOR)
+            song_y += 50  # Move down for artist
+
+        # Show artist if available (below song title)
+        if artist:
+            if len(artist) > 40:
+                artist = artist[:37] + "..."
+            artist_font = self._get_font(28)
+            self._center_text(draw, f"by {artist}", song_y, artist_font, SECONDARY_TEXT_COLOR)
 
         # "Get ready!" message
         ready_font = self._get_font(48)

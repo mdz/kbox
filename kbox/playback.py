@@ -211,9 +211,29 @@ class PlaybackController:
             current_song = self.queue_manager.get_item(self.current_song_id)
             if current_song:
                 overlay_text = f"Now singing: {current_song.user_name}"
+                # Add extracted song metadata if available
+                song_info = self._format_song_info(current_song.metadata)
+                if song_info:
+                    overlay_text = f"{overlay_text}\n{song_info}"
                 self._set_base_overlay(overlay_text)
                 self._current_singer_shown = True
                 self.logger.debug("Set current singer overlay for: %s", current_song.user_name)
+
+    def _format_song_info(self, metadata) -> Optional[str]:
+        """
+        Format extracted song metadata for display.
+
+        Args:
+            metadata: SongMetadata with optional artist/song_name
+
+        Returns:
+            Formatted string like "Song Name by Artist" or None if no metadata
+        """
+        if metadata.song_name and metadata.artist:
+            return f"{metadata.song_name} by {metadata.artist}"
+        elif metadata.song_name:
+            return metadata.song_name
+        return None
 
     def _check_up_next_notification(self, current_position: int):
         """
@@ -868,8 +888,11 @@ class PlaybackController:
         self._set_state(
             PlaybackState.TRANSITION, f"next: {next_song.user_name} ({transition_duration}s)"
         )
+        # Use extracted metadata if available, otherwise fall back to original title
+        song_title = next_song.metadata.song_name or next_song.metadata.title
+        artist = next_song.metadata.artist
         self._show_transition_screen(
-            singer_name=next_song.user_name, song_title=next_song.metadata.title
+            singer_name=next_song.user_name, song_title=song_title, artist=artist
         )
 
         # Schedule the next song to start after transition
@@ -946,13 +969,16 @@ class PlaybackController:
         else:
             self.logger.warning("Could not generate idle screen")
 
-    def _show_transition_screen(self, singer_name: str, song_title: Optional[str] = None):
+    def _show_transition_screen(
+        self, singer_name: str, song_title: Optional[str] = None, artist: Optional[str] = None
+    ):
         """
         Display the between-songs transition screen.
 
         Args:
             singer_name: Name of the next singer
             song_title: Optional song title (can be None for surprise)
+            artist: Optional artist name (from extracted metadata)
         """
         self.logger.info("Showing transition screen for: %s", singer_name)
 
@@ -960,7 +986,7 @@ class PlaybackController:
         web_url = self._get_web_url()
 
         image_path = generator.generate_transition_screen(
-            singer_name=singer_name, song_title=song_title, web_url=web_url
+            singer_name=singer_name, song_title=song_title, artist=artist, web_url=web_url
         )
 
         if image_path:
