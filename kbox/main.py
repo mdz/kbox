@@ -12,6 +12,7 @@ import uvicorn
 from .config_manager import ConfigManager
 from .database import Database
 from .history import HistoryManager
+from .llm import LLMClient
 from .overlay import generate_qr_code
 from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
@@ -72,10 +73,13 @@ class KboxServer:
                 "Please set the API key via the web UI (/config)."
             )
 
+        # LLM client for AI features (suggestions, metadata extraction)
+        self.llm_client = LLMClient(self.config_manager)
+
         # SongMetadataExtractor for extracting artist/song from video titles
         self.metadata_extractor = SongMetadataExtractor(
-            self.config_manager,
             self.database,
+            llm_client=self.llm_client,
         )
 
         # Initialize queue manager with video library and metadata extractor
@@ -104,6 +108,7 @@ class KboxServer:
             self.history_manager,
             self.queue_manager,
             self.video_library,
+            llm_client=self.llm_client,
         )
 
         # Web server

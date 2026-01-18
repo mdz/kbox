@@ -2,7 +2,7 @@
 Unit tests for SuggestionEngine.
 
 Tests the suggestion engine logic without making actual LLM calls.
-Uses dependency injection for the LLM completion function.
+Uses dependency injection for the LLM client.
 """
 
 import json
@@ -16,6 +16,7 @@ import pytest
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.history import HistoryManager
+from kbox.llm import LLMClient
 from kbox.models import SongMetadata, SongSettings
 from kbox.queue import QueueManager
 from kbox.suggestions import SuggestionEngine, SuggestionError
@@ -80,6 +81,11 @@ def make_error_completion(error_message: str = "API error"):
     return fake_completion
 
 
+def make_llm_client(config_manager: ConfigManager, completion_fn) -> LLMClient:
+    """Create an LLMClient with a fake completion function for testing."""
+    return LLMClient(config_manager, completion_fn=completion_fn)
+
+
 @pytest.fixture
 def temp_db():
     """Create a temporary database for testing."""
@@ -137,13 +143,22 @@ def test_user(user_manager):
 
 
 @pytest.fixture
-def suggestion_engine(config_manager, history_manager, queue_manager, mock_video_library):
+def llm_client(config_manager):
+    """Create an LLMClient for testing (without a completion function)."""
+    return LLMClient(config_manager)
+
+
+@pytest.fixture
+def suggestion_engine(
+    config_manager, history_manager, queue_manager, mock_video_library, llm_client
+):
     """Create a SuggestionEngine for testing."""
     return SuggestionEngine(
         config_manager=config_manager,
         history_manager=history_manager,
         queue_manager=queue_manager,
         video_library=mock_video_library,
+        llm_client=llm_client,
     )
 
 
@@ -509,12 +524,13 @@ class TestGenerateSuggestionsIntegration:
             {"title": "Sweet Dreams", "artist": "Eurythmics"},
         ]
 
+        llm_client = make_llm_client(config_manager, make_fake_completion(fake_suggestions))
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=make_fake_completion(fake_suggestions),
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -531,12 +547,13 @@ class TestGenerateSuggestionsIntegration:
         self, config_manager, history_manager, queue_manager, mock_video_library
     ):
         """_generate_suggestions raises error on empty LLM response."""
+        llm_client = make_llm_client(config_manager, make_empty_completion())
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=make_empty_completion(),
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -550,12 +567,13 @@ class TestGenerateSuggestionsIntegration:
         self, config_manager, history_manager, queue_manager, mock_video_library
     ):
         """_generate_suggestions raises error when response truncated."""
+        llm_client = make_llm_client(config_manager, make_truncated_completion())
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=make_truncated_completion(),
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -569,12 +587,13 @@ class TestGenerateSuggestionsIntegration:
         self, config_manager, history_manager, queue_manager, mock_video_library
     ):
         """_generate_suggestions raises SuggestionError on API failure."""
+        llm_client = make_llm_client(config_manager, make_error_completion("Connection refused"))
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=make_error_completion("Connection refused"),
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -597,12 +616,13 @@ class TestGetSuggestionsIntegration:
             {"title": "Sweet Dreams", "artist": "Eurythmics"},
         ]
 
+        llm_client = make_llm_client(config_manager, make_fake_completion(fake_suggestions))
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=make_fake_completion(fake_suggestions),
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -654,12 +674,13 @@ class TestGetSuggestionsIntegration:
             response.choices[0].finish_reason = "stop"
             return response
 
+        llm_client = make_llm_client(config_manager, capturing_completion)
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=capturing_completion,
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -679,14 +700,16 @@ class TestGetSuggestionsIntegration:
         self, config_manager, history_manager, queue_manager, mock_video_library
     ):
         """Raises SuggestionError when YouTube search returns no results."""
+        llm_client = make_llm_client(
+            config_manager,
+            make_fake_completion([{"title": "Obscure Song", "artist": "Unknown Band"}]),
+        )
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=make_fake_completion(
-                [{"title": "Obscure Song", "artist": "Unknown Band"}]
-            ),
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "gpt-4o-mini")
         config_manager.set("llm_api_key", "test-key")
@@ -713,12 +736,13 @@ class TestGetSuggestionsIntegration:
             response.choices[0].finish_reason = "stop"
             return response
 
+        llm_client = make_llm_client(config_manager, capturing_completion)
         engine = SuggestionEngine(
             config_manager=config_manager,
             history_manager=history_manager,
             queue_manager=queue_manager,
             video_library=mock_video_library,
-            completion_fn=capturing_completion,
+            llm_client=llm_client,
         )
         config_manager.set("llm_model", "claude-3-haiku")
         config_manager.set("llm_api_key", "test-key")

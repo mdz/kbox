@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
 
 if TYPE_CHECKING:
-    from .config_manager import ConfigManager
     from .database import Database
-
-# Type alias for LLM completion functions (litellm.completion signature)
-CompletionFn = Callable[..., Any]
+    from .llm import LLMClient
 
 
 class SongMetadataExtractor:
@@ -23,36 +20,25 @@ class SongMetadataExtractor:
 
     def __init__(
         self,
-        config_manager: "ConfigManager",
         database: "Database",
-        completion_fn: Optional[CompletionFn] = None,
+        llm_client: Optional["LLMClient"] = None,
     ):
         """
         Initialize SongMetadataExtractor.
 
         Args:
-            config_manager: For accessing LLM configuration
             database: For caching extracted metadata
-            completion_fn: LLM completion function (defaults to litellm.completion)
+            llm_client: LLM client for extraction (optional)
         """
-        self.config = config_manager
         self.database = database
         self.logger = logging.getLogger(__name__)
-        self._completion_fn = completion_fn
+        self._llm_client = llm_client
 
     def is_configured(self) -> bool:
         """Check if LLM extraction is properly configured."""
-        model = self.config.get("llm_model")
-        if not model:
+        if self._llm_client is None:
             return False
-
-        # For non-Ollama models, we need an API key
-        if not model.startswith("ollama/"):
-            api_key = self.config.get("llm_api_key")
-            if not api_key:
-                return False
-
-        return True
+        return self._llm_client.is_configured()
 
     def extract(
         self,
@@ -109,51 +95,27 @@ class SongMetadataExtractor:
         # Build the prompt
         prompt = self._build_prompt(title, description, channel)
 
-        # Get LLM config
-        model = self.config.get("llm_model")
-        api_key = self.config.get("llm_api_key")
-        base_url = self.config.get("llm_base_url")
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a metadata extraction assistant. Extract the artist name "
+                    "and song title from karaoke video information. Return valid JSON only."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
 
-        # Get completion function (use litellm if not injected)
-        completion_fn = self._completion_fn
-        if completion_fn is None:
-            import litellm
+        self.logger.debug("Calling LLM for metadata extraction")
 
-            # Configure litellm
-            if api_key:
-                if model.startswith("claude") or model.startswith("anthropic"):
-                    litellm.anthropic_key = api_key
-                elif model.startswith("gemini"):
-                    litellm.gemini_key = api_key
-                else:
-                    litellm.openai_key = api_key
+        # is_configured() ensures _llm_client is set before we get here
+        assert self._llm_client is not None
 
-            litellm.drop_params = True
-            completion_fn = litellm.completion
-
-        # Build completion kwargs
-        kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a metadata extraction assistant. Extract the artist name "
-                        "and song title from karaoke video information. Return valid JSON only."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.0,  # Deterministic for extraction
-            "max_tokens": 256,
-        }
-
-        if base_url:
-            kwargs["api_base"] = base_url
-
-        self.logger.debug("Calling LLM for metadata extraction: model=%s", model)
-
-        response = completion_fn(**kwargs)
+        response = self._llm_client.completion(
+            messages=messages,
+            temperature=0.0,  # Deterministic for extraction
+            max_tokens=256,
+        )
         content = response.choices[0].message.content
 
         if not content:
