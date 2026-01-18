@@ -1,7 +1,7 @@
 """
 AI-powered song suggestion engine for kbox.
 
-Uses LiteLLM to generate personalized karaoke song recommendations based on
+Uses LLMClient to generate personalized karaoke song recommendations based on
 user history, current queue, and operator-configured theme.
 """
 
@@ -9,16 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
     from .history import HistoryManager
+    from .llm import LLMClient
     from .queue import QueueManager
     from .video_library import VideoLibrary
-
-# Type alias for LLM completion functions (litellm.completion signature)
-CompletionFn = Callable[..., Any]
 
 
 class SuggestionError(Exception):
@@ -36,38 +34,30 @@ class SuggestionEngine:
         history_manager: "HistoryManager",
         queue_manager: "QueueManager",
         video_library: "VideoLibrary",
-        completion_fn: Optional[CompletionFn] = None,
+        llm_client: Optional["LLMClient"] = None,
     ):
         """
         Initialize SuggestionEngine.
 
         Args:
-            config_manager: For accessing LLM and theme configuration
+            config_manager: For accessing theme configuration
             history_manager: For retrieving user's song history
             queue_manager: For getting current queue context
             video_library: For searching songs on YouTube
-            completion_fn: LLM completion function (defaults to litellm.completion)
+            llm_client: LLM client for generating suggestions (optional for backward compat)
         """
         self.config = config_manager
         self.history = history_manager
         self.queue = queue_manager
         self.video_library = video_library
         self.logger = logging.getLogger(__name__)
-        self._completion_fn = completion_fn
+        self._llm_client = llm_client
 
     def is_configured(self) -> bool:
         """Check if AI suggestions are properly configured."""
-        model = self.config.get("llm_model")
-        if not model:
+        if self._llm_client is None:
             return False
-
-        # For non-Ollama models, we need an API key
-        if not model.startswith("ollama/"):
-            api_key = self.config.get("llm_api_key")
-            if not api_key:
-                return False
-
-        return True
+        return self._llm_client.is_configured()
 
     def get_suggestions(
         self,
@@ -164,60 +154,35 @@ class SuggestionEngine:
         # Build the prompt
         prompt = self._build_prompt(context, count)
 
-        # Get LLM config
-        model = self.config.get("llm_model")
-        api_key = self.config.get("llm_api_key")
-        base_url = self.config.get("llm_base_url")
         temperature = self.config.get_float("llm_temperature", 0.9)
 
-        # Get completion function (use litellm if not injected)
-        completion_fn = self._completion_fn
-        if completion_fn is None:
-            import litellm
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a karaoke song recommender with deep knowledge of music "
+                    "across all genres and eras. You help singers discover songs that "
+                    "suit their voice and taste - not just top-40 hits everyone knows. "
+                    "You understand vocal ranges, song keys, and what makes a song "
+                    "fun to perform at karaoke. Always return valid JSON."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
 
-            # Configure litellm
-            if api_key:
-                # Set the appropriate API key based on model prefix
-                if model.startswith("claude") or model.startswith("anthropic"):
-                    litellm.anthropic_key = api_key
-                elif model.startswith("gemini"):
-                    litellm.gemini_key = api_key
-                else:
-                    litellm.openai_key = api_key
+        self.logger.debug("Calling LLM for suggestions")
 
-            # Drop unsupported params (e.g., reasoning_effort for non-reasoning models)
-            litellm.drop_params = True
-            completion_fn = litellm.completion
-
-        # Build completion kwargs
-        kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a karaoke song recommender with deep knowledge of music "
-                        "across all genres and eras. You help singers discover songs that "
-                        "suit their voice and taste - not just top-40 hits everyone knows. "
-                        "You understand vocal ranges, song keys, and what makes a song "
-                        "fun to perform at karaoke. Always return valid JSON."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": temperature,
-            "max_tokens": 16384,
-            # For reasoning models (GPT-5, o1, o3), use low effort - this is a simple task
-            "reasoning_effort": "low",
-        }
-
-        if base_url:
-            kwargs["api_base"] = base_url
-
-        self.logger.debug("Calling LLM for suggestions: model=%s", model)
+        # is_configured() ensures _llm_client is set before we get here
+        assert self._llm_client is not None
 
         try:
-            response = completion_fn(**kwargs)
+            response = self._llm_client.completion(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=16384,
+                # For reasoning models (GPT-5, o1, o3), use low effort - this is a simple task
+                reasoning_effort="low",
+            )
             message = response.choices[0].message
             content = message.content
 
@@ -225,8 +190,7 @@ class SuggestionEngine:
             finish_reason = response.choices[0].finish_reason
             if not content:
                 self.logger.warning(
-                    "LLM returned empty content. Model: %s, finish_reason: %s, message: %s",
-                    model,
+                    "LLM returned empty content. finish_reason: %s, message: %s",
                     finish_reason,
                     message,
                 )

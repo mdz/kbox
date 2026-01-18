@@ -2,7 +2,7 @@
 Unit tests for SongMetadataExtractor.
 
 Tests the metadata extraction logic without making actual LLM calls.
-Uses dependency injection for the LLM completion function.
+Uses dependency injection for the LLM client.
 """
 
 import json
@@ -15,6 +15,7 @@ import pytest
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
+from kbox.llm import LLMClient
 from kbox.song_metadata import SongMetadataExtractor
 
 # =============================================================================
@@ -99,6 +100,11 @@ def make_error_completion(error_message: str = "API error"):
     return fake_completion
 
 
+def make_llm_client(config_manager: ConfigManager, completion_fn) -> LLMClient:
+    """Create an LLMClient with a fake completion function for testing."""
+    return LLMClient(config_manager, completion_fn=completion_fn)
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -122,24 +128,29 @@ def config_manager(temp_db):
 
 
 @pytest.fixture
+def llm_client(config_manager):
+    """Create an LLMClient for testing (without a completion function)."""
+    return LLMClient(config_manager)
+
+
+@pytest.fixture
 def configured_extractor(temp_db, config_manager):
     """Create a fully configured extractor with fake completion."""
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
+    llm_client = make_llm_client(
+        config_manager, make_fake_completion("Journey", "Don't Stop Believin'")
+    )
     return SongMetadataExtractor(
-        config_manager=config_manager,
         database=temp_db,
-        completion_fn=make_fake_completion("Journey", "Don't Stop Believin'"),
+        llm_client=llm_client,
     )
 
 
 @pytest.fixture
-def unconfigured_extractor(temp_db, config_manager):
+def unconfigured_extractor(temp_db):
     """Create an extractor without LLM configuration."""
-    return SongMetadataExtractor(
-        config_manager=config_manager,
-        database=temp_db,
-    )
+    return SongMetadataExtractor(database=temp_db)
 
 
 # =============================================================================
@@ -147,31 +158,31 @@ def unconfigured_extractor(temp_db, config_manager):
 # =============================================================================
 
 
-def test_is_configured_with_model_and_key(temp_db, config_manager):
+def test_is_configured_with_model_and_key(temp_db, config_manager, llm_client):
     """Test is_configured returns True when model and API key are set."""
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
-    extractor = SongMetadataExtractor(config_manager, temp_db)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     assert extractor.is_configured() is True
 
 
-def test_is_configured_with_ollama_no_key(temp_db, config_manager):
+def test_is_configured_with_ollama_no_key(temp_db, config_manager, llm_client):
     """Test is_configured returns True for Ollama models without API key."""
     config_manager.set("llm_model", "ollama/llama3")
-    extractor = SongMetadataExtractor(config_manager, temp_db)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     assert extractor.is_configured() is True
 
 
-def test_is_configured_without_model(temp_db, config_manager):
+def test_is_configured_without_model(temp_db, config_manager, llm_client):
     """Test is_configured returns False when model is not set."""
-    extractor = SongMetadataExtractor(config_manager, temp_db)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     assert extractor.is_configured() is False
 
 
-def test_is_configured_without_api_key(temp_db, config_manager):
+def test_is_configured_without_api_key(temp_db, config_manager, llm_client):
     """Test is_configured returns False for non-Ollama models without API key."""
     config_manager.set("llm_model", "gpt-4o-mini")
-    extractor = SongMetadataExtractor(config_manager, temp_db)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     assert extractor.is_configured() is False
 
 
@@ -217,7 +228,8 @@ def test_extract_with_description(temp_db, config_manager):
         )
         return response
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, capturing_completion)
+    llm_client = make_llm_client(config_manager, capturing_completion)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     extractor.extract(
         video_id="youtube:xyz789",
         title="Karaoke - Bohemian Rhapsody",
@@ -252,7 +264,8 @@ def test_extract_caches_result(temp_db, config_manager):
         )
         return response
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, counting_completion)
+    llm_client = make_llm_client(config_manager, counting_completion)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
 
     # First call should hit LLM
     artist1, song1 = extractor.extract("youtube:abba1", "ABBA - Dancing Queen")
@@ -273,15 +286,15 @@ def test_extract_cache_persists_across_instances(temp_db, config_manager):
     config_manager.set("llm_api_key", "test-key")
 
     # First instance extracts and caches
-    extractor1 = SongMetadataExtractor(config_manager, temp_db, make_fake_completion("U2", "One"))
+    llm_client1 = make_llm_client(config_manager, make_fake_completion("U2", "One"))
+    extractor1 = SongMetadataExtractor(temp_db, llm_client=llm_client1)
     artist1, song1 = extractor1.extract("youtube:u2one", "U2 - One")
     assert artist1 == "U2"
     assert song1 == "One"
 
     # Second instance should find it in cache (different fake completion proves cache hit)
-    extractor2 = SongMetadataExtractor(
-        config_manager, temp_db, make_fake_completion("Wrong", "Wrong")
-    )
+    llm_client2 = make_llm_client(config_manager, make_fake_completion("Wrong", "Wrong"))
+    extractor2 = SongMetadataExtractor(temp_db, llm_client=llm_client2)
     artist2, song2 = extractor2.extract("youtube:u2one", "U2 - One")
     assert artist2 == "U2"  # From cache, not the "Wrong" completion
     assert song2 == "One"
@@ -304,7 +317,8 @@ def test_extract_different_videos_not_cached(temp_db, config_manager):
         )
         return response
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, counting_completion)
+    llm_client = make_llm_client(config_manager, counting_completion)
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
 
     # Different video IDs should each call LLM
     extractor.extract("youtube:video1", "Title 1")
@@ -322,7 +336,8 @@ def test_extract_empty_response_returns_none(temp_db, config_manager):
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, make_empty_completion())
+    llm_client = make_llm_client(config_manager, make_empty_completion())
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     artist, song_name = extractor.extract("youtube:empty", "Some Title")
     assert artist is None
     assert song_name is None
@@ -333,7 +348,8 @@ def test_extract_invalid_json_returns_none(temp_db, config_manager):
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, make_invalid_json_completion())
+    llm_client = make_llm_client(config_manager, make_invalid_json_completion())
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     artist, song_name = extractor.extract("youtube:invalid", "Some Title")
     assert artist is None
     assert song_name is None
@@ -344,7 +360,8 @@ def test_extract_partial_response_returns_none(temp_db, config_manager):
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, make_partial_completion())
+    llm_client = make_llm_client(config_manager, make_partial_completion())
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     artist, song_name = extractor.extract("youtube:partial", "Some Title")
     assert artist is None
     assert song_name is None
@@ -355,7 +372,8 @@ def test_extract_llm_error_returns_none(temp_db, config_manager):
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
 
-    extractor = SongMetadataExtractor(config_manager, temp_db, make_error_completion())
+    llm_client = make_llm_client(config_manager, make_error_completion())
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     artist, song_name = extractor.extract("youtube:error", "Some Title")
     assert artist is None
     assert song_name is None
@@ -366,9 +384,10 @@ def test_extract_markdown_wrapped_json(temp_db, config_manager):
     config_manager.set("llm_model", "gpt-4o-mini")
     config_manager.set("llm_api_key", "test-key")
 
-    extractor = SongMetadataExtractor(
-        config_manager, temp_db, make_markdown_completion("The Beatles", "Yesterday")
+    llm_client = make_llm_client(
+        config_manager, make_markdown_completion("The Beatles", "Yesterday")
     )
+    extractor = SongMetadataExtractor(temp_db, llm_client=llm_client)
     artist, song_name = extractor.extract("youtube:beatles", "Yesterday - Karaoke")
     assert artist == "The Beatles"
     assert song_name == "Yesterday"
