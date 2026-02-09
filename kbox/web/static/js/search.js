@@ -181,7 +181,7 @@ export async function confirmAddToQueue() {
     const warningMinutes = window.kboxConfig?.longSongWarningMinutes || 0;
     const durationSeconds = currentVideoToAdd.duration_seconds || 0;
     if (warningMinutes > 0 && durationSeconds > warningMinutes * 60) {
-        if (!confirm(`This song is over ${warningMinutes} minutes long. Are you sure you want to add it?`)) {
+        if (!confirm(`This song is over ${Math.floor(durationSeconds / 60)} minutes long. Are you sure you want to add it?`)) {
             return;
         }
     }
