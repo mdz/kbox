@@ -835,7 +835,7 @@ def create_app(
                 streaming.reinitialize_pipeline()
 
                 # Show idle screen so display stays active
-                playback.show_idle_screen("Settings applied - ready to play!")
+                playback.show_idle_screen()
 
                 logger.info("Streaming configuration applied successfully")
 

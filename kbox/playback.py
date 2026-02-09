@@ -950,19 +950,14 @@ class PlaybackController:
             return getattr(server, "external_url", None)
         return None
 
-    def show_idle_screen(self, message: str = "Add songs to get started!"):
-        """
-        Show the idle screen interstitial.
-
-        Args:
-            message: Message to display on the idle screen
-        """
-        self.logger.info("Showing idle screen: %s", message)
+    def show_idle_screen(self):
+        """Show the idle screen interstitial with QR code instructions."""
+        self.logger.info("Showing idle screen")
 
         generator = self._get_interstitial_generator()
         web_url = self._get_web_url()
 
-        image_path = generator.generate_idle_screen(web_url=web_url, message=message)
+        image_path = generator.generate_idle_screen(web_url=web_url)
 
         if image_path:
             self.streaming_controller.display_image(image_path)

@@ -116,15 +116,14 @@ class InterstitialGenerator:
         x = (self.width - text_width) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    def generate_idle_screen(
-        self, web_url: Optional[str] = None, message: str = "Add songs to get started!"
-    ) -> str:
+    def generate_idle_screen(self, web_url: Optional[str] = None) -> str:
         """
         Generate the idle screen (before playback starts).
 
+        Instructs the audience to scan the QR code overlay to pick songs.
+
         Args:
-            web_url: URL for the web interface (for QR code)
-            message: Message to display
+            web_url: URL for the web interface (shown as hint below QR instruction)
 
         Returns:
             Path to the generated image file
@@ -144,9 +143,32 @@ class InterstitialGenerator:
             draw, "Karaoke", self.height // 4 + 140, subtitle_font, SECONDARY_TEXT_COLOR
         )
 
-        # Main message
-        message_font = self._get_font(64)
-        self._center_text(draw, message, self.height // 2 + 50, message_font, PRIMARY_TEXT_COLOR)
+        # Main instruction - tell users to scan the QR code
+        instruction_font = self._get_font(56, bold=True)
+        self._center_text(
+            draw,
+            "Scan the QR code to pick a song",
+            self.height // 2 + 50,
+            instruction_font,
+            PRIMARY_TEXT_COLOR,
+        )
+
+        # Arrow hint pointing toward QR code location (top-left by default)
+        hint_font = self._get_font(32)
+        self._center_text(
+            draw,
+            "\u2196  use your phone\u2019s camera",
+            self.height // 2 + 130,
+            hint_font,
+            SECONDARY_TEXT_COLOR,
+        )
+
+        # Show URL as fallback if available
+        if web_url:
+            url_font = self._get_font(28)
+            self._center_text(
+                draw, f"or visit {web_url}", self.height // 2 + 185, url_font, SECONDARY_TEXT_COLOR
+            )
 
         # Note: QR code is handled by the streaming overlay for consistency
 
@@ -224,7 +246,7 @@ class InterstitialGenerator:
         Generate the end-of-queue screen.
 
         Args:
-            web_url: URL for the web interface (for QR code)
+            web_url: URL for the web interface (shown as fallback)
             message: Message to display
 
         Returns:
@@ -239,21 +261,35 @@ class InterstitialGenerator:
         message_font = self._get_font(72, bold=True)
         self._center_text(draw, message, self.height // 3, message_font, PRIMARY_TEXT_COLOR)
 
-        # Sub-message
+        # Instruction to keep going
         sub_font = self._get_font(48)
         self._center_text(
             draw,
-            "Add more songs to keep the party going!",
+            "Scan the QR code to add more songs",
             self.height // 2,
             sub_font,
             SECONDARY_TEXT_COLOR,
         )
 
-        # Or call it a night
-        alt_font = self._get_font(36)
-        self._center_text(
-            draw, "...or call it a night?", self.height // 2 + 80, alt_font, SECONDARY_TEXT_COLOR
-        )
+        # Show URL as fallback if available, otherwise a gentle nudge
+        if web_url:
+            url_font = self._get_font(28)
+            self._center_text(
+                draw,
+                f"or visit {web_url}",
+                self.height // 2 + 70,
+                url_font,
+                SECONDARY_TEXT_COLOR,
+            )
+        else:
+            alt_font = self._get_font(36)
+            self._center_text(
+                draw,
+                "...or call it a night?",
+                self.height // 2 + 80,
+                alt_font,
+                SECONDARY_TEXT_COLOR,
+            )
 
         # Note: QR code is handled by the streaming overlay for consistency
 
