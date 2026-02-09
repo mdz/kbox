@@ -227,6 +227,20 @@ def set_operator(client):
     assert response.status_code == 200
 
 
+def set_user(client, user_id, display_name):
+    """Register user and establish session identity.
+
+    This binds the user_id to the session cookie, preventing impersonation.
+    Must be called before making authenticated API requests.
+    """
+    response = client.post(
+        "/api/users",
+        json={"user_id": user_id, "display_name": display_name},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 # =============================================================================
 # Queue Endpoints - Detailed Tests
 # =============================================================================
@@ -245,6 +259,9 @@ class TestQueueEndpoints:
 
     def test_add_song(self, client, alice):
         """POST /api/queue - add song to queue."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         response = client.post(
             "/api/queue",
             json={
@@ -260,8 +277,9 @@ class TestQueueEndpoints:
         assert data["status"] == "added"
         assert "id" in data
 
-    def test_add_song_user_not_found(self, client):
-        """POST /api/queue - user not found returns 400."""
+    def test_add_song_not_authenticated(self, client):
+        """POST /api/queue - unauthenticated request returns 401."""
+        # Without establishing session identity first, requests are rejected
         response = client.post(
             "/api/queue",
             json={
@@ -270,11 +288,14 @@ class TestQueueEndpoints:
                 "title": "Test Song",
             },
         )
-        assert response.status_code == 400
-        assert "User not found" in response.json()["detail"]
+        assert response.status_code == 401
+        assert "Not authenticated" in response.json()["detail"]
 
     def test_add_duplicate_song_returns_409(self, client, alice):
         """POST /api/queue - duplicate song returns 409 Conflict."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         # Add a song first
         response = client.post(
             "/api/queue",
@@ -298,24 +319,19 @@ class TestQueueEndpoints:
         assert response.status_code == 409
         assert "already in the queue" in response.json()["detail"]
 
-    def test_get_queue_with_songs(self, client, alice, bob):
+    def test_get_queue_with_songs(self, client, alice, bob, app_components):
         """GET /api/queue - queue with songs."""
-        # Add songs
-        client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:song1",
-                "title": "Alice's Song",
-            },
+        # Add songs directly via queue manager (bypasses session auth for test setup)
+        queue_mgr = app_components["queue"]
+        queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:song1",
+            title="Alice's Song",
         )
-        client.post(
-            "/api/queue",
-            json={
-                "user_id": BOB_ID,
-                "video_id": "youtube:song2",
-                "title": "Bob's Song",
-            },
+        queue_mgr.add_song(
+            user=bob,
+            video_id="youtube:song2",
+            title="Bob's Song",
         )
 
         response = client.get("/api/queue")
@@ -325,6 +341,9 @@ class TestQueueEndpoints:
 
     def test_remove_song_as_owner(self, client, alice):
         """DELETE /api/queue/{id} - owner can remove their song."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         # Add song
         add_response = client.post(
             "/api/queue",
@@ -336,63 +355,59 @@ class TestQueueEndpoints:
         )
         item_id = add_response.json()["id"]
 
-        # Remove as owner
-        response = client.delete(f"/api/queue/{item_id}?user_id={ALICE_ID}")
+        # Remove as owner (session identity is used, not query param)
+        response = client.delete(f"/api/queue/{item_id}")
         assert response.status_code == 200
         assert response.json()["status"] == "removed"
 
-    def test_remove_song_not_owner(self, client, alice, bob):
+    def test_remove_song_not_owner(self, client, alice, bob, app_components):
         """DELETE /api/queue/{id} - non-owner cannot remove song."""
-        # Alice adds song
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add Alice's song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
-        # Bob tries to remove
-        response = client.delete(f"/api/queue/{item_id}?user_id={BOB_ID}")
+        # Bob tries to remove (establish Bob's session)
+        set_user(client, BOB_ID, "Bob")
+        response = client.delete(f"/api/queue/{item_id}")
         assert response.status_code == 403
 
-    def test_remove_song_as_operator(self, client, alice):
+    def test_remove_song_as_operator(self, client, alice, app_components):
         """DELETE /api/queue/{id} - operator can remove any song."""
-        # Add song
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
         # Auth as operator and remove
         set_operator(client)
         response = client.delete(f"/api/queue/{item_id}")
         assert response.status_code == 200
 
-    def test_reorder_song_requires_operator(self, client, alice):
+    def test_reorder_song_requires_operator(self, client, alice, app_components):
         """PATCH /api/queue/{id}/position - requires operator."""
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
         response = client.patch(f"/api/queue/{item_id}/position", json={"new_position": 1})
         assert response.status_code == 403
 
     def test_update_queue_item_pitch(self, client, alice):
         """PATCH /api/queue/{id} - update pitch as owner."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         add_response = client.post(
             "/api/queue",
             json={
@@ -406,34 +421,32 @@ class TestQueueEndpoints:
 
         response = client.patch(
             f"/api/queue/{item_id}",
-            json={"pitch_semitones": 3, "user_id": ALICE_ID},
+            json={"pitch_semitones": 3},  # user_id from session, not body
         )
         assert response.status_code == 200
         assert response.json()["status"] == "updated"
 
-    def test_clear_queue_requires_operator(self, client, alice):
+    def test_clear_queue_requires_operator(self, client, alice, app_components):
         """POST /api/queue/clear - requires operator."""
-        client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
 
         response = client.post("/api/queue/clear")
         assert response.status_code == 403
 
-    def test_clear_queue_as_operator(self, client, alice):
+    def test_clear_queue_as_operator(self, client, alice, app_components):
         """POST /api/queue/clear - operator can clear queue."""
-        client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
 
         set_operator(client)
@@ -443,67 +456,62 @@ class TestQueueEndpoints:
 
     def test_get_song_settings(self, client, alice):
         """GET /api/queue/settings/{video_id} - get saved settings."""
-        response = client.get(f"/api/queue/settings/youtube:test123?user_id={ALICE_ID}")
+        # Establish session identity (no longer uses query param)
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.get("/api/queue/settings/youtube:test123")
         assert response.status_code == 200
         # No history yet, so settings should be None
         assert response.json()["settings"] is None
 
-    def test_play_next_requires_operator(self, client, alice):
+    def test_play_next_requires_operator(self, client, alice, app_components):
         """POST /api/queue/{id}/play-next - requires operator."""
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
         response = client.post(f"/api/queue/{item_id}/play-next")
         assert response.status_code == 403
 
-    def test_move_to_end_requires_operator(self, client, alice):
+    def test_move_to_end_requires_operator(self, client, alice, app_components):
         """POST /api/queue/{id}/move-to-end - requires operator."""
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
         response = client.post(f"/api/queue/{item_id}/move-to-end")
         assert response.status_code == 403
 
-    def test_move_down_requires_operator(self, client, alice):
+    def test_move_down_requires_operator(self, client, alice, app_components):
         """POST /api/queue/{id}/move-down - requires operator."""
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
         response = client.post(f"/api/queue/{item_id}/move-down")
         assert response.status_code == 403
 
-    def test_move_up_requires_operator(self, client, alice):
+    def test_move_up_requires_operator(self, client, alice, app_components):
         """POST /api/queue/{id}/move-up - requires operator."""
-        add_response = client.post(
-            "/api/queue",
-            json={
-                "user_id": ALICE_ID,
-                "video_id": "youtube:test123",
-                "title": "Test Song",
-            },
+        # Add song directly via queue manager
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice,
+            video_id="youtube:test123",
+            title="Test Song",
         )
-        item_id = add_response.json()["id"]
 
         response = client.post(f"/api/queue/{item_id}/move-up")
         assert response.status_code == 403
@@ -792,6 +800,9 @@ class TestHistoryEndpoints:
 
     def test_get_user_history_empty(self, client, alice):
         """GET /api/history/{user_id} - empty history."""
+        # Establish session identity (users can only view their own history)
+        set_user(client, ALICE_ID, "Alice")
+
         response = client.get(f"/api/history/{ALICE_ID}")
         assert response.status_code == 200
         assert response.json()["history"] == []
@@ -906,19 +917,26 @@ class TestSuggestionsEndpoints:
 
     def test_suggestions_returns_503_when_not_configured(self, client, alice):
         """GET /api/suggestions - returns 503 when AI not configured."""
+        # Establish session identity (user_id from session, not query param)
+        set_user(client, ALICE_ID, "Alice")
+
         # Default mock raises SuggestionError("not configured")
-        response = client.get(f"/api/suggestions?user_id={ALICE_ID}")
+        response = client.get("/api/suggestions")
         assert response.status_code == 503
         data = response.json()
         assert "not configured" in data["detail"].lower()
 
-    def test_suggestions_requires_user_id(self, client):
-        """GET /api/suggestions - requires user_id parameter."""
+    def test_suggestions_requires_authentication(self, client):
+        """GET /api/suggestions - requires session authentication."""
+        # Without session, should return 401
         response = client.get("/api/suggestions")
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 401
 
-    def test_suggestions_returns_results_when_configured(self, client, app_components):
+    def test_suggestions_returns_results_when_configured(self, client, alice, app_components):
         """GET /api/suggestions - returns suggestions when AI is configured."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         # Configure mock to return results
         app_components["suggestion_engine"].get_suggestions.side_effect = None
         app_components["suggestion_engine"].get_suggestions.return_value = [
@@ -936,35 +954,41 @@ class TestSuggestionsEndpoints:
             },
         ]
 
-        response = client.get(f"/api/suggestions?user_id={ALICE_ID}")
+        response = client.get("/api/suggestions")
         assert response.status_code == 200
         data = response.json()
         assert "results" in data
         assert data["source"] == "ai"
         assert len(data["results"]) == 2
 
-    def test_suggestions_passes_max_results(self, client, app_components):
+    def test_suggestions_passes_max_results(self, client, alice, app_components):
         """GET /api/suggestions - passes max_results to engine."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         # Configure mock to return results
         app_components["suggestion_engine"].get_suggestions.side_effect = None
         app_components["suggestion_engine"].get_suggestions.return_value = [
             {"id": "youtube:vid1", "title": "Song 1", "channel": "Test"},
         ]
 
-        response = client.get(f"/api/suggestions?user_id={ALICE_ID}&max_results=5")
+        response = client.get("/api/suggestions?max_results=5")
         assert response.status_code == 200
 
         # Verify max_results was passed to engine
         app_components["suggestion_engine"].get_suggestions.assert_called_once_with(ALICE_ID, 5)
 
-    def test_suggestions_handles_engine_error(self, client, app_components):
+    def test_suggestions_handles_engine_error(self, client, alice, app_components):
         """GET /api/suggestions - returns 503 on engine error."""
+        # Establish session identity
+        set_user(client, ALICE_ID, "Alice")
+
         # Configure mock to raise error
         app_components["suggestion_engine"].get_suggestions.side_effect = SuggestionError(
             "Could not find karaoke videos"
         )
 
-        response = client.get(f"/api/suggestions?user_id={ALICE_ID}")
+        response = client.get("/api/suggestions")
         assert response.status_code == 503
         data = response.json()
         assert "could not find" in data["detail"].lower()
