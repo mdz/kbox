@@ -783,6 +783,11 @@
 
     {% include 'components/config_screen.html' %}
 
+    <script>
+        window.kboxConfig = {
+            longSongWarningMinutes: {{ long_song_warning_minutes }},
+        };
+    </script>
     <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
