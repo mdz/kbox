@@ -296,7 +296,7 @@ export async function loadQueue() {
         renderNowPlaying(statusData);
 
         // Render Up Next section (backend provides next_song - single source of truth)
-        renderUpNext(statusData, queueData.next_song);
+        renderUpNext(statusData, queueData.next_song, currentQueue);
 
         // Render Clear Queue button (operator only)
         const clearQueueContainer = document.getElementById('clear-queue-button-container');
