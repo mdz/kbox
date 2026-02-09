@@ -28,6 +28,10 @@ export let currentConfigData = null;
 // Store current queue item being edited
 export let currentQueueItemToEdit = null;
 
+// Queue depth (estimated wait time, computed by backend)
+export let queueDepthSeconds = 0;
+export let queueDepthCount = 0;
+
 // Store current video being added
 export let currentVideoToAdd = null;
 
@@ -43,4 +47,6 @@ export function setPlaybackAutoLockTimer(value) { playbackAutoLockTimer = value;
 export function setPendingOperatorAction(value) { pendingOperatorAction = value; }
 export function setCurrentConfigData(value) { currentConfigData = value; }
 export function setCurrentQueueItemToEdit(value) { currentQueueItemToEdit = value; }
+export function setQueueDepthSeconds(value) { queueDepthSeconds = value; }
+export function setQueueDepthCount(value) { queueDepthCount = value; }
 export function setCurrentVideoToAdd(value) { currentVideoToAdd = value; }
