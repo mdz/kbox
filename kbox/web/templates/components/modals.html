@@ -29,13 +29,13 @@
         <div id="edit-queue-item-content">
             <!-- Song settings will be rendered here by JavaScript -->
         </div>
-        <!-- User options (for their own songs) -->
-        <div id="edit-queue-item-user-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
+        <!-- Owner options (visible to song owner OR operator) -->
+        <div id="edit-queue-item-owner-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
             <div style="display: flex; flex-direction: column; gap: 10px;">
-                <button onclick="removeOwnQueueItem()" class="danger" style="width: 100%;">Remove My Song</button>
+                <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
             </div>
         </div>
-        <!-- Operator options -->
+        <!-- Operator-only options -->
         <div id="edit-queue-item-operator-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
             <h3 style="color: #4a9eff; font-size: 1em; margin-bottom: 10px;">Queue Management</h3>
             <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -44,7 +44,6 @@
                 <button onclick="moveUpQueueItem()" style="width: 100%;">Move Up</button>
                 <button onclick="moveDownQueueItem()" style="width: 100%;">Move Down</button>
                 <button onclick="moveToEndQueueItem()" style="width: 100%;">Move to End</button>
-                <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
             </div>
         </div>
         <div style="display: flex; gap: 10px;">
