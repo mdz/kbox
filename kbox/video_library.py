@@ -11,6 +11,7 @@ internal detail managed by the library.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -22,6 +23,87 @@ if TYPE_CHECKING:
 
 # Supported video file extensions
 VIDEO_EXTENSIONS = [".mp4", ".mkv", ".webm"]
+
+# =========================================================================
+# Karaoke Detection Heuristic
+# =========================================================================
+
+# Patterns in titles that strongly indicate a karaoke/instrumental track.
+_KARAOKE_POSITIVE_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"\bkaraoke\b",
+        r"\binstrumental\b",
+        r"\bbacking\s+track\b",
+        r"\bminus\s+one\b",
+        r"\bno\s+vocals?\b",
+        r"\boff[\s-]?vocals?\b",
+        r"\bvocals?\s+removed\b",
+        r"\bwithout\s+(backing\s+)?vocals?\b",
+        r"\bsing[\s-]?along\b",
+    ]
+]
+
+# Channel names known to produce karaoke content.
+_KARAOKE_CHANNELS = [
+    "sing king",
+    "karafun",
+    "stingray karaoke",
+    "zoom karaoke",
+]
+
+# Patterns that strongly indicate a NON-karaoke track.
+_NON_KARAOKE_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"\bofficial\s+(music\s+)?video\b",
+        r"\bmusic\s+video\b",
+        r"\bofficial\s+audio\b",
+        r"\blive\s+(at|in|from|performance|concert)\b",
+        r"\bconcert\b",
+        r"\breaction\b",
+        r"\btutorial\b",
+        r"\breview\b",
+        r"\bbehind\s+the\s+scenes\b",
+        r"\binterview\b",
+        r"\blyric\s+video\b",
+        r"\blyrics\s+video\b",
+    ]
+]
+
+
+def is_likely_karaoke(title: str, channel: str = "", description: str = "") -> bool:
+    """
+    Heuristic to decide whether a video is likely a karaoke track.
+
+    Returns True if the track should be kept (has karaoke signals or is
+    ambiguous). Returns False only when the title contains strong non-karaoke
+    signals *and* no karaoke signals -- i.e. it is obviously not a karaoke
+    track.
+
+    The heuristic is intentionally conservative: when in doubt, the track is
+    kept so that users can make the final call.
+    """
+    title_lower = title.lower()
+    channel_lower = channel.lower()
+
+    # ── positive: any karaoke signal in title → keep ──
+    for pattern in _KARAOKE_POSITIVE_PATTERNS:
+        if pattern.search(title_lower):
+            return True
+
+    # ── positive: known karaoke channel → keep ──
+    for ch in _KARAOKE_CHANNELS:
+        if ch in channel_lower:
+            return True
+
+    # ── negative: obvious non-karaoke title → filter out ──
+    for pattern in _NON_KARAOKE_PATTERNS:
+        if pattern.search(title_lower):
+            return False
+
+    # Ambiguous — give the benefit of the doubt.
+    return True
 
 
 class VideoSource(ABC):
@@ -236,6 +318,10 @@ class VideoLibrary:
         """
         Search for videos across all configured sources.
 
+        Results are filtered with a lightweight heuristic that removes videos
+        whose titles are obviously non-karaoke (e.g. official music videos,
+        live concerts, reaction videos).
+
         Args:
             query: Search query
             max_results: Maximum results per source
@@ -271,6 +357,21 @@ class VideoLibrary:
         if sources_tried > 0 and len(errors) == sources_tried:
             # Re-raise the first error (or last, depending on preference)
             raise errors[0][1]
+
+        # Filter out obvious non-karaoke results
+        before_count = len(results)
+        results = [
+            r
+            for r in results
+            if is_likely_karaoke(
+                r.get("title", ""),
+                r.get("channel", ""),
+                r.get("description", ""),
+            )
+        ]
+        filtered_count = before_count - len(results)
+        if filtered_count:
+            self.logger.info("Filtered %d non-karaoke result(s) from search", filtered_count)
 
         return results
 
