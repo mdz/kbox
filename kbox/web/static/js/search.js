@@ -2,7 +2,7 @@
  * Search and add song functions for kbox web UI.
  */
 
-import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd } from './state.js';
+import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, currentQueue } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
 
@@ -144,6 +144,21 @@ export async function showAddSongModal(video) {
         console.debug('Could not fetch saved settings:', e);
     }
 
+    // Calculate queue depth (estimated wait time)
+    const pendingItems = currentQueue.filter(item => !item.is_played);
+    const totalSeconds = pendingItems.reduce((sum, item) => sum + (item.duration_seconds || 0), 0);
+    const songCount = pendingItems.length;
+
+    let queueDepthHTML;
+    if (songCount === 0) {
+        queueDepthHTML = '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">Queue is empty — your song will play first!</div>';
+    } else {
+        const minutes = Math.round(totalSeconds / 60);
+        const timeStr = minutes < 1 ? 'less than a minute' : minutes === 1 ? '~1 minute' : `~${minutes} minutes`;
+        const songStr = songCount === 1 ? '1 song' : `${songCount} songs`;
+        queueDepthHTML = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">&#x23F3; ${songStr} ahead (${timeStr})</div>`;
+    }
+
     // Use reusable song settings component with saved pitch
     renderSongSettings('add-song-modal-content', {
         title: video.title,
@@ -156,7 +171,8 @@ export async function showAddSongModal(video) {
         live: false,
         showStatus: false,
         showThumbnail: true,
-        showUser: true
+        showUser: true,
+        additionalControls: queueDepthHTML
     });
 
     // Show modal
