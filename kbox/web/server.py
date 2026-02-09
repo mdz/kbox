@@ -275,6 +275,7 @@ def create_app(
     async def get_queue(
         queue_mgr: QueueManager = Depends(get_queue_manager),
         playback: PlaybackController = Depends(get_playback_controller),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
     ):
         """Get current queue with current/played flags for UI rendering."""
         from dataclasses import asdict
@@ -286,6 +287,7 @@ def create_app(
         status = playback.get_status()
         current_song = status.get("current_song")
         current_song_id = current_song.get("id") if current_song else None
+        position_seconds = status.get("position_seconds", 0)
 
         # Convert QueueItem objects to dicts and add flags for UI rendering
         queue = []
@@ -317,7 +319,39 @@ def create_app(
                 "duration_seconds": next_song_item.metadata.duration_seconds,
             }
 
-        return {"queue": queue, "current_song_id": current_song_id, "next_song": next_song}
+        # Calculate when the current user's next song is coming up
+        # (only if they're not already the immediate next singer)
+        my_next_turn = None
+        is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
+        if current_user_id and not is_next_me:
+            # Get unplayed songs in queue order (excluding the currently playing song)
+            upcoming = [
+                item
+                for item in queue_items
+                if item.played_at is None and item.id != current_song_id
+            ]
+
+            # Time remaining in the current song
+            current_duration = current_song.get("duration_seconds", 0) if current_song else 0
+            time_until = max(0, current_duration - position_seconds) if current_song else 0
+            songs_away = 0
+
+            for item in upcoming:
+                if item.user_id == current_user_id:
+                    my_next_turn = {
+                        "estimated_seconds": int(time_until),
+                        "songs_away": songs_away,
+                    }
+                    break
+                songs_away += 1
+                time_until += item.metadata.duration_seconds or 0
+
+        return {
+            "queue": queue,
+            "current_song_id": current_song_id,
+            "next_song": next_song,
+            "my_next_turn": my_next_turn,
+        }
 
     @app.get("/api/queue/settings/{video_id:path}")
     async def get_song_settings(
