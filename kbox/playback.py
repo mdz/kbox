@@ -955,9 +955,7 @@ class PlaybackController:
         self.logger.info("Showing idle screen")
 
         generator = self._get_interstitial_generator()
-        web_url = self._get_web_url()
-
-        image_path = generator.generate_idle_screen(web_url=web_url)
+        image_path = generator.generate_idle_screen()
 
         if image_path:
             self.streaming_controller.display_image(image_path)
@@ -999,9 +997,7 @@ class PlaybackController:
         self.logger.info("Showing end-of-queue screen: %s", message)
 
         generator = self._get_interstitial_generator()
-        web_url = self._get_web_url()
-
-        image_path = generator.generate_end_of_queue_screen(web_url=web_url, message=message)
+        image_path = generator.generate_end_of_queue_screen(message=message)
 
         if image_path:
             self.streaming_controller.display_image(image_path)

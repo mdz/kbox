@@ -116,14 +116,11 @@ class InterstitialGenerator:
         x = (self.width - text_width) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    def generate_idle_screen(self, web_url: Optional[str] = None) -> str:
+    def generate_idle_screen(self) -> str:
         """
         Generate the idle screen (before playback starts).
 
         Instructs the audience to scan the QR code overlay to pick songs.
-
-        Args:
-            web_url: URL for the web interface (shown as hint below QR instruction)
 
         Returns:
             Path to the generated image file
@@ -162,13 +159,6 @@ class InterstitialGenerator:
             hint_font,
             SECONDARY_TEXT_COLOR,
         )
-
-        # Show URL as fallback if available
-        if web_url:
-            url_font = self._get_font(28)
-            self._center_text(
-                draw, f"or visit {web_url}", self.height // 2 + 185, url_font, SECONDARY_TEXT_COLOR
-            )
 
         # Note: QR code is handled by the streaming overlay for consistency
 
@@ -239,14 +229,11 @@ class InterstitialGenerator:
         self.logger.info("Generated transition interstitial for: %s", singer_name)
         return output_path
 
-    def generate_end_of_queue_screen(
-        self, web_url: Optional[str] = None, message: str = "That's all for now!"
-    ) -> str:
+    def generate_end_of_queue_screen(self, message: str = "That's all for now!") -> str:
         """
         Generate the end-of-queue screen.
 
         Args:
-            web_url: URL for the web interface (shown as fallback)
             message: Message to display
 
         Returns:
@@ -270,26 +257,6 @@ class InterstitialGenerator:
             sub_font,
             SECONDARY_TEXT_COLOR,
         )
-
-        # Show URL as fallback if available, otherwise a gentle nudge
-        if web_url:
-            url_font = self._get_font(28)
-            self._center_text(
-                draw,
-                f"or visit {web_url}",
-                self.height // 2 + 70,
-                url_font,
-                SECONDARY_TEXT_COLOR,
-            )
-        else:
-            alt_font = self._get_font(36)
-            self._center_text(
-                draw,
-                "...or call it a night?",
-                self.height // 2 + 80,
-                alt_font,
-                SECONDARY_TEXT_COLOR,
-            )
 
         # Note: QR code is handled by the streaming overlay for consistency
 
