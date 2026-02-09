@@ -16,7 +16,7 @@ import pytest
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.video_library import VideoLibrary, VideoSource
+from kbox.video_library import VideoLibrary, VideoSource, is_likely_karaoke
 
 
 class FakeVideoSource(VideoSource):
@@ -440,3 +440,161 @@ class TestStorageLifecycle:
 
         assert stats["video_count"] == 3
         assert stats["total_size_bytes"] == 3000
+
+
+# =============================================================================
+# Karaoke Heuristic Tests
+# =============================================================================
+
+
+class TestIsLikelyKaraoke:
+    """Tests for the is_likely_karaoke heuristic."""
+
+    # -- Positive signals: should be kept --
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Bohemian Rhapsody - Karaoke Version",
+            "Don't Stop Believin' (Karaoke)",
+            "Bohemian Rhapsody Instrumental",
+            "Let It Go (Instrumental Karaoke) (With Lyrics)",
+            "Shape of You - Backing Track",
+            "Shallow - Minus One",
+            "Hello - No Vocals",
+            "Bad Guy - No Vocal",
+            "Creep - Off Vocal",
+            "Yesterday - Off-Vocal Version",
+            "Imagine - Vocals Removed",
+            "Vocal Removed - Imagine",
+            "Shallow - Without Vocals",
+            "Bohemian Rhapsody - Without Backing Vocals",
+            "Don't Stop Believin' Sing Along",
+            "We Will Rock You Sing-Along",
+            "Singalong Version - Dancing Queen",
+        ],
+    )
+    def test_positive_title_signals(self, title):
+        """Titles with karaoke keywords should be kept."""
+        assert is_likely_karaoke(title) is True
+
+    @pytest.mark.parametrize(
+        "channel",
+        [
+            "Sing King Karaoke",
+            "Sing King",
+            "KaraFun Karaoke",
+            "KaraFun",
+            "Stingray Karaoke",
+            "Zoom Karaoke",
+        ],
+    )
+    def test_positive_channel_signals(self, channel):
+        """Known karaoke channels should always be kept."""
+        assert is_likely_karaoke("Some Random Title", channel=channel) is True
+
+    def test_karaoke_channel_overrides_negative_title(self):
+        """A known karaoke channel should override negative title signals."""
+        assert (
+            is_likely_karaoke(
+                "Adele - Hello (Official Video)",
+                channel="Sing King Karaoke",
+            )
+            is True
+        )
+
+    def test_positive_title_overrides_negative(self):
+        """A karaoke keyword should override negative signals in the same title."""
+        assert is_likely_karaoke("Hello - Official Video Karaoke Version") is True
+
+    # -- Negative signals: should be filtered out --
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Bohemian Rhapsody - Official Video",
+            "Don't Stop Believin' (Official Music Video)",
+            "Hello - Music Video",
+            "Shallow - Official Audio",
+            "Imagine - Live at Madison Square Garden",
+            "Creep - Live in Concert",
+            "Yesterday - Live from Abbey Road",
+            "Bad Guy - Live Performance",
+            "Shape of You Concert Highlights",
+            "Let It Go Reaction",
+            "Guitar Tutorial for Bohemian Rhapsody",
+            "Shape of You Review",
+            "Hello Behind the Scenes",
+            "Adele Interview About Hello",
+            "Bohemian Rhapsody - Lyric Video",
+            "Don't Stop Believin' - Lyrics Video",
+        ],
+    )
+    def test_negative_title_signals(self, title):
+        """Titles with non-karaoke keywords (and no positive signals) should be filtered."""
+        assert is_likely_karaoke(title) is False
+
+    # -- Ambiguous: should be kept (benefit of the doubt) --
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Bohemian Rhapsody",
+            "Don't Stop Believin' Journey",
+            "Hello Adele Audio",
+            "Imagine John Lennon HQ",
+        ],
+    )
+    def test_ambiguous_titles_kept(self, title):
+        """Titles with no clear signals should be kept."""
+        assert is_likely_karaoke(title) is True
+
+    # -- Case insensitivity --
+
+    def test_case_insensitive_positive(self):
+        """Positive matching should be case-insensitive."""
+        assert is_likely_karaoke("BOHEMIAN RHAPSODY KARAOKE") is True
+        assert is_likely_karaoke("bohemian rhapsody karaoke") is True
+        assert is_likely_karaoke("Bohemian Rhapsody INSTRUMENTAL") is True
+
+    def test_case_insensitive_negative(self):
+        """Negative matching should be case-insensitive."""
+        assert is_likely_karaoke("Hello OFFICIAL VIDEO") is False
+        assert is_likely_karaoke("Hello official music video") is False
+
+
+class TestSearchFiltering:
+    """Tests that search() applies the karaoke heuristic filter."""
+
+    def test_search_filters_non_karaoke_results(self, config_manager):
+        """search() should filter out obvious non-karaoke results."""
+        library = VideoLibrary(config_manager)
+        fake_source = FakeVideoSource("youtube")
+        fake_source._search_results = [
+            {"id": "vid1", "title": "Bohemian Rhapsody Karaoke", "channel": ""},
+            {"id": "vid2", "title": "Bohemian Rhapsody Official Video", "channel": ""},
+            {"id": "vid3", "title": "Bohemian Rhapsody Instrumental", "channel": ""},
+            {"id": "vid4", "title": "Bohemian Rhapsody Live at Wembley", "channel": ""},
+        ]
+        library.register_source(fake_source)
+
+        results = library.search("bohemian rhapsody")
+
+        titles = [r["title"] for r in results]
+        assert "Bohemian Rhapsody Karaoke" in titles
+        assert "Bohemian Rhapsody Instrumental" in titles
+        assert "Bohemian Rhapsody Official Video" not in titles
+        assert "Bohemian Rhapsody Live at Wembley" not in titles
+
+    def test_search_keeps_ambiguous_results(self, config_manager):
+        """search() should keep results with no clear signals."""
+        library = VideoLibrary(config_manager)
+        fake_source = FakeVideoSource("youtube")
+        fake_source._search_results = [
+            {"id": "vid1", "title": "Bohemian Rhapsody", "channel": ""},
+        ]
+        library.register_source(fake_source)
+
+        results = library.search("bohemian rhapsody")
+
+        assert len(results) == 1
