@@ -207,10 +207,6 @@ class InterstitialGenerator:
             artist_font = self._get_font(28)
             self._center_text(draw, f"by {artist}", song_y, artist_font, SECONDARY_TEXT_COLOR)
 
-        # "Get ready!" message
-        ready_font = self._get_font(48)
-        self._center_text(draw, "Get ready!", self.height * 2 // 3, ready_font, ACCENT_COLOR)
-
         # Note: QR code is handled by the streaming overlay for consistency
 
         # Save and return path
