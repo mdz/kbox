@@ -150,16 +150,6 @@ class InterstitialGenerator:
             PRIMARY_TEXT_COLOR,
         )
 
-        # Arrow hint pointing toward QR code location (top-left by default)
-        hint_font = self._get_font(32)
-        self._center_text(
-            draw,
-            "\u2196  use your phone\u2019s camera",
-            self.height // 2 + 130,
-            hint_font,
-            SECONDARY_TEXT_COLOR,
-        )
-
         # Note: QR code is handled by the streaming overlay for consistency
 
         # Save and return path
