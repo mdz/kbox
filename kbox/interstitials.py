@@ -116,15 +116,11 @@ class InterstitialGenerator:
         x = (self.width - text_width) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    def generate_idle_screen(
-        self, web_url: Optional[str] = None, message: str = "Add songs to get started!"
-    ) -> str:
+    def generate_idle_screen(self) -> str:
         """
         Generate the idle screen (before playback starts).
 
-        Args:
-            web_url: URL for the web interface (for QR code)
-            message: Message to display
+        Instructs the audience to scan the QR code overlay to pick songs.
 
         Returns:
             Path to the generated image file
@@ -144,9 +140,15 @@ class InterstitialGenerator:
             draw, "Karaoke", self.height // 4 + 140, subtitle_font, SECONDARY_TEXT_COLOR
         )
 
-        # Main message
-        message_font = self._get_font(64)
-        self._center_text(draw, message, self.height // 2 + 50, message_font, PRIMARY_TEXT_COLOR)
+        # Main instruction - tell users to scan the QR code
+        instruction_font = self._get_font(56, bold=True)
+        self._center_text(
+            draw,
+            "Scan the QR code to pick a song",
+            self.height // 2 + 50,
+            instruction_font,
+            PRIMARY_TEXT_COLOR,
+        )
 
         # Note: QR code is handled by the streaming overlay for consistency
 
@@ -217,14 +219,11 @@ class InterstitialGenerator:
         self.logger.info("Generated transition interstitial for: %s", singer_name)
         return output_path
 
-    def generate_end_of_queue_screen(
-        self, web_url: Optional[str] = None, message: str = "That's all for now!"
-    ) -> str:
+    def generate_end_of_queue_screen(self, message: str = "That's all for now!") -> str:
         """
         Generate the end-of-queue screen.
 
         Args:
-            web_url: URL for the web interface (for QR code)
             message: Message to display
 
         Returns:
@@ -239,20 +238,14 @@ class InterstitialGenerator:
         message_font = self._get_font(72, bold=True)
         self._center_text(draw, message, self.height // 3, message_font, PRIMARY_TEXT_COLOR)
 
-        # Sub-message
+        # Instruction to keep going
         sub_font = self._get_font(48)
         self._center_text(
             draw,
-            "Add more songs to keep the party going!",
+            "Scan the QR code to add more songs",
             self.height // 2,
             sub_font,
             SECONDARY_TEXT_COLOR,
-        )
-
-        # Or call it a night
-        alt_font = self._get_font(36)
-        self._center_text(
-            draw, "...or call it a night?", self.height // 2 + 80, alt_font, SECONDARY_TEXT_COLOR
         )
 
         # Note: QR code is handled by the streaming overlay for consistency
