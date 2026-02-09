@@ -16,7 +16,7 @@ import pytest
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.video_library import VideoLibrary, VideoSource, is_likely_karaoke
+from kbox.video_library import VideoLibrary, VideoSource, is_likely_karaoke, karaoke_quality_score
 
 
 class FakeVideoSource(VideoSource):
@@ -598,3 +598,132 @@ class TestSearchFiltering:
         results = library.search("bohemian rhapsody")
 
         assert len(results) == 1
+
+
+# =============================================================================
+# Karaoke Quality Score Tests
+# =============================================================================
+
+
+class TestKaraokeQualityScore:
+    """Tests for the karaoke_quality_score ranking function."""
+
+    # -- Tier 2: known channels --
+
+    @pytest.mark.parametrize(
+        "channel",
+        [
+            "Sing King Karaoke",
+            "Sing King",
+            "KaraFun",
+            "Stingray Karaoke",
+            "Zoom Karaoke",
+            "CC Karaoke",
+            "Sing2Piano",
+            "Premium Karaoke",
+        ],
+    )
+    def test_known_channel_scores_highest(self, channel):
+        """Known karaoke channels should get the highest score."""
+        assert karaoke_quality_score("Some Random Title", channel=channel) == 2
+
+    # -- Tier 1: title has karaoke keyword --
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Bohemian Rhapsody - Karaoke Version",
+            "Don't Stop Believin' Instrumental",
+            "Yesterday - Backing Track",
+            "Hello - No Vocals",
+            "Shape of You Sing Along",
+        ],
+    )
+    def test_karaoke_title_scores_mid(self, title):
+        """Titles with karaoke keywords (unknown channel) should score 1."""
+        assert karaoke_quality_score(title, channel="Random Channel") == 1
+
+    # -- Tier 0: ambiguous --
+
+    def test_ambiguous_scores_zero(self):
+        """Titles with no clear signals should score 0."""
+        assert karaoke_quality_score("Bohemian Rhapsody", channel="Some Channel") == 0
+
+    # -- Known channel beats title-only --
+
+    def test_known_channel_beats_title_keyword(self):
+        """Known channel should score higher than title keyword alone."""
+        channel_score = karaoke_quality_score("Random Title", channel="Sing King Karaoke")
+        title_score = karaoke_quality_score("Hello Karaoke", channel="Random Channel")
+        assert channel_score > title_score
+
+    # -- Case insensitivity --
+
+    def test_case_insensitive(self):
+        """Scoring should be case-insensitive."""
+        assert karaoke_quality_score("", channel="SING KING") == 2
+        assert karaoke_quality_score("BOHEMIAN RHAPSODY KARAOKE") == 1
+
+
+# =============================================================================
+# Search Ranking Tests
+# =============================================================================
+
+
+class TestSearchRanking:
+    """Tests that search() ranks results by karaoke quality."""
+
+    def test_search_ranks_known_channels_first(self, config_manager):
+        """Results from known karaoke channels should appear before others."""
+        library = VideoLibrary(config_manager)
+        fake_source = FakeVideoSource("youtube")
+        fake_source._search_results = [
+            {"id": "vid1", "title": "Bohemian Rhapsody", "channel": "Random Uploader"},
+            {"id": "vid2", "title": "Bohemian Rhapsody Karaoke", "channel": "Random Uploader"},
+            {"id": "vid3", "title": "Bohemian Rhapsody", "channel": "Sing King Karaoke"},
+            {"id": "vid4", "title": "Bohemian Rhapsody", "channel": "Zoom Karaoke"},
+        ]
+        library.register_source(fake_source)
+
+        results = library.search("bohemian rhapsody")
+
+        # Known channels (vid3, vid4) should come first
+        ids = [r["id"] for r in results]
+        assert ids.index("youtube:vid3") < ids.index("youtube:vid2")
+        assert ids.index("youtube:vid4") < ids.index("youtube:vid2")
+        assert ids.index("youtube:vid3") < ids.index("youtube:vid1")
+        # Karaoke-title result (vid2) should come before ambiguous (vid1)
+        assert ids.index("youtube:vid2") < ids.index("youtube:vid1")
+
+    def test_search_ranking_preserves_relevance_within_tier(self, config_manager):
+        """Within the same quality tier, original order should be preserved."""
+        library = VideoLibrary(config_manager)
+        fake_source = FakeVideoSource("youtube")
+        fake_source._search_results = [
+            {"id": "vid1", "title": "Song A", "channel": "Sing King Karaoke"},
+            {"id": "vid2", "title": "Song B", "channel": "Zoom Karaoke"},
+            {"id": "vid3", "title": "Song C", "channel": "KaraFun"},
+        ]
+        library.register_source(fake_source)
+
+        results = library.search("test")
+
+        # All tier-2 — original order should be preserved
+        ids = [r["id"] for r in results]
+        assert ids == ["youtube:vid1", "youtube:vid2", "youtube:vid3"]
+
+    def test_search_ranking_three_tiers(self, config_manager):
+        """All three ranking tiers should be ordered correctly."""
+        library = VideoLibrary(config_manager)
+        fake_source = FakeVideoSource("youtube")
+        fake_source._search_results = [
+            {"id": "ambiguous", "title": "Hello", "channel": "Someone"},
+            {"id": "title_kw", "title": "Hello Karaoke", "channel": "Someone"},
+            {"id": "channel", "title": "Hello", "channel": "KaraFun"},
+        ]
+        library.register_source(fake_source)
+
+        results = library.search("hello")
+
+        ids = [r["id"] for r in results]
+        assert ids == ["youtube:channel", "youtube:title_kw", "youtube:ambiguous"]

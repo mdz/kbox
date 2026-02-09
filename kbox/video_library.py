@@ -44,12 +44,26 @@ _KARAOKE_POSITIVE_PATTERNS = [
     ]
 ]
 
-# Channel names known to produce karaoke content.
+# Channel names known to produce karaoke content.  Used for both filtering
+# (is_likely_karaoke) and ranking (karaoke_quality_score).
 _KARAOKE_CHANNELS = [
     "sing king",
     "karafun",
     "stingray karaoke",
     "zoom karaoke",
+    "sing2piano",
+    "sing2guitar",
+    "sing2music",
+    "cc karaoke",
+    "popup karaoke",
+    "premium karaoke",
+    "heavykaraoke",
+    "funbox karaoke",
+    "best karaoke on youtube",
+    "acousticlub",
+    "expert karaoke",
+    "thekaraokechannel",
+    "karaoke hits channel",
 ]
 
 # Patterns that strongly indicate a NON-karaoke track.
@@ -104,6 +118,36 @@ def is_likely_karaoke(title: str, channel: str = "", description: str = "") -> b
 
     # Ambiguous — give the benefit of the doubt.
     return True
+
+
+def karaoke_quality_score(title: str, channel: str = "") -> int:
+    """
+    Score a search result for ranking purposes.
+
+    Higher scores sort first.  The tiers are:
+
+    * 2 – from a known high-quality karaoke channel
+    * 1 – title contains a strong karaoke keyword (but unknown channel)
+    * 0 – ambiguous / no clear signal
+
+    Within the same tier, the original search-engine relevance order is
+    preserved because :pyfunc:`sorted` is *stable*.
+    """
+    channel_lower = channel.lower()
+
+    # Tier 2: known karaoke channel
+    for ch in _KARAOKE_CHANNELS:
+        if ch in channel_lower:
+            return 2
+
+    # Tier 1: title has a positive karaoke signal
+    title_lower = title.lower()
+    for pattern in _KARAOKE_POSITIVE_PATTERNS:
+        if pattern.search(title_lower):
+            return 1
+
+    # Tier 0: ambiguous
+    return 0
 
 
 class VideoSource(ABC):
@@ -372,6 +416,14 @@ class VideoLibrary:
         filtered_count = before_count - len(results)
         if filtered_count:
             self.logger.info("Filtered %d non-karaoke result(s) from search", filtered_count)
+
+        # Rank results: known karaoke channels first, then strong karaoke
+        # signals, then ambiguous.  sorted() is stable so within the same
+        # tier the original relevance order is preserved.
+        results.sort(
+            key=lambda r: karaoke_quality_score(r.get("title", ""), r.get("channel", "")),
+            reverse=True,
+        )
 
         return results
 
