@@ -128,7 +128,7 @@ The HDMI cable sends lyrics video to the TV. Bluetooth sends the backing track a
 
 ## Simple Setup: Scarlett Solo
 
-This is the most accessible setup for casual karaoke. It uses a USB audio interface to handle both audio output and microphone mixing.
+This is the simplest setup that includes a microphone. It uses a USB audio interface to handle both audio output and microphone mixing.
 
 ### What You Need
 
