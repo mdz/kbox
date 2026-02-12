@@ -1,12 +1,12 @@
 """
 Unit tests for YouTubeSource.
 
-Uses mocks to avoid actual API calls.
+Uses mocks to avoid actual API/yt-dlp calls.
 """
 
 import shutil
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -192,3 +192,250 @@ def test_get_video_info_not_found(youtube_source):
 
     info = youtube_source.get_video_info("nonexistent")
     assert info is None
+
+
+# =========================================================================
+# yt-dlp search tests (no API key)
+# =========================================================================
+
+
+@pytest.fixture
+def mock_config_no_api_key(temp_storage_dir):
+    """Create a mock ConfigManager without an API key."""
+    config = Mock()
+    config.get.side_effect = lambda key, default=None: {
+        "youtube_api_key": None,
+        "cache_directory": temp_storage_dir,
+        "video_max_resolution": "480",
+        "cache_max_size_gb": "10",
+    }.get(key, default)
+    config.get_int.side_effect = lambda key, default=None: {
+        "video_max_resolution": 480,
+        "cache_max_size_gb": 10,
+    }.get(key, default)
+    return config
+
+
+@pytest.fixture
+def youtube_source_no_api(mock_config_no_api_key):
+    """Create a YouTubeSource without an API key (yt-dlp only)."""
+    source = YouTubeSource(mock_config_no_api_key)
+    return source
+
+
+def _make_ytdlp_search_result():
+    """Helper: mock yt-dlp search result with two entries."""
+    return {
+        "entries": [
+            {
+                "id": "ytdlp_vid1",
+                "title": "Karaoke Song 1",
+                "thumbnail": "http://thumb1.jpg",
+                "channel": "Karaoke Channel",
+                "uploader": "Karaoke Uploader",
+                "duration": 195,
+                "description": "A great karaoke track",
+            },
+            {
+                "id": "ytdlp_vid2",
+                "title": "Karaoke Song 2",
+                "thumbnail": "http://thumb2.jpg",
+                "channel": "",
+                "uploader": "Some Uploader",
+                "duration": 240,
+                "description": "Another karaoke track",
+            },
+        ]
+    }
+
+
+def _make_ytdlp_video_info():
+    """Helper: mock yt-dlp single video info result."""
+    return {
+        "id": "info_vid1",
+        "title": "Info Song",
+        "thumbnail": "http://info_thumb.jpg",
+        "channel": "Info Channel",
+        "uploader": "Info Uploader",
+        "duration": 300,
+        "description": "Video description here",
+    }
+
+
+def test_is_configured_always_true(youtube_source_no_api):
+    """is_configured() returns True even without an API key."""
+    assert youtube_source_no_api.is_configured() is True
+
+
+def test_search_ytdlp_success(youtube_source_no_api):
+    """Test yt-dlp search returns formatted results."""
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = _make_ytdlp_search_result()
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        results = youtube_source_no_api.search("test query")
+
+    assert len(results) == 2
+    assert results[0]["id"] == "ytdlp_vid1"
+    assert results[0]["title"] == "Karaoke Song 1"
+    assert results[0]["channel"] == "Karaoke Channel"
+    assert results[0]["duration_seconds"] == 195
+
+    # Second result has empty channel, should fall back to uploader
+    assert results[1]["channel"] == "Some Uploader"
+    assert results[1]["duration_seconds"] == 240
+
+    # Verify ytsearch URL was called with karaoke appended
+    call_args = mock_ydl_instance.extract_info.call_args
+    assert "ytsearch" in call_args[0][0]
+    assert "karaoke" in call_args[0][0]
+
+
+def test_search_ytdlp_no_results(youtube_source_no_api):
+    """Test yt-dlp search with no results."""
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = {"entries": []}
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        results = youtube_source_no_api.search("nonexistent")
+
+    assert len(results) == 0
+
+
+def test_search_ytdlp_error_returns_empty(youtube_source_no_api):
+    """Test yt-dlp search error returns empty list."""
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.side_effect = Exception("Network error")
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        results = youtube_source_no_api.search("test")
+
+    assert results == []
+
+
+def test_get_video_info_ytdlp_success(youtube_source_no_api):
+    """Test yt-dlp get_video_info returns formatted result."""
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = _make_ytdlp_video_info()
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        info = youtube_source_no_api.get_video_info("info_vid1")
+
+    assert info is not None
+    assert info["id"] == "info_vid1"
+    assert info["title"] == "Info Song"
+    assert info["channel"] == "Info Channel"
+    assert info["duration_seconds"] == 300
+
+
+def test_get_video_info_ytdlp_error_returns_none(youtube_source_no_api):
+    """Test yt-dlp get_video_info error returns None."""
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.side_effect = Exception("Video unavailable")
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        info = youtube_source_no_api.get_video_info("bad_vid")
+
+    assert info is None
+
+
+# =========================================================================
+# Fallback tests (API configured but fails -> yt-dlp used)
+# =========================================================================
+
+
+def test_search_fallback_on_api_error(youtube_source):
+    """When API search raises, search() falls back to yt-dlp."""
+    # Make API search raise
+    youtube_source._youtube.search.return_value.list.return_value.execute.side_effect = Exception(
+        "Quota exceeded"
+    )
+
+    # Mock yt-dlp fallback
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = _make_ytdlp_search_result()
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        results = youtube_source.search("test query")
+
+    # Should get yt-dlp results, not empty list
+    assert len(results) == 2
+    assert results[0]["id"] == "ytdlp_vid1"
+
+
+def test_get_video_info_fallback_on_api_error(youtube_source):
+    """When API get_video_info raises, falls back to yt-dlp."""
+    # Make API raise
+    youtube_source._youtube.videos.return_value.list.return_value.execute.side_effect = Exception(
+        "API error"
+    )
+
+    # Mock yt-dlp fallback
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = _make_ytdlp_video_info()
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        info = youtube_source.get_video_info("info_vid1")
+
+    assert info is not None
+    assert info["id"] == "info_vid1"
+    assert info["title"] == "Info Song"
+
+
+def test_search_uses_api_when_configured(youtube_source):
+    """When API is configured and works, search() uses API (not yt-dlp)."""
+    # Setup working API mocks
+    mock_search_response = {"items": [{"id": {"videoId": "api_vid1"}, "snippet": {}}]}
+    mock_videos_response = {
+        "items": [
+            {
+                "id": "api_vid1",
+                "snippet": {
+                    "title": "API Result",
+                    "thumbnails": {"default": {"url": "http://api_thumb.jpg"}},
+                    "channelTitle": "API Channel",
+                    "description": "API desc",
+                },
+                "contentDetails": {"duration": "PT3M0S"},
+            }
+        ]
+    }
+
+    mock_search = Mock()
+    mock_search.list.return_value.execute.return_value = mock_search_response
+    mock_videos = Mock()
+    mock_videos.list.return_value.execute.return_value = mock_videos_response
+
+    youtube_source._youtube.search.return_value = mock_search
+    youtube_source._youtube.videos.return_value = mock_videos
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        results = youtube_source.search("test")
+
+        # yt-dlp should NOT have been called
+        mock_ydl_cls.assert_not_called()
+
+    assert len(results) == 1
+    assert results[0]["id"] == "api_vid1"
+    assert results[0]["title"] == "API Result"
