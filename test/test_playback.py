@@ -21,6 +21,9 @@ def mock_queue_manager():
     qm.get_item.return_value = None
     # Configure get_ready_song_at_offset to return None by default
     qm.get_ready_song_at_offset.return_value = None
+    # Configure cursor to return None by default (no cursor set)
+    qm.get_cursor.return_value = None
+    qm.get_cursor_position.return_value = None
     return qm
 
 
@@ -141,8 +144,8 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager, mock_stre
     assert playback_controller.current_song_id == 1
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
     mock_streaming_controller.load_file.assert_called_once_with("/path/to/video.mp4")
-    # Song should NOT be marked as played when it starts - only when it finishes
-    mock_queue_manager.mark_played.assert_not_called()
+    # Cursor should be set to the song that just started playing
+    mock_queue_manager.set_cursor.assert_called_once_with(1)
 
 
 def test_play_no_download_path(playback_controller, mock_queue_manager):
@@ -307,8 +310,7 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
 
     playback_controller.on_song_end()
 
-    # Should mark current song as played
-    mock_queue_manager.mark_played.assert_called_once_with(1)
+    # Should NOT call mark_played (cursor model replaces this)
     # Should call get_ready_song_at_offset with the finished song's ID and offset +1
     mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(1, 1)
     # Should reset pitch
@@ -341,8 +343,6 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
 
     playback_controller.on_song_end()
 
-    # Should mark current song as played
-    mock_queue_manager.mark_played.assert_called_once_with(1)
     # Should call get_ready_song_at_offset with the finished song's ID and offset +1
     mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(1, 1)
     assert playback_controller.current_song_id is None
@@ -620,14 +620,10 @@ def test_on_song_end_plays_next_in_queue_order(
     # Mock get_ready_song_at_offset to return the song at position 3
     mock_queue_manager.get_ready_song_at_offset.return_value = song_at_position_3
 
-    mock_queue_manager.mark_played.return_value = True
     mock_streaming_controller.get_position.return_value = 150
 
     # Simulate song ending
     playback_controller.on_song_end()
-
-    # Should have marked current song as played
-    mock_queue_manager.mark_played.assert_called_once_with(10)
 
     # Wait for transition timer (set to 0 in fixture)
     time.sleep(0.2)
@@ -655,18 +651,23 @@ def test_auto_start_when_idle_with_ready_songs(
     # Create a ready song
     ready_song = create_mock_queue_item(
         id=42,
-        position=1,
+        position=2,
         title="Auto-play Song",
         user_name="TestUser",
         download_status=QueueManager.STATUS_READY,
         download_path="/path/to/song.mp4",
     )
 
-    # Mock get_ready_song_at_offset to return the ready song
+    # Cursor is on song 1 (already played); song 42 at position 2 is next
+    mock_queue_manager.get_cursor.return_value = 1
+    # get_ready_song_at_offset(1, +1) returns the new ready song
     mock_queue_manager.get_ready_song_at_offset.return_value = ready_song
 
     # Call the check method (this is called by the monitor thread)
     playback_controller._check_auto_start_when_idle()
+
+    # Should have checked for songs after the cursor
+    mock_queue_manager.get_ready_song_at_offset.assert_any_call(1, 1)
 
     # Should have started playback automatically
     mock_streaming_controller.load_file.assert_called_once_with("/path/to/song.mp4")
@@ -735,13 +736,13 @@ def test_single_song_does_not_loop_after_playing(
 ):
     """Test that a single song stops after playing, rather than looping forever.
 
-    This is a regression test for the bug where with a single song in the queue,
-    when playback reached the end, the song would restart and loop infinitely
-    instead of showing the end-of-queue interstitial.
+    With the cursor model, when a song finishes:
+    1. on_song_end() looks for next song via get_ready_song_at_offset(finished_id, +1)
+    2. No next song -> goes to IDLE, shows end-of-queue screen
+    3. _check_auto_start_when_idle() uses get_ready_song_at_offset(cursor, +1)
+    4. Cursor points to the finished song, no songs after it -> stays IDLE
 
-    The root cause was that get_ready_song_at_offset() didn't filter out played
-    songs, so after the song was marked as played, _check_auto_start_when_idle()
-    would see the played song as "ready" and restart it.
+    This prevents the infinite loop because auto-start only looks forward from cursor.
     """
     # Single song in queue, ready to play
     song = create_mock_queue_item(
@@ -759,15 +760,11 @@ def test_single_song_does_not_loop_after_playing(
     playback_controller.state = PlaybackState.PLAYING
     mock_queue_manager.get_item.return_value = song
 
-    # When the song ends and is marked as played, get_ready_song_at_offset
-    # should return None (no next song, and the played song shouldn't be returned)
+    # When the song ends, get_ready_song_at_offset returns None (no next song)
     mock_queue_manager.get_ready_song_at_offset.return_value = None
 
     # Simulate song ending
     playback_controller.on_song_end()
-
-    # Song should be marked as played
-    mock_queue_manager.mark_played.assert_called_once_with(1)
 
     # State should be IDLE (not PLAYING or TRANSITION)
     assert playback_controller.state == PlaybackState.IDLE
@@ -779,7 +776,7 @@ def test_single_song_does_not_loop_after_playing(
     mock_streaming_controller.display_image.assert_called_once()
 
     # Critical: get_ready_song_at_offset was called with the finished song's ID
-    # to find the next song, and it returned None (no unplayed songs)
+    # to find the next song, and it returned None
     mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(1, 1)
 
 
@@ -788,20 +785,25 @@ def test_auto_start_does_not_restart_played_songs(
 ):
     """Test that auto-start doesn't restart songs that have already been played.
 
-    This is a regression test for the single-song loop bug. Even if a played
-    song is still in the queue with download_status='ready', the auto-start
-    mechanism should not restart it.
+    With the cursor model, auto-start uses get_ready_song_at_offset(cursor, +1)
+    to only look forward from the cursor. If the cursor is on the last song,
+    there's nothing after it, so auto-start correctly stays idle.
     """
     # Set state to IDLE (simulating "that's all" screen after song finished)
     playback_controller.state = PlaybackState.IDLE
     playback_controller.current_song_id = None
 
-    # The queue has a song that was already played (get_ready_song_at_offset
-    # should return None because the song has played_at set)
+    # Cursor is set to the song that just finished (song ID 1)
+    mock_queue_manager.get_cursor.return_value = 1
+
+    # No songs after the cursor
     mock_queue_manager.get_ready_song_at_offset.return_value = None
 
     # Call the auto-start check (this is called by the monitor thread)
     playback_controller._check_auto_start_when_idle()
+
+    # Should have checked for songs after the cursor
+    mock_queue_manager.get_ready_song_at_offset.assert_called_once_with(1, 1)
 
     # Should NOT have started playback
     mock_streaming_controller.load_file.assert_not_called()

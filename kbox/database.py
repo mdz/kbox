@@ -813,29 +813,18 @@ class QueueRepository:
         finally:
             conn.close()
 
-    def get_all(self, include_played: bool = True) -> List[QueueItem]:
+    def get_all(self) -> List[QueueItem]:
         """Get the entire queue ordered by position."""
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
-
-            if include_played:
-                cursor.execute("""
-                    SELECT id, position, user_id, user_name, video_id,
-                           song_metadata_json, settings_json, download_json,
-                           download_status, created_at, played_at
-                    FROM queue_items
-                    ORDER BY position
-                """)
-            else:
-                cursor.execute("""
-                    SELECT id, position, user_id, user_name, video_id,
-                           song_metadata_json, settings_json, download_json,
-                           download_status, created_at, played_at
-                    FROM queue_items
-                    WHERE played_at IS NULL
-                    ORDER BY position
-                """)
+            cursor.execute("""
+                SELECT id, position, user_id, user_name, video_id,
+                       song_metadata_json, settings_json, download_json,
+                       download_status, created_at, played_at
+                FROM queue_items
+                ORDER BY position
+            """)
 
             items = []
             for row in cursor.fetchall():
@@ -892,32 +881,6 @@ class QueueRepository:
                 self.logger.debug("Updated download status for item %s: %s", item_id, status)
             else:
                 self.logger.warning("Queue item %s not found for status update", item_id)
-
-            return updated
-        finally:
-            conn.close()
-
-    def mark_played(self, item_id: int) -> bool:
-        """Mark a queue item as played."""
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE queue_items
-                SET played_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """,
-                (item_id,),
-            )
-
-            updated = cursor.rowcount > 0
-            conn.commit()
-
-            if updated:
-                self.logger.debug("Marked queue item %s as played", item_id)
-            else:
-                self.logger.warning("Queue item %s not found", item_id)
 
             return updated
         finally:
@@ -1106,19 +1069,38 @@ class QueueRepository:
         finally:
             conn.close()
 
-    def is_video_in_queue(self, video_id: str) -> bool:
-        """Check if a video is already in the queue (unplayed only)."""
+    def is_video_in_queue(self, video_id: str, after_position: Optional[int] = None) -> bool:
+        """Check if a video is in the upcoming portion of the queue.
+
+        Args:
+            video_id: Video ID to check
+            after_position: If provided, only check songs at positions > this value
+                (i.e., upcoming songs after the cursor). If None, checks all songs.
+
+        Returns:
+            True if the video is found in the relevant portion of the queue.
+        """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT 1 FROM queue_items
-                WHERE video_id = ? AND played_at IS NULL
-                LIMIT 1
-            """,
-                (video_id,),
-            )
+            if after_position is not None:
+                cursor.execute(
+                    """
+                    SELECT 1 FROM queue_items
+                    WHERE video_id = ? AND position > ?
+                    LIMIT 1
+                """,
+                    (video_id, after_position),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT 1 FROM queue_items
+                    WHERE video_id = ?
+                    LIMIT 1
+                """,
+                    (video_id,),
+                )
             return cursor.fetchone() is not None
         finally:
             conn.close()

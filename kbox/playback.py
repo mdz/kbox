@@ -181,13 +181,21 @@ class PlaybackController:
 
     def _check_auto_start_when_idle(self):
         """
-        Check if we're idle but have ready songs, and auto-start playback.
+        Check if we're idle but have ready songs ahead of the cursor, and auto-start.
 
         This handles the case where we're on the "that's all" screen and
         someone adds a song - once it finishes downloading, playback
         should start automatically without requiring operator intervention.
+
+        Only looks forward from the cursor, never backward - so songs that
+        were already played (before the cursor) won't be picked up.
         """
-        if self.queue_manager.get_ready_song_at_offset(None, 0):
+        cursor = self.queue_manager.get_cursor()
+        if cursor is not None:
+            next_song = self.queue_manager.get_ready_song_at_offset(cursor, +1)
+        else:
+            next_song = self.queue_manager.get_ready_song_at_offset(None, 0)
+        if next_song:
             self.logger.info("Idle with ready songs, auto-starting playback")
             self.play()
 
@@ -314,8 +322,16 @@ class PlaybackController:
             return self._load_and_play_next()
 
     def _load_and_play_next(self) -> bool:
-        """Load first ready song in the queue and start playback."""
-        next_song = self.queue_manager.get_ready_song_at_offset(None, 0)
+        """Load next ready song in the queue and start playback.
+
+        Uses the cursor to find the next song. On fresh start (no cursor),
+        falls back to the first ready song in the queue.
+        """
+        cursor = self.queue_manager.get_cursor()
+        if cursor is not None:
+            next_song = self.queue_manager.get_ready_song_at_offset(cursor, +1)
+        else:
+            next_song = self.queue_manager.get_ready_song_at_offset(None, 0)
 
         if not next_song:
             self._set_state(PlaybackState.IDLE, "no ready songs")
@@ -373,6 +389,12 @@ class PlaybackController:
             #   2. on_song_end() - clears it when song finishes naturally
             # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
+
+            # Advance the queue cursor - this is the single place the cursor moves.
+            # All navigation (skip, previous, jump_to_song) goes through _play_song(),
+            # so the cursor always tracks what's playing.
+            self.queue_manager.set_cursor(song.id)
+
             self._set_state(PlaybackState.PLAYING, f"playing: {song.metadata.title}")
             return True
 
@@ -483,10 +505,8 @@ class PlaybackController:
             self._record_performance_history(
                 current_song, current_position, current_position, completion_pct
             )
-        # Mark as played in queue for current event tracking
-        self.queue_manager.mark_played(self.current_song_id)
 
-        # Stop current playback (but do NOT mark as played)
+        # Stop current playback
         self.logger.debug(
             "[DEBUG] skip: before stop_playback, current=%s next=%s",
             self.current_song_id,
@@ -820,9 +840,6 @@ class PlaybackController:
                         self._record_performance_history(
                             finished_song, final_position, final_position, completion_pct
                         )
-
-                    # Mark as played in queue for current event tracking
-                    self.queue_manager.mark_played(finished_song_id)
                 else:
                     self.logger.warning("Finished song ID %s not found", finished_song_id)
             else:
@@ -839,9 +856,13 @@ class PlaybackController:
             #   1. _play_song() - sets it when starting playback
             #   2. on_song_end() - clears it when song finishes naturally
             # _stop_internal() does NOT clear it - the song is remembered for resume
+            # The queue cursor remains set to this song so _show_transition_or_end
+            # can find the next song relative to it.
             self.current_song_id = None
 
-            # Check for next song and show transition, using the ID of the song that just finished
+            # Check for next song and show transition.
+            # Use the cursor (which still points to the song that just finished)
+            # to find the next song by position.
             self._show_transition_or_end(finished_song_id=finished_song_id)
 
     def _show_transition_or_end(self, finished_song_id: Optional[int] = None):
@@ -1026,8 +1047,6 @@ class PlaybackController:
                     # Convert QueueItem to dict for JSON serialization
                     current_song = asdict(queue_item)
                     # Convert datetime objects to ISO format strings for JSON
-                    if current_song.get("played_at"):
-                        current_song["played_at"] = current_song["played_at"].isoformat()
                     if current_song.get("created_at"):
                         current_song["created_at"] = current_song["created_at"].isoformat()
                     # Flatten metadata and settings for easier frontend access

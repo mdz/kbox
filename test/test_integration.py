@@ -499,9 +499,8 @@ def test_end_of_queue_behavior(full_system):
     system["streaming"].display_image.assert_called()
     # Should reset pitch
     system["streaming"].set_pitch_shift.assert_any_call(0)
-    # Should mark the song as played
-    item = system["queue"].get_item(item_id)
-    assert item.played_at is not None
+    # Cursor should point to the song that just finished
+    assert system["queue"].get_cursor() == item_id
 
 
 def test_video_availability_check(full_system):

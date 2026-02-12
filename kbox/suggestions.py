@@ -119,17 +119,20 @@ class SuggestionEngine:
         except Exception as e:
             self.logger.debug("Could not get user history: %s", e)
 
-        # Current queue
+        # Current queue (upcoming songs only - after cursor position)
         try:
             queue = self.queue.get_queue()
-            unplayed = [item for item in queue if item.played_at is None]
-            if unplayed:
+            cursor_position = self.queue.get_cursor_position()
+            upcoming = [
+                item for item in queue if cursor_position is None or item.position > cursor_position
+            ]
+            if upcoming:
                 context["current_queue"] = [
                     {
                         **get_song_info(item.metadata),
                         "user": item.user_name,
                     }
-                    for item in unplayed[:10]  # Limit to 10 for prompt size
+                    for item in upcoming[:10]  # Limit to 10 for prompt size
                 ]
         except Exception as e:
             self.logger.debug("Could not get queue: %s", e)

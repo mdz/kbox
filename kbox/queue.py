@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, List, Optional
 
-from .database import Database, QueueRepository, UserRepository
+from .database import ConfigRepository, Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 
@@ -33,6 +33,9 @@ class QueueManager:
     STATUS_READY = "ready"
     STATUS_ERROR = "error"
 
+    # Config key for persisting the cursor
+    _CURSOR_CONFIG_KEY = "queue_cursor_song_id"
+
     def __init__(
         self,
         database: Database,
@@ -50,9 +53,15 @@ class QueueManager:
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
+        self._config_repository = ConfigRepository(database)
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
         self.logger = logging.getLogger(__name__)
+
+        # Queue cursor: the ID of the song currently playing (or last played).
+        # Songs before the cursor's position are "played", songs after are "upcoming".
+        # Persisted to the config table for restart resilience.
+        self._cursor_song_id: Optional[int] = self._load_cursor()
 
         # Download monitoring
         self._download_timeout = timedelta(minutes=10)
@@ -62,6 +71,64 @@ class QueueManager:
 
         # Start download monitor
         self._start_download_monitor()
+
+    # =========================================================================
+    # Queue Cursor
+    # =========================================================================
+
+    def _load_cursor(self) -> Optional[int]:
+        """Load cursor song ID from persistent storage."""
+        entry = self._config_repository.get(self._CURSOR_CONFIG_KEY)
+        if entry and entry.value:
+            try:
+                return int(entry.value)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def _save_cursor(self, song_id: Optional[int]) -> None:
+        """Persist cursor song ID to storage."""
+        self._config_repository.set(
+            self._CURSOR_CONFIG_KEY, str(song_id) if song_id is not None else ""
+        )
+
+    def set_cursor(self, song_id: int) -> None:
+        """
+        Set the queue cursor to a song.
+
+        The cursor tracks where we are in the queue. Songs before the cursor's
+        position are "played", songs after are "upcoming".
+
+        Called by PlaybackController._play_song() whenever a song starts playing.
+
+        Args:
+            song_id: ID of the song now playing
+        """
+        self._cursor_song_id = song_id
+        self._save_cursor(song_id)
+        self.logger.debug("Queue cursor set to song ID %s", song_id)
+
+    def get_cursor(self) -> Optional[int]:
+        """Get the current cursor song ID."""
+        return self._cursor_song_id
+
+    def get_cursor_position(self) -> Optional[int]:
+        """
+        Get the position of the cursor song in the queue.
+
+        Returns:
+            Position of the cursor song, or None if cursor is unset or song not found.
+        """
+        if self._cursor_song_id is None:
+            return None
+        song = self.repository.get_item(self._cursor_song_id)
+        return song.position if song else None
+
+    def clear_cursor(self) -> None:
+        """Clear the queue cursor (e.g., when queue is cleared)."""
+        self._cursor_song_id = None
+        self._save_cursor(None)
+        self.logger.debug("Queue cursor cleared")
 
     # =========================================================================
     # Download Monitoring
@@ -174,10 +241,20 @@ class QueueManager:
         self.logger.info("Download monitor stopped")
 
     def _cleanup_storage(self) -> None:
-        """Trigger storage cleanup with queue items protected from eviction."""
+        """Trigger storage cleanup with queue items protected from eviction.
+
+        Protects files for songs at or after the cursor position (current + upcoming).
+        Songs before the cursor are eligible for eviction.
+        """
         try:
-            queue = self.repository.get_all(include_played=False)
-            protected = {item.video_id for item in queue}
+            cursor_position = self.get_cursor_position()
+            queue = self.repository.get_all()
+            # Protect current song and all upcoming songs
+            protected = {
+                item.video_id
+                for item in queue
+                if cursor_position is None or item.position >= cursor_position
+            }
             self.video_library.manage_storage(protected)
         except Exception as e:
             self.logger.error("Error during storage cleanup: %s", e, exc_info=True)
@@ -214,8 +291,9 @@ class QueueManager:
         Raises:
             DuplicateSongError: If the song is already in the queue
         """
-        # Check for duplicate by video_id
-        if self.repository.is_video_in_queue(video_id):
+        # Check for duplicate by video_id (only among upcoming songs)
+        cursor_position = self.get_cursor_position()
+        if self.repository.is_video_in_queue(video_id, after_position=cursor_position):
             raise DuplicateSongError(f"Song is already in the queue: {title}")
 
         metadata = SongMetadata(
@@ -294,29 +372,20 @@ class QueueManager:
         self, from_song_id: Optional[int], offset: int
     ) -> Optional[QueueItem]:
         """
-        Get a ready, unplayed song at an offset from a reference song.
+        Get a ready (downloaded) song at an offset from a reference song.
 
-        Simple helper for queue navigation - finds songs relative to a position.
-        Only returns songs that are ready (downloaded) AND have not been played yet.
-
-        The reference song can be played (e.g., when finding the next song after one
-        that just finished). In that case, we find the next unplayed ready song
-        by comparing positions.
+        Navigation helper - finds songs relative to a position in the queue.
+        Only considers songs with download_status == STATUS_READY.
 
         Args:
             from_song_id: Reference song ID (None = start from beginning/end)
             offset: +1 for next, -1 for previous, 0 for first ready
 
         Returns:
-            The ready unplayed song at the offset, or None if not found
+            The ready song at the offset, or None if not found
         """
         queue = self.repository.get_all()
-        # Filter for songs that are ready AND have not been played
-        ready_songs = [
-            item
-            for item in queue
-            if item.download_status == self.STATUS_READY and item.played_at is None
-        ]
+        ready_songs = [item for item in queue if item.download_status == self.STATUS_READY]
 
         if not ready_songs:
             return None
@@ -325,7 +394,7 @@ class QueueManager:
             # No reference - return first (offset >= 0) or last (offset < 0)
             return ready_songs[0] if offset >= 0 else ready_songs[-1]
 
-        # Try to find reference song's index in the unplayed ready songs list
+        # Find reference song in the ready list
         current_idx = next((i for i, s in enumerate(ready_songs) if s.id == from_song_id), None)
 
         if current_idx is not None:
@@ -335,32 +404,29 @@ class QueueManager:
                 return ready_songs[target_idx]
             return None
 
-        # Reference song is not in ready_songs (probably played) - find by position
-        # Look up the reference song's position from the full queue
+        # Reference song not in ready list (deleted or not ready) - find by position
         ref_song = next((s for s in queue if s.id == from_song_id), None)
         if ref_song is None:
-            # Reference song not found at all
-            return None
+            # Reference song gone entirely - fall back to first/last
+            return ready_songs[0] if offset >= 0 else ready_songs[-1]
 
         ref_position = ref_song.position
 
         if offset > 0:
-            # Find unplayed ready songs AFTER the reference position
             candidates = [s for s in ready_songs if s.position > ref_position]
             if len(candidates) >= offset:
-                return candidates[offset - 1]  # offset=1 means first candidate
+                return candidates[offset - 1]
         elif offset < 0:
-            # Find unplayed ready songs BEFORE the reference position
             candidates = [s for s in ready_songs if s.position < ref_position]
-            candidates.reverse()  # Reverse to count backwards
+            candidates.reverse()
             if len(candidates) >= abs(offset):
                 return candidates[abs(offset) - 1]
-        # offset == 0 with a played reference song: return None (no current song)
 
         return None
 
     def clear_queue(self) -> int:
-        """Clear all items from the queue."""
+        """Clear all items from the queue and reset the cursor."""
+        self.clear_cursor()
         return self.repository.clear()
 
     def update_download_status(
@@ -372,10 +438,6 @@ class QueueManager:
     ) -> bool:
         """Update download status for a queue item."""
         return self.repository.update_status(item_id, status, download_path, error_message)
-
-    def mark_played(self, item_id: int) -> bool:
-        """Mark a queue item as played."""
-        return self.repository.mark_played(item_id)
 
     def get_item(self, item_id: int) -> Optional[QueueItem]:
         """Get a specific queue item by ID."""

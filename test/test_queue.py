@@ -122,20 +122,20 @@ def test_add_duplicate_song_rejected(queue_manager, test_users):
     assert len(queue) == 1
 
 
-def test_add_same_song_after_played_allowed(queue_manager, test_users):
-    """Test that a song can be re-added after it's been played."""
+def test_add_same_song_after_cursor_passed_allowed(queue_manager, test_users):
+    """Test that a song can be re-added after the cursor has passed it."""
 
     # Add a song
     item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
-    # Mark it as played
-    queue_manager.mark_played(item_id)
+    # Move cursor past this song (simulates it being played)
+    queue_manager.set_cursor(item_id)
 
-    # Now adding the same song again should work
+    # Now adding the same song again should work (it's behind the cursor)
     item_id2 = queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
     assert item_id2 is not None
 
-    # Queue should have two items (one played, one unplayed)
+    # Queue should have two items
     queue = queue_manager.get_queue()
     assert len(queue) == 2
 
@@ -238,12 +238,13 @@ def test_get_ready_song_at_offset(queue_manager, test_users):
     no_prev = queue_manager.get_ready_song_at_offset(id1, -1)
     assert no_prev is None
 
-    # Reference song not in queue - should return None, NOT wrap to first song
-    # This is the key test for the wrap-around bug
+    # Reference song not in queue at all - falls back to first ready song
     nonexistent = queue_manager.get_ready_song_at_offset(9999, +1)
-    assert nonexistent is None
+    assert nonexistent is not None
+    assert nonexistent.id == id1
 
-    # Reference song exists but is not ready (id3) - should return None
+    # Reference song exists but is not ready (id3) - finds next by position
+    # id3 is at position 3, and there are no ready songs after position 3
     not_ready_next = queue_manager.get_ready_song_at_offset(id3, +1)
     assert not_ready_next is None
 
@@ -284,15 +285,23 @@ def test_update_download_status_error(queue_manager, test_users):
     assert item.error_message == "Download failed"
 
 
-def test_mark_played(queue_manager, test_users):
-    """Test marking a song as played."""
+def test_cursor_set_and_get(queue_manager, test_users):
+    """Test setting and getting the queue cursor."""
     item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
-    result = queue_manager.mark_played(item_id)
-    assert result is True
+    # Initially no cursor
+    assert queue_manager.get_cursor() is None
+    assert queue_manager.get_cursor_position() is None
 
-    item = queue_manager.get_item(item_id)
-    assert item.played_at is not None
+    # Set cursor
+    queue_manager.set_cursor(item_id)
+    assert queue_manager.get_cursor() == item_id
+    assert queue_manager.get_cursor_position() == 1
+
+    # Clear cursor
+    queue_manager.clear_cursor()
+    assert queue_manager.get_cursor() is None
+    assert queue_manager.get_cursor_position() is None
 
 
 def test_update_pitch(queue_manager, test_users):
@@ -309,20 +318,22 @@ def test_update_pitch(queue_manager, test_users):
 
 
 def test_clear_queue(queue_manager, test_users):
-    """Test clearing the entire queue."""
-    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    """Test clearing the entire queue also clears the cursor."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
     queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
     queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
+    queue_manager.set_cursor(id1)
 
     count = queue_manager.clear_queue()
     assert count == 3
 
     queue = queue_manager.get_queue()
     assert len(queue) == 0
+    assert queue_manager.get_cursor() is None
 
 
 def test_queue_persistence(temp_db, user_manager, mock_video_library):
-    """Test that queue persists across QueueManager instances."""
+    """Test that queue and cursor persist across QueueManager instances."""
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
 
     qm1 = QueueManager(temp_db, video_library=mock_video_library)
@@ -330,6 +341,7 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
     qm1.update_download_status(
         item_id, QueueManager.STATUS_READY, download_path="/path/to/video.mp4"
     )
+    qm1.set_cursor(item_id)
     qm1.stop_download_monitor()
 
     # Create new QueueManager with same database
@@ -340,6 +352,8 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
     assert queue[0].user_id == ALICE_ID
     assert queue[0].user_name == "Alice"
     assert queue[0].download_status == QueueManager.STATUS_READY
+    # Cursor should persist across restarts
+    assert qm2.get_cursor() == item_id
     qm2.stop_download_monitor()
 
 
@@ -509,13 +523,12 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
     assert item.download_path == "/recovered/path/video.mp4"
 
 
-def test_get_ready_song_at_offset_excludes_played_songs(queue_manager, test_users):
-    """Test that get_ready_song_at_offset excludes songs that have been played.
+def test_cursor_prevents_replaying_finished_songs(queue_manager, test_users):
+    """Test that the cursor prevents replaying songs that have already been played.
 
-    This is a regression test for the bug where a single song in the queue
-    would loop forever because after the song finished and was marked as played,
-    get_ready_song_at_offset(None, 0) would still return it (since it was still
-    "ready" in download_status), causing auto-start to replay the same song.
+    With the cursor model, auto-start uses get_ready_song_at_offset(cursor, +1)
+    to look forward from the cursor. After the last song finishes, there are no
+    songs after the cursor, so auto-start does not replay the song.
     """
     # Add a single song and mark it as ready
     item_id = queue_manager.add_song(
@@ -525,25 +538,25 @@ def test_get_ready_song_at_offset_excludes_played_songs(queue_manager, test_user
         item_id, QueueManager.STATUS_READY, download_path="/path/to/only_song.mp4"
     )
 
-    # Before playing: should find the song
+    # Before playing: should find the song (no cursor set)
     first_song = queue_manager.get_ready_song_at_offset(None, 0)
     assert first_song is not None
     assert first_song.id == item_id
 
-    # Simulate song finished playing - mark it as played
-    queue_manager.mark_played(item_id)
+    # Simulate song playing - cursor moves to it
+    queue_manager.set_cursor(item_id)
 
-    # After playing: should NOT find the song anymore
-    # This is the key assertion - if this fails, the bug is present
-    next_song = queue_manager.get_ready_song_at_offset(None, 0)
+    # After cursor is set: looking for next song AFTER cursor should return None
+    # This is the auto-start path: get_ready_song_at_offset(cursor, +1)
+    next_song = queue_manager.get_ready_song_at_offset(item_id, +1)
     assert next_song is None, (
-        "get_ready_song_at_offset should return None when only song has been played, "
-        "otherwise it will cause infinite loop behavior"
+        "get_ready_song_at_offset(cursor, +1) should return None when cursor is on "
+        "the last song, otherwise auto-start will replay finished songs"
     )
 
 
-def test_get_ready_song_at_offset_with_mixed_played_and_unplayed(queue_manager, test_users):
-    """Test that get_ready_song_at_offset correctly navigates with played and unplayed songs."""
+def test_cursor_based_navigation_through_queue(queue_manager, test_users):
+    """Test cursor-based queue navigation: the cursor tracks playback position."""
     # Add three songs
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
     id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
@@ -560,36 +573,35 @@ def test_get_ready_song_at_offset_with_mixed_played_and_unplayed(queue_manager, 
         id3, QueueManager.STATUS_READY, download_path="/path/to/vid3.mp4"
     )
 
-    # Simulate first song finished - mark as played
-    queue_manager.mark_played(id1)
+    # No cursor: first ready song from the start
+    first = queue_manager.get_ready_song_at_offset(None, 0)
+    assert first is not None
+    assert first.id == id1
 
-    # Get first ready unplayed song (should be song 2, not song 1)
-    first_unplayed = queue_manager.get_ready_song_at_offset(None, 0)
-    assert first_unplayed is not None
-    assert first_unplayed.id == id2, "Should return first unplayed ready song"
+    # Simulate playing song 1 - cursor moves to it
+    queue_manager.set_cursor(id1)
 
-    # Get next after song 1 (which is played)
-    # Should return song 2 (the next unplayed one)
+    # Next after cursor (song 1) should be song 2
     next_after_1 = queue_manager.get_ready_song_at_offset(id1, +1)
     assert next_after_1 is not None
     assert next_after_1.id == id2
 
-    # Get next after song 2
+    # Simulate playing song 2 - cursor moves to it
+    queue_manager.set_cursor(id2)
+
+    # Next after cursor (song 2) should be song 3
     next_after_2 = queue_manager.get_ready_song_at_offset(id2, +1)
     assert next_after_2 is not None
     assert next_after_2.id == id3
 
-    # Mark song 2 as played
-    queue_manager.mark_played(id2)
+    # Previous before cursor (song 2) should be song 1
+    prev_before_2 = queue_manager.get_ready_song_at_offset(id2, -1)
+    assert prev_before_2 is not None
+    assert prev_before_2.id == id1
 
-    # Now get first ready unplayed (should be song 3)
-    first_unplayed_now = queue_manager.get_ready_song_at_offset(None, 0)
-    assert first_unplayed_now is not None
-    assert first_unplayed_now.id == id3
+    # Simulate playing song 3 - cursor moves to it
+    queue_manager.set_cursor(id3)
 
-    # Mark song 3 as played
-    queue_manager.mark_played(id3)
-
-    # All songs played - should return None
-    no_songs = queue_manager.get_ready_song_at_offset(None, 0)
-    assert no_songs is None
+    # No next song after cursor (song 3 is last)
+    no_next = queue_manager.get_ready_song_at_offset(id3, +1)
+    assert no_next is None

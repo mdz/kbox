@@ -284,7 +284,7 @@ def create_app(
         """Get current queue with current/played flags for UI rendering."""
         from dataclasses import asdict
 
-        # Get all queue items (including played ones for navigation)
+        # Get all queue items
         queue_items = queue_mgr.get_queue()
 
         # Get current song from playback status
@@ -292,6 +292,9 @@ def create_app(
         current_song = status.get("current_song")
         current_song_id = current_song.get("id") if current_song else None
         position_seconds = status.get("position_seconds", 0)
+
+        # Get cursor position for played/upcoming determination
+        cursor_position = queue_mgr.get_cursor_position()
 
         # Convert QueueItem objects to dicts and add flags for UI rendering
         queue = []
@@ -305,14 +308,16 @@ def create_app(
             item_dict["artist"] = item.metadata.artist
             item_dict["song_name"] = item.metadata.song_name
             item_dict["pitch_semitones"] = item.settings.pitch_semitones
-            # Add UI flags
+            # Add UI flags - derive played status from cursor position
             item_dict["is_current"] = item.id == current_song_id
-            item_dict["is_played"] = item.played_at is not None
+            item_dict["is_played"] = cursor_position is not None and item.position < cursor_position
             queue.append(item_dict)
 
-        # Get the next song that will play (unplayed, ready, after current)
+        # Get the next song that will play (ready, after current)
         # This is the single source of truth - frontend should just display this
-        next_song_item = queue_mgr.get_ready_song_at_offset(current_song_id, 1)
+        cursor_id = queue_mgr.get_cursor()
+        ref_id = current_song_id or cursor_id
+        next_song_item = queue_mgr.get_ready_song_at_offset(ref_id, 1) if ref_id else None
         next_song = None
         if next_song_item:
             next_song = {
@@ -328,11 +333,12 @@ def create_app(
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            # Get unplayed songs in queue order (excluding the currently playing song)
+            # Get upcoming songs (after cursor, excluding the currently playing song)
             upcoming = [
                 item
                 for item in queue_items
-                if item.played_at is None and item.id != current_song_id
+                if (cursor_position is None or item.position > cursor_position)
+                and item.id != current_song_id
             ]
 
             # Time remaining in the current song
