@@ -503,6 +503,54 @@ def test_end_of_queue_behavior(full_system):
     assert system["playback"].get_cursor() == item_id
 
 
+def test_next_song_not_ready_waits_then_auto_starts(full_system):
+    """Test that when a song ends and the next isn't downloaded yet, playback
+    waits (goes IDLE) and then auto-starts once the download completes."""
+    system = full_system
+
+    # Add two songs; only the first is ready
+    id1 = system["queue"].add_song(
+        user=system["users"]["alice"],
+        video_id="fake:song1",
+        title="Song 1",
+        duration_seconds=120,
+    )
+    id2 = system["queue"].add_song(
+        user=system["users"]["bob"],
+        video_id="fake:song2",
+        title="Song 2",
+        duration_seconds=180,
+    )
+    system["queue"].update_download_status(
+        id1, QueueManager.STATUS_READY, download_path="/path/to/song1.mp4"
+    )
+    # Song 2 is still pending (not ready)
+
+    # Play song 1
+    system["playback"].play()
+    assert system["playback"].state == PlaybackState.PLAYING
+    assert system["playback"].current_song_id == id1
+
+    # Song 1 ends — next song isn't ready, so playback should go IDLE
+    system["playback"].on_song_end()
+    assert system["playback"].state == PlaybackState.IDLE
+    assert system["playback"].current_song_id is None
+    assert system["playback"].get_cursor() == id1
+
+    # Now song 2 finishes downloading
+    system["queue"].update_download_status(
+        id2, QueueManager.STATUS_READY, download_path="/path/to/song2.mp4"
+    )
+
+    # Simulate the monitor's periodic check (normally runs every 2s on a thread)
+    system["playback"]._check_auto_start_when_idle()
+
+    # Should have auto-started song 2
+    assert system["playback"].state == PlaybackState.PLAYING
+    assert system["playback"].current_song_id == id2
+    assert system["playback"].get_cursor() == id2
+
+
 def test_video_availability_check(full_system):
     """Test checking if a video is available."""
     system = full_system
