@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>kbox - Display</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #player-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: none;
+        }
+
+        #player-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        #idle-screen {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+
+        #idle-screen h1 {
+            font-size: 4rem;
+            margin-bottom: 0.5rem;
+        }
+
+        #idle-screen p {
+            font-size: 1.5rem;
+            opacity: 0.6;
+        }
+
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        #up-next-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 30px 40px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.85));
+            display: none;
+            z-index: 10;
+        }
+
+        #up-next-overlay .label {
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            opacity: 0.7;
+            margin-bottom: 8px;
+        }
+
+        #up-next-overlay .song-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+        }
+
+        #up-next-overlay .singer {
+            font-size: 1.2rem;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+
+        /* Transition screen between songs */
+        #transition-screen {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #0f3460 100%);
+            z-index: 20;
+        }
+
+        #transition-screen .up-next-label {
+            font-size: 1.5rem;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            opacity: 0.6;
+            margin-bottom: 20px;
+        }
+
+        #transition-screen .song-title {
+            font-size: 3rem;
+            font-weight: 700;
+            text-align: center;
+            max-width: 80%;
+        }
+
+        #transition-screen .singer-name {
+            font-size: 2rem;
+            opacity: 0.8;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="idle-screen">
+    <h1>kbox</h1>
+    <p class="pulse">Waiting for songs...</p>
+</div>
+
+<div id="player-container">
+    <div id="yt-player"></div>
+</div>
+
+<div id="up-next-overlay">
+    <div class="label">Up Next</div>
+    <div class="song-title" id="up-next-title"></div>
+    <div class="singer" id="up-next-singer"></div>
+</div>
+
+<div id="transition-screen">
+    <div class="up-next-label">Up Next</div>
+    <div class="song-title" id="transition-title"></div>
+    <div class="singer-name" id="transition-singer"></div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    // State
+    let player = null;
+    let playerReady = false;
+    let currentVideoId = null;   // YouTube video ID currently playing
+    let currentQueueId = null;   // Queue item ID currently playing
+    let playedQueueIds = new Set();  // Queue IDs we've already played
+    let queue = [];
+    let pollTimer = null;
+    const POLL_INTERVAL_MS = 2000;
+    const TRANSITION_DURATION_MS = 4000;
+
+    // =========================================================================
+    // YouTube IFrame API
+    // =========================================================================
+
+    // Load the YouTube IFrame API script
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+
+    // Called by the YouTube IFrame API when ready
+    window.onYouTubeIframeAPIReady = function() {
+        player = new YT.Player('yt-player', {
+            width: '100%',
+            height: '100%',
+            playerVars: {
+                autoplay: 1,
+                controls: 0,
+                disablekb: 1,
+                fs: 0,
+                iv_load_policy: 3,  // No annotations
+                modestbranding: 1,
+                rel: 0,             // No related videos
+                showinfo: 0,
+            },
+            events: {
+                onReady: onPlayerReady,
+                onStateChange: onPlayerStateChange,
+                onError: onPlayerError,
+            }
+        });
+    };
+
+    function onPlayerReady() {
+        playerReady = true;
+        console.log('[display] YouTube player ready');
+        // Start polling for queue
+        startPolling();
+    }
+
+    function onPlayerStateChange(event) {
+        if (event.data === YT.PlayerState.ENDED) {
+            console.log('[display] Video ended, advancing...');
+            onSongEnded();
+        }
+    }
+
+    function onPlayerError(event) {
+        console.error('[display] Player error:', event.data);
+        // Skip to next song on error
+        setTimeout(onSongEnded, 2000);
+    }
+
+    // =========================================================================
+    // Queue Polling
+    // =========================================================================
+
+    function startPolling() {
+        pollQueue();
+        pollTimer = setInterval(pollQueue, POLL_INTERVAL_MS);
+    }
+
+    async function pollQueue() {
+        try {
+            const response = await fetch('/api/queue');
+            if (!response.ok) return;
+            const data = await response.json();
+            queue = data.queue || [];
+            processQueue();
+        } catch (e) {
+            console.error('[display] Poll error:', e);
+        }
+    }
+
+    // =========================================================================
+    // Playback Logic
+    // =========================================================================
+
+    function extractYouTubeId(videoId) {
+        // video_id format is "youtube:VIDEO_ID"
+        if (!videoId) return null;
+        const parts = videoId.split(':');
+        return parts.length >= 2 ? parts.slice(1).join(':') : videoId;
+    }
+
+    function getUnplayedSongs() {
+        return queue.filter(item =>
+            !item.is_played &&
+            !playedQueueIds.has(item.id)
+        );
+    }
+
+    function processQueue() {
+        // If we're currently playing something, just update the "up next" overlay
+        if (currentQueueId !== null) {
+            updateUpNextOverlay();
+            return;
+        }
+
+        // Find the next song to play
+        const unplayed = getUnplayedSongs();
+        if (unplayed.length === 0) {
+            showIdle();
+            return;
+        }
+
+        playSong(unplayed[0]);
+    }
+
+    function playSong(item) {
+        const ytId = extractYouTubeId(item.video_id);
+        if (!ytId || !playerReady) return;
+
+        console.log('[display] Playing:', item.title, '(' + ytId + ')');
+
+        currentQueueId = item.id;
+        currentVideoId = ytId;
+
+        // Show player, hide idle
+        document.getElementById('idle-screen').style.display = 'none';
+        document.getElementById('player-container').style.display = 'block';
+        document.getElementById('transition-screen').style.display = 'none';
+
+        // Load and play
+        player.loadVideoById(ytId);
+
+        updateUpNextOverlay();
+    }
+
+    function onSongEnded() {
+        if (currentQueueId !== null) {
+            playedQueueIds.add(currentQueueId);
+        }
+        currentQueueId = null;
+        currentVideoId = null;
+
+        // Find next song
+        const unplayed = getUnplayedSongs();
+        if (unplayed.length === 0) {
+            showIdle();
+            return;
+        }
+
+        // Show transition screen
+        showTransition(unplayed[0]);
+    }
+
+    function showTransition(nextItem) {
+        const screen = document.getElementById('transition-screen');
+        document.getElementById('transition-title').textContent = nextItem.title || 'Unknown Song';
+        document.getElementById('transition-singer').textContent = nextItem.user_name || '';
+
+        document.getElementById('player-container').style.display = 'none';
+        document.getElementById('idle-screen').style.display = 'none';
+        screen.style.display = 'flex';
+
+        setTimeout(() => {
+            screen.style.display = 'none';
+            playSong(nextItem);
+        }, TRANSITION_DURATION_MS);
+    }
+
+    function showIdle() {
+        document.getElementById('idle-screen').style.display = 'flex';
+        document.getElementById('player-container').style.display = 'none';
+        document.getElementById('transition-screen').style.display = 'none';
+        document.getElementById('up-next-overlay').style.display = 'none';
+    }
+
+    function updateUpNextOverlay() {
+        const overlay = document.getElementById('up-next-overlay');
+        const unplayed = getUnplayedSongs();
+
+        // Find the song after the current one
+        const currentIdx = unplayed.findIndex(item => item.id === currentQueueId);
+        const nextItem = currentIdx >= 0 && currentIdx < unplayed.length - 1
+            ? unplayed[currentIdx + 1]
+            : null;
+
+        if (nextItem) {
+            document.getElementById('up-next-title').textContent = nextItem.title || 'Unknown Song';
+            document.getElementById('up-next-singer').textContent = nextItem.user_name || '';
+            overlay.style.display = 'block';
+        } else {
+            overlay.style.display = 'none';
+        }
+    }
+
+    // =========================================================================
+    // Init
+    // =========================================================================
+
+    // If YouTube API fails to load, still start polling so we're ready
+    setTimeout(() => {
+        if (!playerReady) {
+            console.warn('[display] YouTube API slow to load, starting poll anyway');
+            startPolling();
+        }
+    }, 5000);
+
+})();
+</script>
+
+</body>
+</html>

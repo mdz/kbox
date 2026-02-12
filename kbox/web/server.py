@@ -199,6 +199,10 @@ def create_app(
             """Middleware to authenticate guests via access token."""
 
             async def dispatch(self, request: Request, call_next):
+                # Allow display page without authentication (passive viewer)
+                if request.url.path == "/display":
+                    return await call_next(request)
+
                 # Check if already authenticated via session
                 if request.session.get("guest_authenticated"):
                     return await call_next(request)
@@ -931,6 +935,13 @@ def create_app(
         return {"history": history_dicts}
 
     # Web UI
+    @app.get("/display", response_class=HTMLResponse)
+    async def display(request: Request):
+        """Fullscreen YouTube embed display for TV/monitor."""
+        # Authenticate the session so API calls from this page work
+        request.session["guest_authenticated"] = True
+        return templates.TemplateResponse(request, "display.html")
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         """Serve web UI."""
