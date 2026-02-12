@@ -293,17 +293,14 @@ def create_app(
         current_song_id = current_song.get("id") if current_song else None
         position_seconds = status.get("position_seconds", 0)
 
-        # Derive cursor position from cursor song ID and queue items
         cursor_id = playback.get_cursor()
-        cursor_position = None
-        if cursor_id is not None:
-            cursor_position = next(
-                (item.position for item in queue_items if item.id == cursor_id), None
-            )
 
-        # Convert QueueItem objects to dicts and add flags for UI rendering
+        # Walk queue items in order; everything before the cursor is "played"
+        is_played = cursor_id is not None
         queue = []
         for item in queue_items:
+            if item.id == cursor_id:
+                is_played = False
             item_dict = asdict(item)
             # Flatten metadata and settings for easier frontend access
             item_dict["title"] = item.metadata.title
@@ -313,9 +310,8 @@ def create_app(
             item_dict["artist"] = item.metadata.artist
             item_dict["song_name"] = item.metadata.song_name
             item_dict["pitch_semitones"] = item.settings.pitch_semitones
-            # Add UI flags - derive played status from cursor position
             item_dict["is_current"] = item.id == current_song_id
-            item_dict["is_played"] = cursor_position is not None and item.position < cursor_position
+            item_dict["is_played"] = is_played
             queue.append(item_dict)
 
         # Get the next song in queue order (regardless of download status)
@@ -336,13 +332,8 @@ def create_app(
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            # Get upcoming songs (after cursor, excluding the currently playing song)
-            upcoming = [
-                item
-                for item in queue_items
-                if (cursor_position is None or item.position > cursor_position)
-                and item.id != current_song_id
-            ]
+            # Get upcoming songs (not played, not current)
+            upcoming = [q for q in queue if not q["is_played"] and not q["is_current"]]
 
             # Time remaining in the current song
             current_duration = current_song.get("duration_seconds", 0) if current_song else 0
@@ -350,14 +341,14 @@ def create_app(
             songs_away = 0
 
             for item in upcoming:
-                if item.user_id == current_user_id:
+                if item["user_id"] == current_user_id:
                     my_next_turn = {
                         "estimated_seconds": int(time_until),
                         "songs_away": songs_away,
                     }
                     break
                 songs_away += 1
-                time_until += item.metadata.duration_seconds or 0
+                time_until += item.get("duration_seconds") or 0
 
         # Calculate queue depth (estimated wait time for next addition)
         pending_items = [item for item in queue if not item["is_played"]]
