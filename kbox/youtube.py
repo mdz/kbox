@@ -267,7 +267,12 @@ class YouTubeSource(VideoSource):
         search_query = f"{query} karaoke"
         self.logger.debug("Searching YouTube via yt-dlp: %s", search_query)
 
-        ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": False}
+        # extract_flat avoids visiting each video page individually,
+        # returning only the metadata available from the search results page.
+        # This is much faster (~1-2s vs ~10-15s) at the cost of missing
+        # some fields like full description. Duration and thumbnails are
+        # still available from the search results.
+        ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist"}
 
         try:
             self._ytdlp_rate_limit()
@@ -276,11 +281,15 @@ class YouTubeSource(VideoSource):
 
             results = []
             for entry in (info or {}).get("entries", []):
+                # With extract_flat, thumbnail may be in 'thumbnails' list
+                thumbnail = entry.get("thumbnail", "") or entry.get("thumbnails", [{}])[-1].get(
+                    "url", ""
+                )
                 results.append(
                     {
-                        "id": entry["id"],
+                        "id": entry.get("id", entry.get("url", "")),
                         "title": entry.get("title", ""),
-                        "thumbnail": entry.get("thumbnail", ""),
+                        "thumbnail": thumbnail,
                         "channel": entry.get("channel", "") or entry.get("uploader", ""),
                         "duration_seconds": entry.get("duration"),
                         "description": (entry.get("description") or "")[:200],
