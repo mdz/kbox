@@ -71,8 +71,13 @@ export async function getSuggestions() {
     }
 }
 
+// Guard against duplicate search calls (e.g. touchend + form submit)
+let _searchInFlight = false;
+
 // Search for videos
 export async function search() {
+    if (_searchInFlight) return;
+
     const query = document.getElementById('search-input').value;
 
     if (!query) {
@@ -89,6 +94,7 @@ export async function search() {
     const resultsDiv = document.getElementById('search-results');
     resultsDiv.innerHTML = 'Searching...';
 
+    _searchInFlight = true;
     try {
         const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
@@ -118,6 +124,8 @@ export async function search() {
         });
     } catch (e) {
         resultsDiv.innerHTML = '<div class="error">Error searching</div>';
+    } finally {
+        _searchInFlight = false;
     }
 }
 
