@@ -136,7 +136,7 @@ def require_user(request: Request) -> str:
     if not user_id:
         raise HTTPException(
             status_code=401,
-            detail="Not authenticated. Please refresh the page and enter your name.",
+            detail="Not authenticated. Please refresh the page.",
         )
     return user_id
 
@@ -199,6 +199,10 @@ def create_app(
             """Middleware to authenticate guests via access token."""
 
             async def dispatch(self, request: Request, call_next):
+                # Allow display page without authentication (passive viewer)
+                if request.url.path == "/display":
+                    return await call_next(request)
+
                 # Check if already authenticated via session
                 if request.session.get("guest_authenticated"):
                     return await call_next(request)
@@ -346,11 +350,18 @@ def create_app(
                 songs_away += 1
                 time_until += item.metadata.duration_seconds or 0
 
+        # Calculate queue depth (estimated wait time for next addition)
+        pending_items = [item for item in queue if not item["is_played"]]
+        queue_depth_seconds = sum(item.get("duration_seconds") or 0 for item in pending_items)
+        queue_depth_count = len(pending_items)
+
         return {
             "queue": queue,
             "current_song_id": current_song_id,
             "next_song": next_song,
             "my_next_turn": my_next_turn,
+            "queue_depth_seconds": queue_depth_seconds,
+            "queue_depth_count": queue_depth_count,
         }
 
     @app.get("/api/queue/settings/{video_id:path}")
@@ -869,7 +880,7 @@ def create_app(
                 streaming.reinitialize_pipeline()
 
                 # Show idle screen so display stays active
-                playback.show_idle_screen("Settings applied - ready to play!")
+                playback.show_idle_screen()
 
                 logger.info("Streaming configuration applied successfully")
 
@@ -965,9 +976,22 @@ def create_app(
         return {"history": history_dicts}
 
     # Web UI
+    @app.get("/display", response_class=HTMLResponse)
+    async def display(request: Request):
+        """Fullscreen YouTube embed display for TV/monitor."""
+        # Authenticate the session so API calls from this page work
+        request.session["guest_authenticated"] = True
+        return templates.TemplateResponse(request, "display.html")
+
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    async def index(request: Request, config: ConfigManager = Depends(get_config_manager)):
         """Serve web UI."""
-        return templates.TemplateResponse(request, "index.html")
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "long_song_warning_minutes": config.get_int("long_song_warning_minutes", 5),
+            },
+        )
 
     return app

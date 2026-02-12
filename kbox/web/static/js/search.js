@@ -2,7 +2,7 @@
  * Search and add song functions for kbox web UI.
  */
 
-import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd } from './state.js';
+import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, queueDepthSeconds, queueDepthCount } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
 
@@ -71,8 +71,13 @@ export async function getSuggestions() {
     }
 }
 
+// Guard against duplicate search calls (e.g. touchend + form submit)
+let _searchInFlight = false;
+
 // Search for videos
 export async function search() {
+    if (_searchInFlight) return;
+
     const query = document.getElementById('search-input').value;
 
     if (!query) {
@@ -89,6 +94,7 @@ export async function search() {
     const resultsDiv = document.getElementById('search-results');
     resultsDiv.innerHTML = 'Searching...';
 
+    _searchInFlight = true;
     try {
         const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
@@ -118,6 +124,8 @@ export async function search() {
         });
     } catch (e) {
         resultsDiv.innerHTML = '<div class="error">Error searching</div>';
+    } finally {
+        _searchInFlight = false;
     }
 }
 
@@ -144,6 +152,17 @@ export async function showAddSongModal(video) {
         console.debug('Could not fetch saved settings:', e);
     }
 
+    // Build queue depth display from backend-computed values
+    let queueDepthHTML;
+    if (queueDepthCount === 0) {
+        queueDepthHTML = '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">Queue is empty — your song will play first!</div>';
+    } else {
+        const minutes = Math.round(queueDepthSeconds / 60);
+        const timeStr = minutes < 1 ? 'less than a minute' : minutes === 1 ? '~1 minute' : `~${minutes} minutes`;
+        const songStr = queueDepthCount === 1 ? '1 song' : `${queueDepthCount} songs`;
+        queueDepthHTML = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">&#x23F3; ${songStr} ahead (${timeStr})</div>`;
+    }
+
     // Use reusable song settings component with saved pitch
     renderSongSettings('add-song-modal-content', {
         title: video.title,
@@ -156,7 +175,8 @@ export async function showAddSongModal(video) {
         live: false,
         showStatus: false,
         showThumbnail: true,
-        showUser: true
+        showUser: true,
+        additionalControls: queueDepthHTML
     });
 
     // Show modal
@@ -176,6 +196,15 @@ export function cancelAddToQueue() {
 // Confirm and add song to queue
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
+
+    // Warn if song exceeds the long song threshold
+    const warningMinutes = window.kboxConfig?.longSongWarningMinutes || 0;
+    const durationSeconds = currentVideoToAdd.duration_seconds || 0;
+    if (warningMinutes > 0 && durationSeconds > warningMinutes * 60) {
+        if (!confirm(`This song is over ${Math.floor(durationSeconds / 60)} minutes long. Are you sure you want to add it?`)) {
+            return;
+        }
+    }
 
     const pitchInput = document.getElementById('add-song-pitch-input');
     if (!pitchInput) {

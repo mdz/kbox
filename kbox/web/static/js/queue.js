@@ -5,7 +5,8 @@
 import {
     isOperator, userId,
     currentQueue, setCurrentQueue,
-    currentQueueItemToEdit, setCurrentQueueItemToEdit
+    currentQueueItemToEdit, setCurrentQueueItemToEdit,
+    setQueueDepthSeconds, setQueueDepthCount
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
@@ -288,6 +289,8 @@ export async function loadQueue() {
         const queueData = await queueResponse.json();
         const statusData = await statusResponse.json();
         setCurrentQueue(queueData.queue);
+        setQueueDepthSeconds(queueData.queue_depth_seconds || 0);
+        setQueueDepthCount(queueData.queue_depth_count || 0);
 
         // Update play/pause toggle button
         updatePlayPauseButton(statusData.state);

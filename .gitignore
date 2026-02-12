@@ -37,5 +37,6 @@ htmlcov/
 .ruff_cache
 .mypy_cache
 .test-venv
+deploy.sh
 ldocs
 .env
