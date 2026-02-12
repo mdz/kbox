@@ -69,51 +69,60 @@ The mixing can happen in different places:
 
 ---
 
-## Basic Setup: HDMI to TV (No Microphones)
+## Basic Setup: Laptop + TV + Speaker (No Microphones)
 
-The simplest possible setup - just a computer and a TV. Perfect for casual home karaoke where singers just sing along without amplification.
+The simplest possible setup - just a laptop, a TV for lyrics, and a speaker for sound. Perfect for casual home karaoke where singers just sing along without amplification. No audio interfaces, no microphones, no configuration headaches.
 
 ### What You Need
 
 | Item | Example | Purpose |
 |------|---------|---------|
-| Computer | Raspberry Pi 5, laptop, or mini PC | Runs kbox |
-| TV | Any TV with HDMI input | Display + sound |
-| HDMI Cable | Standard HDMI cable | Connects computer to TV |
+| Laptop | Any laptop that can run kbox | Runs kbox, also serves as queue controller |
+| TV | Any TV with HDMI input | Shows lyrics (video only) |
+| HDMI Cable | Standard HDMI cable | Video output to TV |
+| Powered Speaker | Any powered speaker, soundbar, or Bluetooth speaker | Plays backing track |
+| Audio Cable | 3.5mm aux cable (or Bluetooth) | Connects laptop to speaker |
 
-That's it!
+### Why a Laptop?
+
+A laptop is the best choice for this basic setup because:
+
+- **Good audio output** - A laptop's headphone jack is clean enough to drive a powered speaker directly, no audio interface needed
+- **Built-in control** - Use the laptop's browser to search songs and manage the queue, no second device needed
+- **No extra hardware** - A Raspberry Pi's 3.5mm audio output is noisy and underpowered, pushing you toward a USB audio interface which defeats the purpose of a minimal setup
+
+> **Note**: A Raspberry Pi or mini PC can work here too, but you'll need a USB audio interface for decent sound and a phone or tablet to control the queue.
 
 ### How It Works
 
 ```mermaid
 flowchart LR
-    KBOX[kbox] -->|HDMI| TV[📺 TV]
-    TV --> VID[Video: Lyrics]
-    TV --> AUD[Audio: Backing Track]
+    LAPTOP[💻 Laptop running kbox] -->|HDMI| TV[📺 TV<br/>Lyrics Display]
+    LAPTOP -->|Aux / Bluetooth| SPK[🔊 Speaker<br/>Backing Track]
 ```
 
-The TV's built-in speakers play the backing track. Singers just sing into the room - no microphone, no mixing, no equipment to manage.
+The HDMI cable sends lyrics video to the TV. The aux cable (or Bluetooth) sends the backing track audio to a speaker. Singers just sing into the room - no microphone, no mixing, no equipment to manage.
 
 ### Setup Steps
 
-1. Connect computer to TV via HDMI
-2. Configure kbox audio output to HDMI (e.g., `plughw:CARD=vc4hdmi0`)
-3. Open kbox web UI, queue a song, and sing!
+1. Connect laptop to TV via HDMI (for lyrics display)
+2. Connect laptop to speaker via aux cable or Bluetooth (for audio)
+3. Configure kbox audio output to the laptop's headphone jack (usually the default)
+4. Open kbox web UI on the laptop, queue a song, and sing!
 
 ### When This Works Well
 
-- **Small rooms** - Singers can be heard naturally over TV speakers
+- **Small rooms** - Singers can be heard naturally over the speaker
 - **Kids' parties** - Simple, nothing to break
 - **Practice sessions** - Just learning songs, no need for amplification
-- **Casual gatherings** - Low-key, no setup hassle
+- **Casual gatherings** - Low-key, minimal setup hassle
 
 ### Limitations
 
 - No vocal amplification (fine for small spaces)
-- TV speakers may lack bass
-- Can't adjust vocal/music balance
+- Can't adjust vocal/music balance (only the backing track volume)
 
-> **Tip**: If TV speakers sound thin, connect a soundbar or Bluetooth speaker to the TV for better audio quality.
+> **Tip**: A Bluetooth speaker works too and eliminates one cable, but may add slight audio latency.
 
 ---
 
