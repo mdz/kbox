@@ -136,7 +136,7 @@ def require_user(request: Request) -> str:
     if not user_id:
         raise HTTPException(
             status_code=401,
-            detail="Not authenticated. Please refresh the page and enter your name.",
+            detail="Not authenticated. Please refresh the page.",
         )
     return user_id
 
