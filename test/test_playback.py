@@ -21,7 +21,6 @@ def mock_queue_manager():
     qm.get_item.return_value = None
     # Configure navigation to return None by default
     qm.get_song_at_offset.return_value = None
-    qm.get_ready_song_at_offset.return_value = None
     # Provide a mock database for ConfigRepository initialization
     qm.database = Mock()
     qm.database.get_connection.return_value.cursor.return_value.fetchone.return_value = None
@@ -216,8 +215,8 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
         pitch_semitones=0,
         download_status=QueueManager.STATUS_READY,
     )
-    # Mock get_ready_song_at_offset to return the next song
-    mock_queue_manager.get_ready_song_at_offset.return_value = mock_next_song
+    # Mock get_song_at_offset to return the next song
+    mock_queue_manager.get_song_at_offset.return_value = mock_next_song
 
     result = playback_controller.skip()
 
@@ -248,8 +247,8 @@ def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streami
 
     # Mock get_item to return current song data
     mock_queue_manager.get_item.return_value = current_song
-    # Mock get_ready_song_at_offset to return None (no next song)
-    mock_queue_manager.get_ready_song_at_offset.return_value = None
+    # Mock get_song_at_offset to return None (no next song)
+    mock_queue_manager.get_song_at_offset.return_value = None
 
     result = playback_controller.skip()
 
@@ -815,9 +814,9 @@ def test_single_song_does_not_loop_after_playing(
     """Test that a single song stops after playing, rather than looping forever.
 
     With the cursor model, when a song finishes:
-    1. on_song_end() looks for next song via get_ready_song_at_offset(finished_id, +1)
+    1. on_song_end() looks for next song via get_song_at_offset(finished_id, +1)
     2. No next song -> goes to IDLE, shows end-of-queue screen
-    3. _check_auto_start_when_idle() uses get_ready_song_at_offset(cursor, +1)
+    3. _check_auto_start_when_idle() uses get_song_at_offset(cursor, +1)
     4. Cursor points to the finished song, no songs after it -> stays IDLE
 
     This prevents the infinite loop because auto-start only looks forward from cursor.
@@ -863,7 +862,7 @@ def test_auto_start_does_not_restart_played_songs(
 ):
     """Test that auto-start doesn't restart songs that have already been played.
 
-    With the cursor model, auto-start uses get_ready_song_at_offset(cursor, +1)
+    With the cursor model, auto-start uses get_song_at_offset(cursor, +1)
     to only look forward from the cursor. If the cursor is on the last song,
     there's nothing after it, so auto-start correctly stays idle.
     """

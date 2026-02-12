@@ -236,59 +236,6 @@ def test_get_song_at_offset(queue_manager, test_users):
     assert queue_manager.get_song_at_offset(None, 0) is None
 
 
-def test_get_ready_song_at_offset(queue_manager, test_users):
-    """Test getting ready song at offset."""
-    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
-    id3 = queue_manager.add_song(test_users["alice"], "youtube:vid3", "Song 3")
-
-    # No ready songs yet
-    next_song = queue_manager.get_ready_song_at_offset(None, 0)
-    assert next_song is None
-
-    # Mark first and second as ready
-    queue_manager.update_download_status(
-        id1, QueueManager.STATUS_READY, download_path="/path/to/vid1.mp4"
-    )
-    queue_manager.update_download_status(
-        id2, QueueManager.STATUS_READY, download_path="/path/to/vid2.mp4"
-    )
-
-    # Get first ready song
-    first_song = queue_manager.get_ready_song_at_offset(None, 0)
-    assert first_song is not None
-    assert first_song.id == id1
-    assert first_song.download_status == QueueManager.STATUS_READY
-
-    # Get next song after first
-    next_song = queue_manager.get_ready_song_at_offset(id1, +1)
-    assert next_song is not None
-    assert next_song.id == id2
-
-    # Get previous song before second
-    prev_song = queue_manager.get_ready_song_at_offset(id2, -1)
-    assert prev_song is not None
-    assert prev_song.id == id1
-
-    # No next song after second (third is not ready)
-    no_next = queue_manager.get_ready_song_at_offset(id2, +1)
-    assert no_next is None
-
-    # No previous song before first
-    no_prev = queue_manager.get_ready_song_at_offset(id1, -1)
-    assert no_prev is None
-
-    # Reference song not in queue at all - falls back to first ready song
-    nonexistent = queue_manager.get_ready_song_at_offset(9999, +1)
-    assert nonexistent is not None
-    assert nonexistent.id == id1
-
-    # Reference song exists but is not ready (id3) - finds next by position
-    # id3 is at position 3, and there are no ready songs after position 3
-    not_ready_next = queue_manager.get_ready_song_at_offset(id3, +1)
-    assert not_ready_next is None
-
-
 def test_update_download_status(queue_manager, test_users):
     """Test updating download status."""
     item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
@@ -554,46 +501,3 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
     item = qm.get_item(item_id)
     assert item.download_status == QueueManager.STATUS_READY
     assert item.download_path == "/recovered/path/video.mp4"
-
-
-def test_navigation_through_queue(queue_manager, test_users):
-    """Test queue navigation using get_ready_song_at_offset."""
-    # Add three songs
-    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
-    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
-    id3 = queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
-
-    # Mark all as ready
-    queue_manager.update_download_status(
-        id1, QueueManager.STATUS_READY, download_path="/path/to/vid1.mp4"
-    )
-    queue_manager.update_download_status(
-        id2, QueueManager.STATUS_READY, download_path="/path/to/vid2.mp4"
-    )
-    queue_manager.update_download_status(
-        id3, QueueManager.STATUS_READY, download_path="/path/to/vid3.mp4"
-    )
-
-    # No reference: first ready song from the start
-    first = queue_manager.get_ready_song_at_offset(None, 0)
-    assert first is not None
-    assert first.id == id1
-
-    # Next after song 1 should be song 2
-    next_after_1 = queue_manager.get_ready_song_at_offset(id1, +1)
-    assert next_after_1 is not None
-    assert next_after_1.id == id2
-
-    # Next after song 2 should be song 3
-    next_after_2 = queue_manager.get_ready_song_at_offset(id2, +1)
-    assert next_after_2 is not None
-    assert next_after_2.id == id3
-
-    # Previous before song 2 should be song 1
-    prev_before_2 = queue_manager.get_ready_song_at_offset(id2, -1)
-    assert prev_before_2 is not None
-    assert prev_before_2.id == id1
-
-    # No next song after song 3 (last in queue)
-    no_next = queue_manager.get_ready_song_at_offset(id3, +1)
-    assert no_next is None

@@ -570,8 +570,8 @@ class PlaybackController:
             self.logger.error("Current song ID %s not found", self.current_song_id)
             return False
 
-        # Get next song after current
-        next_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, +1)
+        # Get next song after current (by queue position)
+        next_song = self.queue_manager.get_song_at_offset(self.current_song_id, +1)
 
         if not next_song:
             self.logger.info("No next song available to skip to")
@@ -688,8 +688,8 @@ class PlaybackController:
                 self.logger.info("No current song, cannot go to previous")
                 return False
 
-            # Get previous song before current
-            prev_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, -1)
+            # Get previous song before current (by queue position)
+            prev_song = self.queue_manager.get_song_at_offset(self.current_song_id, -1)
 
             if not prev_song:
                 self.logger.info("No previous song available")

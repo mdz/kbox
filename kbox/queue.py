@@ -342,62 +342,6 @@ class QueueManager:
 
         return None
 
-    def get_ready_song_at_offset(
-        self, from_song_id: Optional[int], offset: int
-    ) -> Optional[QueueItem]:
-        """
-        Get a ready (downloaded) song at an offset, skipping non-ready songs.
-
-        Used for operator navigation (skip, previous) where we want to jump
-        over songs that aren't downloaded yet or have errors.
-
-        Args:
-            from_song_id: Reference song ID (None = start from beginning/end)
-            offset: +1 for next, -1 for previous, 0 for first ready
-
-        Returns:
-            The ready song at the offset, or None if not found
-        """
-        queue = self.repository.get_all()
-        ready_songs = [item for item in queue if item.download_status == self.STATUS_READY]
-
-        if not ready_songs:
-            return None
-
-        if from_song_id is None:
-            # No reference - return first (offset >= 0) or last (offset < 0)
-            return ready_songs[0] if offset >= 0 else ready_songs[-1]
-
-        # Find reference song in the ready list
-        current_idx = next((i for i, s in enumerate(ready_songs) if s.id == from_song_id), None)
-
-        if current_idx is not None:
-            # Reference song is in the ready list - use simple index offset
-            target_idx = current_idx + offset
-            if 0 <= target_idx < len(ready_songs):
-                return ready_songs[target_idx]
-            return None
-
-        # Reference song not in ready list (deleted or not ready) - find by position
-        ref_song = next((s for s in queue if s.id == from_song_id), None)
-        if ref_song is None:
-            # Reference song gone entirely - fall back to first/last
-            return ready_songs[0] if offset >= 0 else ready_songs[-1]
-
-        ref_position = ref_song.position
-
-        if offset > 0:
-            candidates = [s for s in ready_songs if s.position > ref_position]
-            if len(candidates) >= offset:
-                return candidates[offset - 1]
-        elif offset < 0:
-            candidates = [s for s in ready_songs if s.position < ref_position]
-            candidates.reverse()
-            if len(candidates) >= abs(offset):
-                return candidates[abs(offset) - 1]
-
-        return None
-
     def clear_queue(self) -> int:
         """Clear all items from the queue."""
         return self.repository.clear()
