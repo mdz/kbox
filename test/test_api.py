@@ -313,6 +313,133 @@ class TestQueueEndpoints:
         data = response.json()
         assert len(data["queue"]) == 2
 
+    def test_get_queue_no_cursor(self, client, alice, bob, app_components):
+        """GET /api/queue - without cursor, nothing is played, all are upcoming."""
+        queue_mgr = app_components["queue"]
+        id1 = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Song 1", duration_seconds=120
+        )
+        id2 = queue_mgr.add_song(
+            user=bob, video_id="youtube:s2", title="Song 2", duration_seconds=180
+        )
+
+        response = client.get("/api/queue")
+        data = response.json()
+
+        assert not data["queue"][0]["is_played"]
+        assert not data["queue"][1]["is_played"]
+        # Next song is the first item (no cursor, so all are upcoming)
+        assert data["next_song"]["id"] == id1
+        assert data["queue_depth_count"] == 2
+        assert data["queue_depth_seconds"] == 300
+
+    def test_get_queue_cursor_splits_played_and_upcoming(self, client, alice, bob, app_components):
+        """GET /api/queue - cursor divides queue into played and upcoming."""
+        queue_mgr = app_components["queue"]
+        playback = app_components["playback"]
+
+        id1 = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Song 1", duration_seconds=120
+        )
+        id2 = queue_mgr.add_song(
+            user=bob, video_id="youtube:s2", title="Song 2", duration_seconds=180
+        )
+        id3 = queue_mgr.add_song(
+            user=alice, video_id="youtube:s3", title="Song 3", duration_seconds=200
+        )
+
+        # Cursor on song 2 — song 1 is played, songs 2 and 3 are not
+        playback.get_cursor.return_value = id2
+
+        response = client.get("/api/queue")
+        data = response.json()
+
+        assert data["queue"][0]["is_played"] is True
+        assert data["queue"][1]["is_played"] is False
+        assert data["queue"][2]["is_played"] is False
+        # Next song is song 3 (first item after cursor)
+        assert data["next_song"]["id"] == id3
+        assert data["queue_depth_count"] == 1
+        assert data["queue_depth_seconds"] == 200
+
+    def test_get_queue_cursor_on_last_song(self, client, alice, bob, app_components):
+        """GET /api/queue - cursor on last song means no next song."""
+        queue_mgr = app_components["queue"]
+        playback = app_components["playback"]
+
+        id1 = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Song 1", duration_seconds=120
+        )
+        id2 = queue_mgr.add_song(
+            user=bob, video_id="youtube:s2", title="Song 2", duration_seconds=180
+        )
+
+        playback.get_cursor.return_value = id2
+
+        response = client.get("/api/queue")
+        data = response.json()
+
+        assert data["queue"][0]["is_played"] is True
+        assert data["queue"][1]["is_played"] is False
+        assert data["next_song"] is None
+        assert data["queue_depth_count"] == 0
+
+    def test_get_queue_is_current_flag(self, client, alice, bob, app_components):
+        """GET /api/queue - is_current marks the currently playing song."""
+        queue_mgr = app_components["queue"]
+        playback = app_components["playback"]
+
+        id1 = queue_mgr.add_song(user=alice, video_id="youtube:s1", title="Song 1")
+        id2 = queue_mgr.add_song(user=bob, video_id="youtube:s2", title="Song 2")
+
+        playback.get_cursor.return_value = id1
+        playback.get_status.return_value = {
+            "state": "playing",
+            "current_song": {"id": id1},
+            "position_seconds": 30,
+            "duration_seconds": 120,
+        }
+
+        response = client.get("/api/queue")
+        data = response.json()
+
+        assert data["queue"][0]["is_current"] is True
+        assert data["queue"][1]["is_current"] is False
+
+    def test_get_queue_my_next_turn(self, client, alice, bob, app_components):
+        """GET /api/queue - estimates when a user's next turn is."""
+        queue_mgr = app_components["queue"]
+        playback = app_components["playback"]
+        charlie = app_components["user"].get_or_create_user("charlie-uuid", "Charlie")
+
+        id1 = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Song 1", duration_seconds=120
+        )
+        id2 = queue_mgr.add_song(
+            user=charlie, video_id="youtube:s2", title="Song 2", duration_seconds=180
+        )
+        id3 = queue_mgr.add_song(
+            user=bob, video_id="youtube:s3", title="Song 3", duration_seconds=200
+        )
+
+        # Alice is playing song 1, 30 seconds in
+        playback.get_cursor.return_value = id1
+        playback.get_status.return_value = {
+            "state": "playing",
+            "current_song": {"id": id1, "duration_seconds": 120},
+            "position_seconds": 30,
+            "duration_seconds": 120,
+        }
+
+        # Bob asks: his song is after Charlie's, so 1 song away
+        set_user(client, BOB_ID, "Bob")
+        response = client.get("/api/queue")
+        data = response.json()
+
+        assert data["my_next_turn"]["songs_away"] == 1
+        # Time remaining: (120 - 30) + 180 = 270
+        assert data["my_next_turn"]["estimated_seconds"] == 270
+
     def test_remove_song_as_owner(self, client, alice):
         """DELETE /api/queue/{id} - owner can remove their song."""
         # Establish session identity
