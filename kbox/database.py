@@ -712,7 +712,6 @@ class QueueRepository:
         """Convert a database row to a QueueItem."""
         download_json = self._row_get(row, "download_json")
         download_info = self._decode_download_info(download_json)
-        played_at = self._row_get(row, "played_at")
         created_at = self._row_get(row, "created_at")
         return QueueItem(
             id=row["id"],
@@ -725,7 +724,6 @@ class QueueRepository:
             download_status=row["download_status"],
             download_path=download_info.get("download_path"),
             error_message=download_info.get("error_message"),
-            played_at=datetime.fromisoformat(played_at) if played_at else None,
             created_at=datetime.fromisoformat(created_at) if created_at else None,
         )
 
@@ -821,7 +819,7 @@ class QueueRepository:
             cursor.execute("""
                 SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
-                       download_status, created_at, played_at
+                       download_status, created_at
                 FROM queue_items
                 ORDER BY position
             """)
@@ -1054,7 +1052,7 @@ class QueueRepository:
                 """
                 SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
-                       download_status, created_at, played_at
+                       download_status, created_at
                 FROM queue_items
                 WHERE id = ?
             """,

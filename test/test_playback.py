@@ -70,7 +70,6 @@ def create_mock_queue_item(
     download_status="ready",
     download_path="/path/to/video.mp4",
     error_message=None,
-    played_at=None,
 ):
     """Helper to create a mock QueueItem for testing."""
     metadata = SongMetadata(
@@ -88,7 +87,6 @@ def create_mock_queue_item(
         download_status=download_status,
         download_path=download_path,
         error_message=error_message,
-        played_at=played_at,
     )
 
 

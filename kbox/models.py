@@ -53,7 +53,6 @@ class QueueItem:
     download_status: str = "pending"
     download_path: Optional[str] = None
     error_message: Optional[str] = None
-    played_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
 
