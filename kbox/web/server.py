@@ -284,25 +284,21 @@ def create_app(
         """Get current queue with current/played flags for UI rendering."""
         from dataclasses import asdict
 
-        # Get all queue items
         queue_items = queue_mgr.get_queue()
 
-        # Get current song from playback status
         status = playback.get_status()
         current_song = status.get("current_song")
         current_song_id = current_song.get("id") if current_song else None
         position_seconds = status.get("position_seconds", 0)
-
         cursor_id = playback.get_cursor()
 
-        # Walk queue items in order; everything before the cursor is "played"
-        is_played = cursor_id is not None
+        # Find cursor index — everything before it is "played"
+        cursor_idx = next((i for i, item in enumerate(queue_items) if item.id == cursor_id), None)
+
+        # Serialize queue items for the frontend
         queue = []
-        for item in queue_items:
-            if item.id == cursor_id:
-                is_played = False
+        for i, item in enumerate(queue_items):
             item_dict = asdict(item)
-            # Flatten metadata and settings for easier frontend access
             item_dict["title"] = item.metadata.title
             item_dict["duration_seconds"] = item.metadata.duration_seconds
             item_dict["thumbnail_url"] = item.metadata.thumbnail_url
@@ -311,49 +307,43 @@ def create_app(
             item_dict["song_name"] = item.metadata.song_name
             item_dict["pitch_semitones"] = item.settings.pitch_semitones
             item_dict["is_current"] = item.id == current_song_id
-            item_dict["is_played"] = is_played
+            item_dict["is_played"] = cursor_idx is not None and i < cursor_idx
             queue.append(item_dict)
 
-        # Get the next song in queue order (regardless of download status)
-        ref_id = current_song_id or cursor_id
-        next_song_item = queue_mgr.get_song_at_offset(ref_id, 1) if ref_id else None
+        # Upcoming items: everything after the cursor (or the whole list if no cursor)
+        upcoming_start = (cursor_idx + 1) if cursor_idx is not None else 0
+        upcoming = queue_items[upcoming_start:]
+
+        # Next song
         next_song = None
-        if next_song_item:
+        if upcoming:
+            s = upcoming[0]
             next_song = {
-                "id": next_song_item.id,
-                "user_id": next_song_item.user_id,
-                "user_name": next_song_item.user_name,
-                "title": next_song_item.metadata.title,
-                "duration_seconds": next_song_item.metadata.duration_seconds,
+                "id": s.id,
+                "user_id": s.user_id,
+                "user_name": s.user_name,
+                "title": s.metadata.title,
+                "duration_seconds": s.metadata.duration_seconds,
             }
 
-        # Calculate when the current user's next song is coming up
-        # (only if they're not already the immediate next singer)
+        # How long until the current user's next turn?
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            # Get upcoming songs (not played, not current)
-            upcoming = [q for q in queue if not q["is_played"] and not q["is_current"]]
-
-            # Time remaining in the current song
             current_duration = current_song.get("duration_seconds", 0) if current_song else 0
             time_until = max(0, current_duration - position_seconds) if current_song else 0
-            songs_away = 0
-
-            for item in upcoming:
-                if item["user_id"] == current_user_id:
+            for songs_away, item in enumerate(upcoming):
+                if item.user_id == current_user_id:
                     my_next_turn = {
                         "estimated_seconds": int(time_until),
                         "songs_away": songs_away,
                     }
                     break
-                songs_away += 1
-                time_until += item.get("duration_seconds") or 0
+                time_until += item.metadata.duration_seconds or 0
 
-        # Calculate queue depth (estimated wait time for next addition)
-        pending_items = [item for item in queue if not item["is_played"]]
-        queue_depth_seconds = sum(item.get("duration_seconds") or 0 for item in pending_items)
-        queue_depth_count = len(pending_items)
+        # Queue depth: count and total duration of upcoming items
+        queue_depth_count = len(upcoming)
+        queue_depth_seconds = sum(item.metadata.duration_seconds or 0 for item in upcoming)
 
         return {
             "queue": queue,
