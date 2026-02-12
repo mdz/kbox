@@ -17,9 +17,6 @@ def mock_queue_manager():
     # PlaybackController needs queue_manager.database for ConfigRepository
     qm.database = Mock()
     qm.database.get_connection.return_value.cursor.return_value.fetchone.return_value = None
-    # Provide a mock repository for get_cursor_position lookups
-    qm.repository = Mock()
-    qm.repository.get_item.return_value = None
     return qm
 
 

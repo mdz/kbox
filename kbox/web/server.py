@@ -293,8 +293,13 @@ def create_app(
         current_song_id = current_song.get("id") if current_song else None
         position_seconds = status.get("position_seconds", 0)
 
-        # Get cursor position for played/upcoming determination
-        cursor_position = playback.get_cursor_position()
+        # Derive cursor position from cursor song ID and queue items
+        cursor_id = playback.get_cursor()
+        cursor_position = None
+        if cursor_id is not None:
+            cursor_position = next(
+                (item.position for item in queue_items if item.id == cursor_id), None
+            )
 
         # Convert QueueItem objects to dicts and add flags for UI rendering
         queue = []
@@ -314,8 +319,6 @@ def create_app(
             queue.append(item_dict)
 
         # Get the next song in queue order (regardless of download status)
-        # This is the single source of truth - frontend should just display this
-        cursor_id = playback.get_cursor()
         ref_id = current_song_id or cursor_id
         next_song_item = queue_mgr.get_song_at_offset(ref_id, 1) if ref_id else None
         next_song = None

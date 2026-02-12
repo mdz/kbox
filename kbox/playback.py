@@ -127,18 +127,6 @@ class PlaybackController:
         """Get the current cursor song ID."""
         return self._cursor_song_id
 
-    def get_cursor_position(self) -> Optional[int]:
-        """
-        Get the position of the cursor song in the queue.
-
-        Returns:
-            Position of the cursor song, or None if cursor is unset or song not found.
-        """
-        if self._cursor_song_id is None:
-            return None
-        song = self.queue_manager.repository.get_item(self._cursor_song_id)
-        return song.position if song else None
-
     def clear_cursor(self) -> None:
         """Clear the queue cursor (e.g., when queue is cleared)."""
         self._cursor_song_id = None
