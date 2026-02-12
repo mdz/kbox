@@ -321,7 +321,18 @@ def create_app(
                 "duration_seconds": next_song_item.metadata.duration_seconds,
             }
 
-        return {"queue": queue, "current_song_id": current_song_id, "next_song": next_song}
+        # Calculate queue depth (estimated wait time for next addition)
+        pending_items = [item for item in queue if not item["is_played"]]
+        queue_depth_seconds = sum(item.get("duration_seconds") or 0 for item in pending_items)
+        queue_depth_count = len(pending_items)
+
+        return {
+            "queue": queue,
+            "current_song_id": current_song_id,
+            "next_song": next_song,
+            "queue_depth_seconds": queue_depth_seconds,
+            "queue_depth_count": queue_depth_count,
+        }
 
     @app.get("/api/queue/settings/{video_id:path}")
     async def get_song_settings(
