@@ -87,23 +87,19 @@ window.showHistoryModal = showHistoryModal;
 window.hideHistoryModal = hideHistoryModal;
 
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize user identity
-    initializeUserIdentity();
-
-    // Check operator status
-    checkOperatorStatus();
-
-    // Set up PIN input handler
+document.addEventListener('DOMContentLoaded', async function() {
+    // Set up UI handlers first (no API calls, safe before registration)
     setupPinInputHandler();
-
-    // Update operator button
     updateOperatorButton();
-
-    // Set up search handlers
     setupSearchHandlers();
 
-    // Load queue on page load
+    // Initialize user identity and AWAIT registration with server.
+    // This must complete before any other API calls so the session cookie
+    // has user_id set. Otherwise concurrent responses overwrite the cookie.
+    await initializeUserIdentity();
+
+    // Now safe to make API calls - session cookie has user_id
+    checkOperatorStatus();
     loadQueue();
 
     // Auto-refresh queue every 1 second

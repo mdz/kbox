@@ -30,7 +30,7 @@ export async function registerUser(uid, displayName) {
 }
 
 // Save user name from modal
-export function saveUserName() {
+export async function saveUserName() {
     const nameInput = document.getElementById('name-modal-input');
     if (!nameInput) return;
 
@@ -47,8 +47,9 @@ export function saveUserName() {
     localStorage.setItem('kbox_user_name', userName);
     localStorage.setItem('kbox_user_id', userId);
 
-    // Register with server
-    registerUser(userId, userName);
+    // Register with server - must await so the session cookie has user_id
+    // before any concurrent loadQueue tick overwrites it
+    await registerUser(userId, userName);
 
     // Hide modal
     const modal = document.getElementById('name-modal');
@@ -176,7 +177,11 @@ export function updateOperatorButton() {
 }
 
 // Initialize user identity from localStorage
-export function initializeUserIdentity() {
+// Returns a promise that resolves once the user is registered with the server
+// (i.e. the session has user_id set). Callers MUST await this before making
+// any other API calls, otherwise a concurrent response's Set-Cookie will
+// overwrite the session cookie and lose the user_id.
+export async function initializeUserIdentity() {
     const storedName = localStorage.getItem('kbox_user_name');
     const storedId = localStorage.getItem('kbox_user_id');
     setUserName(storedName);
@@ -202,7 +207,8 @@ export function initializeUserIdentity() {
         }
     } else {
         // Existing user - register/update with server to ensure display name is current
-        registerUser(userId, userName);
+        // Must await so the session cookie with user_id is set before other API calls
+        await registerUser(userId, userName);
     }
 }
 
