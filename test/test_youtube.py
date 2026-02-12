@@ -6,6 +6,7 @@ Uses mocks to avoid actual API/yt-dlp calls.
 
 import shutil
 import tempfile
+import time
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -475,3 +476,52 @@ def test_search_both_fail_returns_empty(youtube_source):
         results = youtube_source.search("test")
 
     assert results == []
+
+
+# =========================================================================
+# Rate limiting tests
+# =========================================================================
+
+
+def test_rate_limit_enforces_minimum_interval(youtube_source_no_api):
+    """Rapid yt-dlp calls are spaced by the minimum interval."""
+    source = youtube_source_no_api
+    source._ytdlp_min_interval = 0.2  # Short interval for fast test
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = _make_ytdlp_search_result()
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        start = time.monotonic()
+        source._search_ytdlp("query1")
+        source._search_ytdlp("query2")
+        elapsed = time.monotonic() - start
+
+    # Second call should have waited ~0.2s
+    assert elapsed >= 0.15  # Allow small timing tolerance
+
+
+def test_rate_limit_no_wait_when_interval_passed(youtube_source_no_api):
+    """No delay when enough time has passed since last call."""
+    source = youtube_source_no_api
+    source._ytdlp_min_interval = 0.05
+
+    mock_ydl_instance = MagicMock()
+    mock_ydl_instance.extract_info.return_value = _make_ytdlp_search_result()
+
+    with patch("kbox.youtube.yt_dlp.YoutubeDL") as mock_ydl_cls:
+        mock_ydl_cls.return_value.__enter__ = Mock(return_value=mock_ydl_instance)
+        mock_ydl_cls.return_value.__exit__ = Mock(return_value=False)
+
+        source._search_ytdlp("query1")
+        time.sleep(0.1)  # Wait longer than interval
+
+        start = time.monotonic()
+        source._search_ytdlp("query2")
+        elapsed = time.monotonic() - start
+
+    # Should not have waited
+    assert elapsed < 0.05

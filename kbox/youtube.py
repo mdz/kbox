@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -37,6 +39,11 @@ class YouTubeSource(VideoSource):
         # Lazy-initialized YouTube API client
         self._youtube = None
         self._last_api_key: Optional[str] = None
+
+        # Rate limiting for yt-dlp calls (shared across search/info/download)
+        self._ytdlp_min_interval = 2.0  # seconds between yt-dlp calls
+        self._ytdlp_last_call: float = 0.0
+        self._ytdlp_lock = threading.Lock()
 
         self.logger.info("YouTubeSource initialized")
 
@@ -75,6 +82,17 @@ class YouTubeSource(VideoSource):
     def is_configured(self) -> bool:
         """Always configured -- yt-dlp search needs no credentials."""
         return True
+
+    def _ytdlp_rate_limit(self) -> None:
+        """Sleep if needed to enforce minimum interval between yt-dlp calls."""
+        with self._ytdlp_lock:
+            now = time.monotonic()
+            elapsed = now - self._ytdlp_last_call
+            if elapsed < self._ytdlp_min_interval:
+                wait = self._ytdlp_min_interval - elapsed
+                self.logger.debug("Rate limiting yt-dlp: sleeping %.1fs", wait)
+                time.sleep(wait)
+            self._ytdlp_last_call = time.monotonic()
 
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
         """
@@ -252,6 +270,7 @@ class YouTubeSource(VideoSource):
         ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": False}
 
         try:
+            self._ytdlp_rate_limit()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"ytsearch{max_results}:{search_query}", download=False)
 
@@ -289,6 +308,7 @@ class YouTubeSource(VideoSource):
         ydl_opts = {"quiet": True, "no_warnings": True}
 
         try:
+            self._ytdlp_rate_limit()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
@@ -425,6 +445,7 @@ class YouTubeSource(VideoSource):
 
             url = f"https://www.youtube.com/watch?v={video_id}"
 
+            self._ytdlp_rate_limit()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 downloaded_path = Path(ydl.prepare_filename(info))
