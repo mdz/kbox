@@ -12,13 +12,6 @@ from typing import TYPE_CHECKING, List, Optional
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
-
-class DuplicateSongError(Exception):
-    """Raised when attempting to add a song that's already in the queue."""
-
-    pass
-
-
 if TYPE_CHECKING:
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
@@ -174,9 +167,9 @@ class QueueManager:
         self.logger.info("Download monitor stopped")
 
     def _cleanup_storage(self) -> None:
-        """Trigger storage cleanup with queue items protected from eviction."""
+        """Trigger storage cleanup with all queue items protected from eviction."""
         try:
-            queue = self.repository.get_all(include_played=False)
+            queue = self.repository.get_all()
             protected = {item.video_id for item in queue}
             self.video_library.manage_storage(protected)
         except Exception as e:
@@ -210,14 +203,7 @@ class QueueManager:
 
         Returns:
             ID of the created queue item
-
-        Raises:
-            DuplicateSongError: If the song is already in the queue
         """
-        # Check for duplicate by video_id
-        if self.repository.is_video_in_queue(video_id):
-            raise DuplicateSongError(f"Song is already in the queue: {title}")
-
         metadata = SongMetadata(
             title=title,
             duration_seconds=duration_seconds,
@@ -290,72 +276,40 @@ class QueueManager:
         """Get the entire queue ordered by position."""
         return self.repository.get_all()
 
-    def get_ready_song_at_offset(
-        self, from_song_id: Optional[int], offset: int
-    ) -> Optional[QueueItem]:
+    def get_song_at_offset(self, from_song_id: Optional[int], offset: int) -> Optional[QueueItem]:
         """
-        Get a ready, unplayed song at an offset from a reference song.
+        Get the song at an offset from a reference song, respecting queue order.
 
-        Simple helper for queue navigation - finds songs relative to a position.
-        Only returns songs that are ready (downloaded) AND have not been played yet.
-
-        The reference song can be played (e.g., when finding the next song after one
-        that just finished). In that case, we find the next unplayed ready song
-        by comparing positions.
+        Returns the song at the given offset by position, regardless of download
+        status. This is for queue-order navigation — callers decide whether to
+        play, wait, or skip based on the song's status.
 
         Args:
             from_song_id: Reference song ID (None = start from beginning/end)
-            offset: +1 for next, -1 for previous, 0 for first ready
+            offset: +1 for next, -1 for previous, 0 for first
 
         Returns:
-            The ready unplayed song at the offset, or None if not found
+            The song at the offset, or None if not found
         """
         queue = self.repository.get_all()
-        # Filter for songs that are ready AND have not been played
-        ready_songs = [
-            item
-            for item in queue
-            if item.download_status == self.STATUS_READY and item.played_at is None
-        ]
 
-        if not ready_songs:
+        if not queue:
             return None
 
         if from_song_id is None:
             # No reference - return first (offset >= 0) or last (offset < 0)
-            return ready_songs[0] if offset >= 0 else ready_songs[-1]
+            return queue[0] if offset >= 0 else queue[-1]
 
-        # Try to find reference song's index in the unplayed ready songs list
-        current_idx = next((i for i, s in enumerate(ready_songs) if s.id == from_song_id), None)
+        # Find reference song in queue
+        current_idx = next((i for i, s in enumerate(queue) if s.id == from_song_id), None)
 
-        if current_idx is not None:
-            # Reference song is in the ready list - use simple index offset
-            target_idx = current_idx + offset
-            if 0 <= target_idx < len(ready_songs):
-                return ready_songs[target_idx]
-            return None
+        if current_idx is None:
+            # Reference song gone entirely - fall back to first/last
+            return queue[0] if offset >= 0 else queue[-1]
 
-        # Reference song is not in ready_songs (probably played) - find by position
-        # Look up the reference song's position from the full queue
-        ref_song = next((s for s in queue if s.id == from_song_id), None)
-        if ref_song is None:
-            # Reference song not found at all
-            return None
-
-        ref_position = ref_song.position
-
-        if offset > 0:
-            # Find unplayed ready songs AFTER the reference position
-            candidates = [s for s in ready_songs if s.position > ref_position]
-            if len(candidates) >= offset:
-                return candidates[offset - 1]  # offset=1 means first candidate
-        elif offset < 0:
-            # Find unplayed ready songs BEFORE the reference position
-            candidates = [s for s in ready_songs if s.position < ref_position]
-            candidates.reverse()  # Reverse to count backwards
-            if len(candidates) >= abs(offset):
-                return candidates[abs(offset) - 1]
-        # offset == 0 with a played reference song: return None (no current song)
+        target_idx = current_idx + offset
+        if 0 <= target_idx < len(queue):
+            return queue[target_idx]
 
         return None
 
@@ -372,10 +326,6 @@ class QueueManager:
     ) -> bool:
         """Update download status for a queue item."""
         return self.repository.update_status(item_id, status, download_path, error_message)
-
-    def mark_played(self, item_id: int) -> bool:
-        """Mark a queue item as played."""
-        return self.repository.mark_played(item_id)
 
     def get_item(self, item_id: int) -> Optional[QueueItem]:
         """Get a specific queue item by ID."""
