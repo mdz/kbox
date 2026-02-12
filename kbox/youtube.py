@@ -80,7 +80,7 @@ class YouTubeSource(VideoSource):
         """
         Search YouTube for videos, automatically appending "karaoke" to query.
 
-        Tries Data API first if configured, falls back to yt-dlp.
+        Uses yt-dlp by default, falls back to Data API if configured.
 
         Args:
             query: Search query (will have "karaoke" appended)
@@ -89,13 +89,21 @@ class YouTubeSource(VideoSource):
         Returns:
             List of video dictionaries with keys: id, title, thumbnail, duration, etc.
         """
+        try:
+            results = self._search_ytdlp(query, max_results)
+            if results:
+                return results
+        except Exception as e:
+            self.logger.warning("yt-dlp search failed: %s", e)
+
+        # Fallback to Data API if configured
         if self._get_youtube_client():
             try:
                 return self._search_api(query, max_results)
             except Exception as e:
-                self.logger.warning("YouTube API search failed, falling back to yt-dlp: %s", e)
+                self.logger.warning("YouTube API search also failed: %s", e)
 
-        return self._search_ytdlp(query, max_results)
+        return []
 
     def _search_api(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
         """
@@ -349,7 +357,7 @@ class YouTubeSource(VideoSource):
         """
         Get detailed information about a specific video.
 
-        Tries Data API first if configured, falls back to yt-dlp.
+        Uses yt-dlp by default, falls back to Data API if configured.
 
         Args:
             video_id: YouTube video ID
@@ -357,17 +365,21 @@ class YouTubeSource(VideoSource):
         Returns:
             Video dictionary with metadata, or None if not found
         """
+        try:
+            result = self._get_video_info_ytdlp(video_id)
+            if result:
+                return result
+        except Exception as e:
+            self.logger.warning("yt-dlp video info failed for %s: %s", video_id, e)
+
+        # Fallback to Data API if configured
         if self._get_youtube_client():
             try:
                 return self._get_video_info_api(video_id)
             except Exception as e:
-                self.logger.warning(
-                    "YouTube API info failed for %s, falling back to yt-dlp: %s",
-                    video_id,
-                    e,
-                )
+                self.logger.warning("YouTube API info also failed for %s: %s", video_id, e)
 
-        return self._get_video_info_ytdlp(video_id)
+        return None
 
     def download(self, video_id: str, output_dir: Path) -> Path:
         """
