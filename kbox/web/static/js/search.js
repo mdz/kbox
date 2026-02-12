@@ -185,6 +185,15 @@ export function cancelAddToQueue() {
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
 
+    // Warn if song exceeds the long song threshold
+    const warningMinutes = window.kboxConfig?.longSongWarningMinutes || 0;
+    const durationSeconds = currentVideoToAdd.duration_seconds || 0;
+    if (warningMinutes > 0 && durationSeconds > warningMinutes * 60) {
+        if (!confirm(`This song is over ${Math.floor(durationSeconds / 60)} minutes long. Are you sure you want to add it?`)) {
+            return;
+        }
+    }
+
     const pitchInput = document.getElementById('add-song-pitch-input');
     if (!pitchInput) {
         alert('Pitch control not initialized');

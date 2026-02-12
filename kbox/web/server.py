@@ -943,8 +943,14 @@ def create_app(
         return templates.TemplateResponse(request, "display.html")
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
+    async def index(request: Request, config: ConfigManager = Depends(get_config_manager)):
         """Serve web UI."""
-        return templates.TemplateResponse(request, "index.html")
+        return templates.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "long_song_warning_minutes": config.get_int("long_song_warning_minutes", 5),
+            },
+        )
 
     return app

@@ -19,6 +19,7 @@ CONFIG_GROUPS = {
     "suggestions": {"label": "AI Suggestions", "order": 4},
     "security": {"label": "Security", "order": 5},
     "api": {"label": "API & Storage", "order": 6},
+    "queue": {"label": "Queue", "order": 7},
 }
 
 # Schema defining metadata for each editable configuration key
@@ -176,6 +177,17 @@ CONFIG_SCHEMA = {
         "step": 1,
         "display_format": "gb",
     },
+    # Queue
+    "long_song_warning_minutes": {
+        "group": "queue",
+        "label": "Long Song Warning",
+        "description": "Show a confirmation dialog when adding songs longer than this many minutes. Set to 0 to disable.",
+        "control": "slider",
+        "min": 0,
+        "max": 15,
+        "step": 1,
+        "display_format": "minutes",
+    },
 }
 
 
@@ -234,6 +246,8 @@ class ConfigManager:
         "llm_api_key": "",  # API key for cloud LLM providers
         "llm_base_url": "",  # Custom API endpoint (for Ollama or self-hosted)
         "llm_temperature": "0.9",  # AI creativity (0.0-1.5)
+        # Queue
+        "long_song_warning_minutes": "5",  # Warn when adding songs longer than N minutes (0 = disabled)
     }
 
     # Editable keys are derived from CONFIG_SCHEMA
