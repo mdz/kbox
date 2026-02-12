@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -37,6 +39,11 @@ class YouTubeSource(VideoSource):
         # Lazy-initialized YouTube API client
         self._youtube = None
         self._last_api_key: Optional[str] = None
+
+        # Rate limiting for yt-dlp calls (shared across search/info/download)
+        self._ytdlp_min_interval = 2.0  # seconds between yt-dlp calls
+        self._ytdlp_last_call: float = 0.0
+        self._ytdlp_lock = threading.Lock()
 
         self.logger.info("YouTubeSource initialized")
 
@@ -75,6 +82,17 @@ class YouTubeSource(VideoSource):
     def is_configured(self) -> bool:
         """Always configured -- yt-dlp search needs no credentials."""
         return True
+
+    def _ytdlp_rate_limit(self) -> None:
+        """Sleep if needed to enforce minimum interval between yt-dlp calls."""
+        with self._ytdlp_lock:
+            now = time.monotonic()
+            elapsed = now - self._ytdlp_last_call
+            if elapsed < self._ytdlp_min_interval:
+                wait = self._ytdlp_min_interval - elapsed
+                self.logger.debug("Rate limiting yt-dlp: sleeping %.1fs", wait)
+                time.sleep(wait)
+            self._ytdlp_last_call = time.monotonic()
 
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
         """
@@ -249,19 +267,29 @@ class YouTubeSource(VideoSource):
         search_query = f"{query} karaoke"
         self.logger.debug("Searching YouTube via yt-dlp: %s", search_query)
 
-        ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": False}
+        # extract_flat avoids visiting each video page individually,
+        # returning only the metadata available from the search results page.
+        # This is much faster (~1-2s vs ~10-15s) at the cost of missing
+        # some fields like full description. Duration and thumbnails are
+        # still available from the search results.
+        ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist"}
 
         try:
+            self._ytdlp_rate_limit()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"ytsearch{max_results}:{search_query}", download=False)
 
             results = []
             for entry in (info or {}).get("entries", []):
+                # With extract_flat, thumbnail may be in 'thumbnails' list
+                thumbnail = entry.get("thumbnail", "") or entry.get("thumbnails", [{}])[-1].get(
+                    "url", ""
+                )
                 results.append(
                     {
-                        "id": entry["id"],
+                        "id": entry.get("id", entry.get("url", "")),
                         "title": entry.get("title", ""),
-                        "thumbnail": entry.get("thumbnail", ""),
+                        "thumbnail": thumbnail,
                         "channel": entry.get("channel", "") or entry.get("uploader", ""),
                         "duration_seconds": entry.get("duration"),
                         "description": (entry.get("description") or "")[:200],
@@ -289,6 +317,7 @@ class YouTubeSource(VideoSource):
         ydl_opts = {"quiet": True, "no_warnings": True}
 
         try:
+            self._ytdlp_rate_limit()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
@@ -425,6 +454,7 @@ class YouTubeSource(VideoSource):
 
             url = f"https://www.youtube.com/watch?v={video_id}"
 
+            self._ytdlp_rate_limit()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 downloaded_path = Path(ydl.prepare_filename(info))
