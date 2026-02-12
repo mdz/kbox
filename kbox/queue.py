@@ -7,17 +7,10 @@ Handles song queue operations with persistence and download management.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
-
-
-class DuplicateSongError(Exception):
-    """Raised when attempting to add a song that's already in the queue."""
-
-    pass
-
 
 if TYPE_CHECKING:
     from .song_metadata import SongMetadataExtractor
@@ -53,10 +46,6 @@ class QueueManager:
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
         self.logger = logging.getLogger(__name__)
-
-        # Callback to get the current cursor position from PlaybackController.
-        # Set by PlaybackController after construction to avoid circular dependency.
-        self._get_cursor_position: Optional[Callable[[], Optional[int]]] = None
 
         # Download monitoring
         self._download_timeout = timedelta(minutes=10)
@@ -178,20 +167,10 @@ class QueueManager:
         self.logger.info("Download monitor stopped")
 
     def _cleanup_storage(self) -> None:
-        """Trigger storage cleanup with queue items protected from eviction.
-
-        Protects files for songs at or after the cursor position (current + upcoming).
-        Songs before the cursor are eligible for eviction.
-        """
+        """Trigger storage cleanup with all queue items protected from eviction."""
         try:
-            cursor_position = self._get_cursor_position() if self._get_cursor_position else None
             queue = self.repository.get_all()
-            # Protect current song and all upcoming songs
-            protected = {
-                item.video_id
-                for item in queue
-                if cursor_position is None or item.position >= cursor_position
-            }
+            protected = {item.video_id for item in queue}
             self.video_library.manage_storage(protected)
         except Exception as e:
             self.logger.error("Error during storage cleanup: %s", e, exc_info=True)
@@ -224,15 +203,7 @@ class QueueManager:
 
         Returns:
             ID of the created queue item
-
-        Raises:
-            DuplicateSongError: If the song is already in the queue
         """
-        # Check for duplicate by video_id (only among upcoming songs)
-        cursor_position = self._get_cursor_position() if self._get_cursor_position else None
-        if self.repository.is_video_in_queue(video_id, after_position=cursor_position):
-            raise DuplicateSongError(f"Song is already in the queue: {title}")
-
         metadata = SongMetadata(
             title=title,
             duration_seconds=duration_seconds,

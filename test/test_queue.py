@@ -106,40 +106,6 @@ def test_add_multiple_songs(queue_manager, test_users):
     assert queue[2].user_id == CHARLIE_ID
 
 
-def test_add_duplicate_song_rejected(queue_manager, test_users):
-    """Test that adding the same song twice is rejected."""
-    from kbox.queue import DuplicateSongError
-
-    # Add a song
-    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
-
-    # Try to add the same song again (same video_id)
-    with pytest.raises(DuplicateSongError):
-        queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
-
-    # Queue should still have only one song
-    queue = queue_manager.get_queue()
-    assert len(queue) == 1
-
-
-def test_add_same_song_after_cursor_passed_allowed(queue_manager, test_users):
-    """Test that a song can be re-added after the cursor has passed it."""
-
-    # Add a song
-    item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
-
-    # Simulate cursor passing this song (PlaybackController would set this callback)
-    queue_manager._get_cursor_position = lambda: 1  # Cursor at position 1
-
-    # Now adding the same song again should work (it's behind the cursor)
-    item_id2 = queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
-    assert item_id2 is not None
-
-    # Queue should have two items
-    queue = queue_manager.get_queue()
-    assert len(queue) == 2
-
-
 def test_remove_song(queue_manager, test_users):
     """Test removing a song from the queue."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
@@ -270,23 +236,6 @@ def test_update_download_status_error(queue_manager, test_users):
     item = queue_manager.get_item(item_id)
     assert item.download_status == QueueManager.STATUS_ERROR
     assert item.error_message == "Download failed"
-
-
-def test_cursor_callback_used_for_duplicate_detection(queue_manager, test_users):
-    """Test that QueueManager uses the cursor callback for duplicate detection."""
-    item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
-
-    # Without cursor callback, duplicate is rejected
-    from kbox.queue import DuplicateSongError
-
-    with pytest.raises(DuplicateSongError):
-        queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
-
-    # With cursor callback indicating cursor is at position 1 (past the song),
-    # the duplicate should be allowed
-    queue_manager._get_cursor_position = lambda: 1
-    item_id2 = queue_manager.add_song(test_users["bob"], "youtube:vid1", "Song 1 Again")
-    assert item_id2 is not None
 
 
 def test_update_pitch(queue_manager, test_users):

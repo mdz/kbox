@@ -62,10 +62,6 @@ class PlaybackController:
         self._config_repository = ConfigRepository(queue_manager.database)
         self._cursor_song_id: Optional[int] = self._load_cursor()
 
-        # Wire up cursor callback so QueueManager can query cursor position
-        # for duplicate detection and storage cleanup without owning the cursor.
-        self.queue_manager._get_cursor_position = self.get_cursor_position
-
         # Transition/interstitial state
         self._transition_timer: Optional[threading.Timer] = None
         self._next_song_pending = None  # Song to play after transition

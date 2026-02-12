@@ -1066,39 +1066,3 @@ class QueueRepository:
             return self._row_to_queue_item(result)
         finally:
             conn.close()
-
-    def is_video_in_queue(self, video_id: str, after_position: Optional[int] = None) -> bool:
-        """Check if a video is in the upcoming portion of the queue.
-
-        Args:
-            video_id: Video ID to check
-            after_position: If provided, only check songs at positions > this value
-                (i.e., upcoming songs after the cursor). If None, checks all songs.
-
-        Returns:
-            True if the video is found in the relevant portion of the queue.
-        """
-        conn = self.database.get_connection()
-        try:
-            cursor = conn.cursor()
-            if after_position is not None:
-                cursor.execute(
-                    """
-                    SELECT 1 FROM queue_items
-                    WHERE video_id = ? AND position > ?
-                    LIMIT 1
-                """,
-                    (video_id, after_position),
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT 1 FROM queue_items
-                    WHERE video_id = ?
-                    LIMIT 1
-                """,
-                    (video_id,),
-                )
-            return cursor.fetchone() is not None
-        finally:
-            conn.close()

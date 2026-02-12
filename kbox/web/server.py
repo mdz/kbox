@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
 from ..playback import PlaybackController
-from ..queue import DuplicateSongError, QueueManager
+from ..queue import QueueManager
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine, SuggestionError
 from ..user import UserManager
@@ -423,8 +423,6 @@ def create_app(
             return {"id": item_id, "status": "added"}
         except HTTPException:
             raise  # Let HTTP exceptions pass through
-        except DuplicateSongError as e:
-            raise HTTPException(status_code=409, detail=str(e))
         except Exception as e:
             logger.error("Error adding song: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
