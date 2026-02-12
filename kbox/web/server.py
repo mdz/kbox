@@ -294,7 +294,7 @@ def create_app(
         position_seconds = status.get("position_seconds", 0)
 
         # Get cursor position for played/upcoming determination
-        cursor_position = queue_mgr.get_cursor_position()
+        cursor_position = playback.get_cursor_position()
 
         # Convert QueueItem objects to dicts and add flags for UI rendering
         queue = []
@@ -315,7 +315,7 @@ def create_app(
 
         # Get the next song that will play (ready, after current)
         # This is the single source of truth - frontend should just display this
-        cursor_id = queue_mgr.get_cursor()
+        cursor_id = playback.get_cursor()
         ref_id = current_song_id or cursor_id
         next_song_item = queue_mgr.get_ready_song_at_offset(ref_id, 1) if ref_id else None
         next_song = None
@@ -577,6 +577,7 @@ def create_app(
     @app.post("/api/queue/clear")
     async def clear_queue(
         queue_mgr: QueueManager = Depends(get_queue_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
         """Clear entire queue (operator only)."""
@@ -584,6 +585,7 @@ def create_app(
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
         count = queue_mgr.clear_queue()
+        playback.clear_cursor()
         return {"status": "cleared", "items_removed": count}
 
     # Video search endpoints

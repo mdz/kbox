@@ -9,6 +9,7 @@ import threading
 from enum import Enum
 from typing import Any, Dict, Optional
 
+from .database import ConfigRepository
 from .models import QueueItem
 from .queue import QueueManager
 
@@ -26,6 +27,9 @@ class PlaybackState(Enum):
 
 class PlaybackController:
     """Orchestrates playback and manages state."""
+
+    # Config key for persisting the cursor
+    _CURSOR_CONFIG_KEY = "queue_cursor_song_id"
 
     def __init__(
         self,
@@ -52,6 +56,16 @@ class PlaybackController:
         self.current_song_id: Optional[int] = None
         self.lock = threading.Lock()
 
+        # Queue cursor: the ID of the song currently playing (or last played).
+        # Songs before the cursor's position are "played", songs after are "upcoming".
+        # Persisted to the config table for restart resilience.
+        self._config_repository = ConfigRepository(queue_manager.database)
+        self._cursor_song_id: Optional[int] = self._load_cursor()
+
+        # Wire up cursor callback so QueueManager can query cursor position
+        # for duplicate detection and storage cleanup without owning the cursor.
+        self.queue_manager._get_cursor_position = self.get_cursor_position
+
         # Transition/interstitial state
         self._transition_timer: Optional[threading.Timer] = None
         self._next_song_pending = None  # Song to play after transition
@@ -76,6 +90,64 @@ class PlaybackController:
 
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
+
+    # =========================================================================
+    # Queue Cursor
+    # =========================================================================
+
+    def _load_cursor(self) -> Optional[int]:
+        """Load cursor song ID from persistent storage."""
+        entry = self._config_repository.get(self._CURSOR_CONFIG_KEY)
+        if entry and entry.value:
+            try:
+                return int(entry.value)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def _save_cursor(self, song_id: Optional[int]) -> None:
+        """Persist cursor song ID to storage."""
+        self._config_repository.set(
+            self._CURSOR_CONFIG_KEY, str(song_id) if song_id is not None else ""
+        )
+
+    def set_cursor(self, song_id: int) -> None:
+        """
+        Set the queue cursor to a song.
+
+        The cursor tracks where we are in the queue. Songs before the cursor's
+        position are "played", songs after are "upcoming".
+
+        Called by _play_song() whenever a song starts playing.
+
+        Args:
+            song_id: ID of the song now playing
+        """
+        self._cursor_song_id = song_id
+        self._save_cursor(song_id)
+        self.logger.debug("Queue cursor set to song ID %s", song_id)
+
+    def get_cursor(self) -> Optional[int]:
+        """Get the current cursor song ID."""
+        return self._cursor_song_id
+
+    def get_cursor_position(self) -> Optional[int]:
+        """
+        Get the position of the cursor song in the queue.
+
+        Returns:
+            Position of the cursor song, or None if cursor is unset or song not found.
+        """
+        if self._cursor_song_id is None:
+            return None
+        song = self.queue_manager.repository.get_item(self._cursor_song_id)
+        return song.position if song else None
+
+    def clear_cursor(self) -> None:
+        """Clear the queue cursor (e.g., when queue is cleared)."""
+        self._cursor_song_id = None
+        self._save_cursor(None)
+        self.logger.debug("Queue cursor cleared")
 
     def _set_state(self, new_state: PlaybackState, reason: str = ""):
         """
@@ -190,7 +262,7 @@ class PlaybackController:
         Only looks forward from the cursor, never backward - so songs that
         were already played (before the cursor) won't be picked up.
         """
-        cursor = self.queue_manager.get_cursor()
+        cursor = self.get_cursor()
         if cursor is not None:
             next_song = self.queue_manager.get_ready_song_at_offset(cursor, +1)
         else:
@@ -327,7 +399,7 @@ class PlaybackController:
         Uses the cursor to find the next song. On fresh start (no cursor),
         falls back to the first ready song in the queue.
         """
-        cursor = self.queue_manager.get_cursor()
+        cursor = self.get_cursor()
         if cursor is not None:
             next_song = self.queue_manager.get_ready_song_at_offset(cursor, +1)
         else:
@@ -393,7 +465,7 @@ class PlaybackController:
             # Advance the queue cursor - this is the single place the cursor moves.
             # All navigation (skip, previous, jump_to_song) goes through _play_song(),
             # so the cursor always tracks what's playing.
-            self.queue_manager.set_cursor(song.id)
+            self.set_cursor(song.id)
 
             self._set_state(PlaybackState.PLAYING, f"playing: {song.metadata.title}")
             return True

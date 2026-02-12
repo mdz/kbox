@@ -7,9 +7,9 @@ Handles song queue operations with persistence and download management.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
-from .database import ConfigRepository, Database, QueueRepository, UserRepository
+from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 
@@ -33,9 +33,6 @@ class QueueManager:
     STATUS_READY = "ready"
     STATUS_ERROR = "error"
 
-    # Config key for persisting the cursor
-    _CURSOR_CONFIG_KEY = "queue_cursor_song_id"
-
     def __init__(
         self,
         database: Database,
@@ -53,15 +50,13 @@ class QueueManager:
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
-        self._config_repository = ConfigRepository(database)
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
         self.logger = logging.getLogger(__name__)
 
-        # Queue cursor: the ID of the song currently playing (or last played).
-        # Songs before the cursor's position are "played", songs after are "upcoming".
-        # Persisted to the config table for restart resilience.
-        self._cursor_song_id: Optional[int] = self._load_cursor()
+        # Callback to get the current cursor position from PlaybackController.
+        # Set by PlaybackController after construction to avoid circular dependency.
+        self._get_cursor_position: Optional[Callable[[], Optional[int]]] = None
 
         # Download monitoring
         self._download_timeout = timedelta(minutes=10)
@@ -71,64 +66,6 @@ class QueueManager:
 
         # Start download monitor
         self._start_download_monitor()
-
-    # =========================================================================
-    # Queue Cursor
-    # =========================================================================
-
-    def _load_cursor(self) -> Optional[int]:
-        """Load cursor song ID from persistent storage."""
-        entry = self._config_repository.get(self._CURSOR_CONFIG_KEY)
-        if entry and entry.value:
-            try:
-                return int(entry.value)
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    def _save_cursor(self, song_id: Optional[int]) -> None:
-        """Persist cursor song ID to storage."""
-        self._config_repository.set(
-            self._CURSOR_CONFIG_KEY, str(song_id) if song_id is not None else ""
-        )
-
-    def set_cursor(self, song_id: int) -> None:
-        """
-        Set the queue cursor to a song.
-
-        The cursor tracks where we are in the queue. Songs before the cursor's
-        position are "played", songs after are "upcoming".
-
-        Called by PlaybackController._play_song() whenever a song starts playing.
-
-        Args:
-            song_id: ID of the song now playing
-        """
-        self._cursor_song_id = song_id
-        self._save_cursor(song_id)
-        self.logger.debug("Queue cursor set to song ID %s", song_id)
-
-    def get_cursor(self) -> Optional[int]:
-        """Get the current cursor song ID."""
-        return self._cursor_song_id
-
-    def get_cursor_position(self) -> Optional[int]:
-        """
-        Get the position of the cursor song in the queue.
-
-        Returns:
-            Position of the cursor song, or None if cursor is unset or song not found.
-        """
-        if self._cursor_song_id is None:
-            return None
-        song = self.repository.get_item(self._cursor_song_id)
-        return song.position if song else None
-
-    def clear_cursor(self) -> None:
-        """Clear the queue cursor (e.g., when queue is cleared)."""
-        self._cursor_song_id = None
-        self._save_cursor(None)
-        self.logger.debug("Queue cursor cleared")
 
     # =========================================================================
     # Download Monitoring
@@ -247,7 +184,7 @@ class QueueManager:
         Songs before the cursor are eligible for eviction.
         """
         try:
-            cursor_position = self.get_cursor_position()
+            cursor_position = self._get_cursor_position() if self._get_cursor_position else None
             queue = self.repository.get_all()
             # Protect current song and all upcoming songs
             protected = {
@@ -292,7 +229,7 @@ class QueueManager:
             DuplicateSongError: If the song is already in the queue
         """
         # Check for duplicate by video_id (only among upcoming songs)
-        cursor_position = self.get_cursor_position()
+        cursor_position = self._get_cursor_position() if self._get_cursor_position else None
         if self.repository.is_video_in_queue(video_id, after_position=cursor_position):
             raise DuplicateSongError(f"Song is already in the queue: {title}")
 
@@ -425,8 +362,7 @@ class QueueManager:
         return None
 
     def clear_queue(self) -> int:
-        """Clear all items from the queue and reset the cursor."""
-        self.clear_cursor()
+        """Clear all items from the queue."""
         return self.repository.clear()
 
     def update_download_status(

@@ -85,6 +85,9 @@ def mock_playback():
         "position_seconds": 0,
         "duration_seconds": 0,
     }
+    # Cursor defaults (no cursor set)
+    playback.get_cursor.return_value = None
+    playback.get_cursor_position.return_value = None
     # Movement operations return bool
     playback.move_to_next.return_value = True
     playback.move_to_end.return_value = True

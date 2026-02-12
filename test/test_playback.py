@@ -21,9 +21,12 @@ def mock_queue_manager():
     qm.get_item.return_value = None
     # Configure get_ready_song_at_offset to return None by default
     qm.get_ready_song_at_offset.return_value = None
-    # Configure cursor to return None by default (no cursor set)
-    qm.get_cursor.return_value = None
-    qm.get_cursor_position.return_value = None
+    # Provide a mock database for ConfigRepository initialization
+    qm.database = Mock()
+    qm.database.get_connection.return_value.cursor.return_value.fetchone.return_value = None
+    # Provide a mock repository for get_cursor_position lookups
+    qm.repository = Mock()
+    qm.repository.get_item.return_value = None
     return qm
 
 
@@ -95,8 +98,6 @@ def playback_controller(mock_queue_manager, mock_streaming_controller, mock_conf
     """Create a PlaybackController instance."""
     # Mock get_queue to return empty list to avoid thread issues
     mock_queue_manager.get_queue.return_value = []
-    mock_queue_manager.database = Mock()
-    mock_queue_manager.database.get_connection.return_value.cursor.return_value.fetchone.return_value = None
 
     controller = PlaybackController(
         mock_queue_manager, mock_streaming_controller, mock_config_manager
@@ -143,7 +144,7 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager, mock_stre
     mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
     mock_streaming_controller.load_file.assert_called_once_with("/path/to/video.mp4")
     # Cursor should be set to the song that just started playing
-    mock_queue_manager.set_cursor.assert_called_once_with(1)
+    assert playback_controller.get_cursor() == 1
 
 
 def test_play_no_download_path(playback_controller, mock_queue_manager):
@@ -657,7 +658,7 @@ def test_auto_start_when_idle_with_ready_songs(
     )
 
     # Cursor is on song 1 (already played); song 42 at position 2 is next
-    mock_queue_manager.get_cursor.return_value = 1
+    playback_controller._cursor_song_id = 1
     # get_ready_song_at_offset(1, +1) returns the new ready song
     mock_queue_manager.get_ready_song_at_offset.return_value = ready_song
 
@@ -792,7 +793,7 @@ def test_auto_start_does_not_restart_played_songs(
     playback_controller.current_song_id = None
 
     # Cursor is set to the song that just finished (song ID 1)
-    mock_queue_manager.get_cursor.return_value = 1
+    playback_controller._cursor_song_id = 1
 
     # No songs after the cursor
     mock_queue_manager.get_ready_song_at_offset.return_value = None
