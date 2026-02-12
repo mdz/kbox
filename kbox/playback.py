@@ -253,7 +253,7 @@ class PlaybackController:
 
     def _check_auto_start_when_idle(self):
         """
-        Check if we're idle but have ready songs ahead of the cursor, and auto-start.
+        Check if we're idle and the next song in queue order is ready, and auto-start.
 
         This handles the case where we're on the "that's all" screen and
         someone adds a song - once it finishes downloading, playback
@@ -261,13 +261,17 @@ class PlaybackController:
 
         Only looks forward from the cursor, never backward - so songs that
         were already played (before the cursor) won't be picked up.
+
+        Respects queue order: if the next song isn't ready yet, we wait
+        rather than skipping ahead to a later song that happened to
+        download faster.
         """
         cursor = self.get_cursor()
         if cursor is not None:
-            next_song = self.queue_manager.get_ready_song_at_offset(cursor, +1)
+            next_song = self.queue_manager.get_song_at_offset(cursor, +1)
         else:
-            next_song = self.queue_manager.get_ready_song_at_offset(None, 0)
-        if next_song:
+            next_song = self.queue_manager.get_song_at_offset(None, 0)
+        if next_song and next_song.download_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
             self.play()
 
@@ -340,8 +344,8 @@ class PlaybackController:
         # Update overlay text when 15 seconds or less remain
         time_remaining = duration - current_position
         if time_remaining <= 15:
-            # Get next song
-            next_song = self.queue_manager.get_ready_song_at_offset(self.current_song_id, +1)
+            # Get next song by queue position (show who's up next regardless of download status)
+            next_song = self.queue_manager.get_song_at_offset(self.current_song_id, +1)
             if next_song:
                 overlay_text = f"Up next: {next_song.user_name}"
                 self._set_base_overlay(overlay_text)
@@ -394,19 +398,26 @@ class PlaybackController:
             return self._load_and_play_next()
 
     def _load_and_play_next(self) -> bool:
-        """Load next ready song in the queue and start playback.
+        """Load next song in queue order and start playback if it's ready.
 
         Uses the cursor to find the next song. On fresh start (no cursor),
-        falls back to the first ready song in the queue.
+        falls back to the first song in the queue.
+
+        Respects queue order: if the next song isn't ready yet, we go idle
+        rather than skipping ahead to a later song.
         """
         cursor = self.get_cursor()
         if cursor is not None:
-            next_song = self.queue_manager.get_ready_song_at_offset(cursor, +1)
+            next_song = self.queue_manager.get_song_at_offset(cursor, +1)
         else:
-            next_song = self.queue_manager.get_ready_song_at_offset(None, 0)
+            next_song = self.queue_manager.get_song_at_offset(None, 0)
 
         if not next_song:
-            self._set_state(PlaybackState.IDLE, "no ready songs")
+            self._set_state(PlaybackState.IDLE, "no more songs")
+            return False
+
+        if next_song.download_status != QueueManager.STATUS_READY:
+            self._set_state(PlaybackState.IDLE, "next song not ready yet")
             return False
 
         return self._play_song(next_song)
@@ -944,23 +955,34 @@ class PlaybackController:
         Called after a song ends. Shows appropriate interstitial and schedules
         the next song to start after the transition duration.
 
+        Respects queue order: only considers the immediate next song by position.
+        If that song isn't ready, goes idle (auto-start will pick it up when ready).
+
         Args:
             finished_song_id: ID of the song that just finished (used to find next song by position)
 
         Note: Called with lock held.
         """
-        # Get next ready song after the one that finished
+        # Get next song by position after the one that finished
         # If finished_song_id is None, we have no reference point, so show end screen
         if finished_song_id is None:
             self._set_state(PlaybackState.IDLE, "queue exhausted")
             self._show_end_of_queue_screen()
             return
 
-        next_song = self.queue_manager.get_ready_song_at_offset(finished_song_id, +1)
+        next_song = self.queue_manager.get_song_at_offset(finished_song_id, +1)
 
         if not next_song:
             # No more songs - show end-of-queue screen
             self._set_state(PlaybackState.IDLE, "queue exhausted")
+            self._show_end_of_queue_screen()
+            return
+
+        if next_song.download_status != QueueManager.STATUS_READY:
+            # Next song exists but isn't ready yet - go idle, auto-start will handle it
+            self._set_state(
+                PlaybackState.IDLE, f"next song not ready ({next_song.download_status})"
+            )
             self._show_end_of_queue_screen()
             return
 

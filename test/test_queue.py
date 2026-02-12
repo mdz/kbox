@@ -196,6 +196,46 @@ def test_reorder_invalid_position(queue_manager, test_users):
     assert result is False
 
 
+def test_get_song_at_offset(queue_manager, test_users):
+    """Test getting song at offset (regardless of download status)."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    id3 = queue_manager.add_song(test_users["alice"], "youtube:vid3", "Song 3")
+
+    # Get first song (no reference)
+    first = queue_manager.get_song_at_offset(None, 0)
+    assert first is not None
+    assert first.id == id1
+
+    # Get next song after first (even though none are ready)
+    second = queue_manager.get_song_at_offset(id1, +1)
+    assert second is not None
+    assert second.id == id2
+    assert second.download_status == QueueManager.STATUS_PENDING  # Not ready!
+
+    # Get previous song before second
+    prev = queue_manager.get_song_at_offset(id2, -1)
+    assert prev is not None
+    assert prev.id == id1
+
+    # No next song after last
+    no_next = queue_manager.get_song_at_offset(id3, +1)
+    assert no_next is None
+
+    # No previous song before first
+    no_prev = queue_manager.get_song_at_offset(id1, -1)
+    assert no_prev is None
+
+    # Reference song not in queue - falls back to first
+    fallback = queue_manager.get_song_at_offset(9999, +1)
+    assert fallback is not None
+    assert fallback.id == id1
+
+    # Empty queue
+    queue_manager.clear_queue()
+    assert queue_manager.get_song_at_offset(None, 0) is None
+
+
 def test_get_ready_song_at_offset(queue_manager, test_users):
     """Test getting ready song at offset."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")

@@ -305,14 +305,51 @@ class QueueManager:
         """Get the entire queue ordered by position."""
         return self.repository.get_all()
 
+    def get_song_at_offset(self, from_song_id: Optional[int], offset: int) -> Optional[QueueItem]:
+        """
+        Get the song at an offset from a reference song, respecting queue order.
+
+        Returns the song at the given offset by position, regardless of download
+        status. This is for queue-order navigation — callers decide whether to
+        play, wait, or skip based on the song's status.
+
+        Args:
+            from_song_id: Reference song ID (None = start from beginning/end)
+            offset: +1 for next, -1 for previous, 0 for first
+
+        Returns:
+            The song at the offset, or None if not found
+        """
+        queue = self.repository.get_all()
+
+        if not queue:
+            return None
+
+        if from_song_id is None:
+            # No reference - return first (offset >= 0) or last (offset < 0)
+            return queue[0] if offset >= 0 else queue[-1]
+
+        # Find reference song in queue
+        current_idx = next((i for i, s in enumerate(queue) if s.id == from_song_id), None)
+
+        if current_idx is None:
+            # Reference song gone entirely - fall back to first/last
+            return queue[0] if offset >= 0 else queue[-1]
+
+        target_idx = current_idx + offset
+        if 0 <= target_idx < len(queue):
+            return queue[target_idx]
+
+        return None
+
     def get_ready_song_at_offset(
         self, from_song_id: Optional[int], offset: int
     ) -> Optional[QueueItem]:
         """
-        Get a ready (downloaded) song at an offset from a reference song.
+        Get a ready (downloaded) song at an offset, skipping non-ready songs.
 
-        Navigation helper - finds songs relative to a position in the queue.
-        Only considers songs with download_status == STATUS_READY.
+        Used for operator navigation (skip, previous) where we want to jump
+        over songs that aren't downloaded yet or have errors.
 
         Args:
             from_song_id: Reference song ID (None = start from beginning/end)
