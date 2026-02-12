@@ -311,8 +311,8 @@ export function renderNowPlaying(statusData) {
 }
 
 // Render Up Next section
-// nextSong is provided by the backend (single source of truth)
-export function renderUpNext(statusData, nextSong) {
+// nextSong and myNextTurn are provided by the backend (single source of truth)
+export function renderUpNext(statusData, nextSong, myNextTurn) {
     const section = document.getElementById('up-next-section');
     const content = document.getElementById('up-next-content');
     if (!section || !content) return;
@@ -349,6 +349,15 @@ export function renderUpNext(statusData, nextSong) {
     } else {
         const timeStr = formatTime(currentRemaining);
         html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong> in ${timeStr}</span>`;
+    }
+
+    // Show when the current user's next song is coming up
+    // (backend only provides this when user is not already the immediate next singer)
+    if (myNextTurn) {
+        const timeStr = formatTime(myNextTurn.estimated_seconds);
+        const songsAway = myNextTurn.songs_away;
+        const songsLabel = songsAway === 1 ? '1 song' : `${songsAway} songs`;
+        html += `<br><span style="font-size: 0.95em; color: #4aff6e;">🎤 Your turn in ~${timeStr} (${songsLabel} away)</span>`;
     }
 
     content.innerHTML = html;
