@@ -70,7 +70,13 @@ class KboxServer:
         youtube_api = YouTubeAPI(self.config_manager)
         ytdlp_client = YtDlpClient(self.config_manager)
         self.video_library.register_source(YouTubeSource(youtube_api, fallback=ytdlp_client))
-        self.video_library.set_provider(ytdlp_client)
+
+        from .streaming import _get_gst
+
+        if _get_gst() is not None:
+            self.video_library.set_provider(ytdlp_client)
+        else:
+            logger.info("GStreamer not available -- browser-only playback mode")
 
         if not self.video_library.is_source_configured("youtube"):
             logger.warning(
