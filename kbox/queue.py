@@ -89,6 +89,9 @@ class QueueManager:
 
     def _process_pending_content(self):
         """Process pending and stuck content preparations."""
+        if not self.video_library.has_provider:
+            return
+
         queue = self.get_queue()
 
         for item in queue:

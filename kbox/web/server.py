@@ -983,6 +983,16 @@ def create_app(
         request.session["guest_authenticated"] = True
         return templates.TemplateResponse(request, "display.html")
 
+    @app.post("/api/display/played/{item_id}")
+    async def display_mark_played(
+        item_id: int,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+    ):
+        """Mark a queue item as played (called by /display when a song ends)."""
+        if queue_mgr.mark_played(item_id):
+            return {"status": "ok"}
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, config: ConfigManager = Depends(get_config_manager)):
         """Serve web UI."""

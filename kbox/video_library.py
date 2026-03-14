@@ -275,6 +275,11 @@ class VideoLibrary:
         self._provider = provider
         self.logger.info("Video provider set: %s", type(provider).__name__)
 
+    @property
+    def has_provider(self) -> bool:
+        """True when a VideoProvider has been configured."""
+        return self._provider is not None
+
     # =========================================================================
     # Video ID Handling
     # =========================================================================

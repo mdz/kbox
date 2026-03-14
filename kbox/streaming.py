@@ -16,11 +16,16 @@ from typing import Any, Optional
 _Gst = None
 
 
+_gst_available: Optional[bool] = None
+
+
 def _get_gst():
-    """Lazily import GStreamer to avoid crashes on startup."""
-    global _Gst
-    if _Gst is not None:
+    """Lazily import GStreamer.  Returns None if unavailable."""
+    global _Gst, _gst_available
+    if _gst_available is True:
         return _Gst
+    if _gst_available is False:
+        return None
 
     try:
         import gi
@@ -31,10 +36,12 @@ def _get_gst():
         from gi.repository import Gst as _Gst_module
 
         _Gst = _Gst_module
+        _gst_available = True
         return _Gst
     except Exception as e:
         logging.getLogger(__name__).error("Failed to import GStreamer: %s", e)
-        raise
+        _gst_available = False
+        return None
 
 
 class StreamingController:
@@ -78,14 +85,26 @@ class StreamingController:
 
         # GStreamer initialization state
         self._gst_initialized = False
+        self._gst_missing = _get_gst() is None
 
-        # Create the persistent pipeline
-        self.logger.info(
-            "StreamingController initializing with %s",
-            "fakesinks" if use_fakesinks else "hardware sinks",
-        )
-        self._create_persistent_pipeline()
-        self.logger.info("StreamingController initialized, pipeline ready in idle state")
+        if self._gst_missing:
+            self.logger.warning(
+                "GStreamer not available -- playback features disabled. "
+                "Browser-based display (/display) still works."
+            )
+        else:
+            self.logger.info(
+                "StreamingController initializing with %s",
+                "fakesinks" if use_fakesinks else "hardware sinks",
+            )
+            self._create_persistent_pipeline()
+            self.logger.info("StreamingController initialized, pipeline ready in idle state")
+
+    def _requires_gst(self) -> bool:
+        """Return True if GStreamer is available, False otherwise."""
+        if self._gst_missing:
+            return False
+        return True
 
     # =========================================================================
     # GStreamer Initialization
@@ -523,6 +542,9 @@ class StreamingController:
         """
         self.logger.info("Loading file: %s (start_position=%s)", filepath, start_position_seconds)
 
+        if not self._requires_gst():
+            return
+
         Gst = _get_gst()
 
         self.logger.debug("[DEBUG] load_file: entry, current_state=%s", self.state)
@@ -583,6 +605,9 @@ class StreamingController:
 
     def stop_playback(self):
         """Stop current playback and return to idle state."""
+        if not self._requires_gst():
+            return
+
         self.logger.info("Stopping playback")
 
         Gst = _get_gst()
@@ -596,6 +621,8 @@ class StreamingController:
 
     def pause(self):
         """Pause playback."""
+        if not self._requires_gst():
+            return
         if self.state != "playing":
             self.logger.warning("Cannot pause: not currently playing")
             raise RuntimeError("Cannot pause: not currently playing")
@@ -617,6 +644,8 @@ class StreamingController:
 
     def resume(self):
         """Resume playback."""
+        if not self._requires_gst():
+            return
         if self.state != "paused":
             self.logger.warning("Cannot resume: not currently paused")
             raise RuntimeError("Cannot resume: not currently paused")
@@ -634,6 +663,9 @@ class StreamingController:
 
     def stop(self):
         """Stop the streaming controller and cleanup resources."""
+        if not self._requires_gst():
+            return
+
         self.logger.info("Stopping streaming controller...")
 
         # Cancel notification timer
@@ -662,6 +694,9 @@ class StreamingController:
         restarting the entire application. Rebuilds the GStreamer pipeline
         while preserving display state.
         """
+        if not self._requires_gst():
+            return
+
         self.logger.info("Reinitializing pipeline with updated configuration...")
 
         # Save current display state
@@ -720,11 +755,13 @@ class StreamingController:
             semitones: Pitch adjustment in semitones (-12 to +12)
         """
         if semitones == self.pitch_shift_semitones:
-            self.logger.debug("Pitch shift already set to %s semitones", semitones)
             return
 
         self.logger.info("Setting pitch shift to %s semitones", semitones)
         self.pitch_shift_semitones = semitones
+
+        if not self._requires_gst():
+            return
 
         if self.pitch_shift_element:
             try:
@@ -743,6 +780,8 @@ class StreamingController:
 
     def get_position(self) -> Optional[int]:
         """Get current playback position in seconds."""
+        if not self._requires_gst():
+            return None
         if self.state not in ("playing", "paused"):
             return None
 
@@ -766,6 +805,8 @@ class StreamingController:
         Returns:
             True if successful, False otherwise
         """
+        if not self._requires_gst():
+            return False
         if self.state not in ("playing", "paused"):
             self.logger.warning("Cannot seek: no active playback")
             return False
@@ -802,6 +843,8 @@ class StreamingController:
             text: Notification text to display
             duration_seconds: How long to show the notification (default 5s)
         """
+        if not self._requires_gst():
+            return
         if not self.text_overlay:
             self.logger.warning("Text overlay not available, skipping notification")
             return
@@ -879,6 +922,8 @@ class StreamingController:
         Args:
             text: Text to display, or empty string to hide
         """
+        if not self._requires_gst():
+            return
         if not self.text_overlay:
             self.logger.debug("Text overlay not available, skipping")
             return
@@ -911,9 +956,10 @@ class StreamingController:
         Args:
             image_path: Path to the QR code PNG image
         """
-        # Always store the path so we can re-apply after pipeline reinit
         self._qr_image_path = image_path
 
+        if not self._requires_gst():
+            return
         if not self.qr_overlay:
             self.logger.debug("QR overlay not available")
             return
@@ -961,6 +1007,8 @@ class StreamingController:
         Args:
             visible: True to show, False to hide
         """
+        if not self._requires_gst():
+            return
         if not self.qr_overlay:
             self.logger.debug("QR overlay not available")
             return
@@ -990,6 +1038,9 @@ class StreamingController:
             image_path: Path to the image file to display
         """
         self.logger.debug("Displaying image: %s", image_path)
+
+        if not self._requires_gst():
+            return
 
         Gst = _get_gst()
 
@@ -1109,6 +1160,8 @@ class StreamingController:
 
         Note: This method is primarily for testing.
         """
+        if not self._requires_gst():
+            return "null"
         if not self.playbin:
             return "null"
 
