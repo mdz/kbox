@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
 from ..playback import PlaybackController
-from ..queue import DuplicateSongError, QueueManager
+from ..queue import QueueManager
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine, SuggestionError
 from ..user import UserManager
@@ -285,20 +285,21 @@ def create_app(
         """Get current queue with current/played flags for UI rendering."""
         from dataclasses import asdict
 
-        # Get all queue items (including played ones for navigation)
         queue_items = queue_mgr.get_queue()
 
-        # Get current song from playback status
         status = playback.get_status()
         current_song = status.get("current_song")
         current_song_id = current_song.get("id") if current_song else None
         position_seconds = status.get("position_seconds", 0)
+        cursor_id = playback.get_cursor()
 
-        # Convert QueueItem objects to dicts and add flags for UI rendering
+        # Find cursor index — everything before it is "played"
+        cursor_idx = next((i for i, item in enumerate(queue_items) if item.id == cursor_id), None)
+
+        # Serialize queue items for the frontend
         queue = []
-        for item in queue_items:
+        for i, item in enumerate(queue_items):
             item_dict = asdict(item)
-            # Flatten metadata and settings for easier frontend access
             item_dict["title"] = item.metadata.title
             item_dict["duration_seconds"] = item.metadata.duration_seconds
             item_dict["thumbnail_url"] = item.metadata.thumbnail_url
@@ -306,55 +307,44 @@ def create_app(
             item_dict["artist"] = item.metadata.artist
             item_dict["song_name"] = item.metadata.song_name
             item_dict["pitch_semitones"] = item.settings.pitch_semitones
-            # Add UI flags
             item_dict["is_current"] = item.id == current_song_id
-            item_dict["is_played"] = item.played_at is not None
+            item_dict["is_played"] = cursor_idx is not None and i < cursor_idx
             queue.append(item_dict)
 
-        # Get the next song that will play (unplayed, ready, after current)
-        # This is the single source of truth - frontend should just display this
-        next_song_item = queue_mgr.get_ready_song_at_offset(current_song_id, 1)
+        # Upcoming items: everything after the cursor (or the whole list if no cursor)
+        upcoming_start = (cursor_idx + 1) if cursor_idx is not None else 0
+        upcoming = queue_items[upcoming_start:]
+
+        # Next song
         next_song = None
-        if next_song_item:
+        if upcoming:
+            s = upcoming[0]
             next_song = {
-                "id": next_song_item.id,
-                "user_id": next_song_item.user_id,
-                "user_name": next_song_item.user_name,
-                "title": next_song_item.metadata.title,
-                "duration_seconds": next_song_item.metadata.duration_seconds,
+                "id": s.id,
+                "user_id": s.user_id,
+                "user_name": s.user_name,
+                "title": s.metadata.title,
+                "duration_seconds": s.metadata.duration_seconds,
             }
 
-        # Calculate when the current user's next song is coming up
-        # (only if they're not already the immediate next singer)
+        # How long until the current user's next turn?
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            # Get unplayed songs in queue order (excluding the currently playing song)
-            upcoming = [
-                item
-                for item in queue_items
-                if item.played_at is None and item.id != current_song_id
-            ]
-
-            # Time remaining in the current song
             current_duration = current_song.get("duration_seconds", 0) if current_song else 0
             time_until = max(0, current_duration - position_seconds) if current_song else 0
-            songs_away = 0
-
-            for item in upcoming:
+            for songs_away, item in enumerate(upcoming):
                 if item.user_id == current_user_id:
                     my_next_turn = {
                         "estimated_seconds": int(time_until),
                         "songs_away": songs_away,
                     }
                     break
-                songs_away += 1
                 time_until += item.metadata.duration_seconds or 0
 
-        # Calculate queue depth (estimated wait time for next addition)
-        pending_items = [item for item in queue if not item["is_played"]]
-        queue_depth_seconds = sum(item.get("duration_seconds") or 0 for item in pending_items)
-        queue_depth_count = len(pending_items)
+        # Queue depth: count and total duration of upcoming items
+        queue_depth_count = len(upcoming)
+        queue_depth_seconds = sum(item.metadata.duration_seconds or 0 for item in upcoming)
 
         return {
             "queue": queue,
@@ -418,8 +408,6 @@ def create_app(
             return {"id": item_id, "status": "added"}
         except HTTPException:
             raise  # Let HTTP exceptions pass through
-        except DuplicateSongError as e:
-            raise HTTPException(status_code=409, detail=str(e))
         except Exception as e:
             logger.error("Error adding song: %s", e, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
@@ -572,6 +560,7 @@ def create_app(
     @app.post("/api/queue/clear")
     async def clear_queue(
         queue_mgr: QueueManager = Depends(get_queue_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
         """Clear entire queue (operator only)."""
@@ -579,6 +568,7 @@ def create_app(
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
         count = queue_mgr.clear_queue()
+        playback.clear_cursor()
         return {"status": "cleared", "items_removed": count}
 
     # Video search endpoints
@@ -987,12 +977,11 @@ def create_app(
     @app.post("/api/display/played/{item_id}")
     async def display_mark_played(
         item_id: int,
-        queue_mgr: QueueManager = Depends(get_queue_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
     ):
-        """Mark a queue item as played (called by /display when a song ends)."""
-        if queue_mgr.mark_played(item_id):
-            return {"status": "ok"}
-        raise HTTPException(status_code=404, detail="Queue item not found")
+        """Signal that a song finished playing (called by /display when embed ends)."""
+        playback.on_song_end()
+        return {"status": "ok"}
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, config: ConfigManager = Depends(get_config_manager)):

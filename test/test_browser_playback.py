@@ -122,8 +122,8 @@ def test_process_pending_content_noop_without_provider(temp_db, user_manager):
 # =========================================================================
 
 
-def test_display_mark_played_endpoint(temp_db, user_manager):
-    """POST /api/display/played/{item_id} marks the item as played."""
+def test_display_played_endpoint(temp_db, user_manager):
+    """POST /api/display/played/{item_id} signals song finished to playback controller."""
     from fastapi.testclient import TestClient
 
     from kbox.history import HistoryManager
@@ -171,7 +171,7 @@ def test_display_mark_played_endpoint(temp_db, user_manager):
         client = TestClient(app)
 
         user = user_manager.get_or_create_user("singer-1", "Singer")
-        item_id = queue_manager.add_song(
+        queue_manager.add_song(
             user=user,
             video_id="youtube:xyz789",
             title="Karaoke Hit",
@@ -180,16 +180,11 @@ def test_display_mark_played_endpoint(temp_db, user_manager):
 
         # /display sets guest_authenticated, simulate that
         client.get("/display")
-        response = client.post(f"/api/display/played/{item_id}")
+        response = client.post("/api/display/played/1")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
-        # Verify the item is now marked played
-        item = queue_manager.get_item(item_id)
-        assert item.played_at is not None
-
-        # Non-existent item returns 404
-        response = client.post("/api/display/played/99999")
-        assert response.status_code == 404
+        # Endpoint should have called on_song_end on the playback controller
+        mock_playback.on_song_end.assert_called_once()
     finally:
         queue_manager.stop_download_monitor()

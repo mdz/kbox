@@ -53,7 +53,6 @@ class QueueItem:
     content_status: str = "pending"
     content_path: Optional[str] = None
     error_message: Optional[str] = None
-    played_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
 
