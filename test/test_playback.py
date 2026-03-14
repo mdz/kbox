@@ -954,3 +954,125 @@ def test_play_after_stop_song_deleted_falls_back(
     assert playback_controller.state == PlaybackState.PLAYING
     assert playback_controller.current_song_id == 10
     mock_streaming_controller.load_file.assert_called_once_with("/path/to/fallback.mp4")
+
+
+class TestSeekRelative:
+    """Tests for seek_relative()."""
+
+    def test_seek_forward(self, mock_queue_manager, mock_streaming_controller, mock_config_manager):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+
+        song = create_mock_queue_item(id=1, content_status="ready", duration_seconds=300)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+
+        pc.play()
+        mock_streaming_controller.get_position.return_value = 60
+
+        result = pc.seek_relative(30)
+        assert result is True
+        mock_streaming_controller.seek.assert_called_with(90)
+
+    def test_seek_backward(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+
+        song = create_mock_queue_item(id=1, content_status="ready", duration_seconds=300)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+
+        pc.play()
+        mock_streaming_controller.get_position.return_value = 60
+
+        result = pc.seek_relative(-30)
+        assert result is True
+        mock_streaming_controller.seek.assert_called_with(30)
+
+    def test_seek_backward_clamps_to_zero(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+
+        song = create_mock_queue_item(id=1, content_status="ready", duration_seconds=300)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+
+        pc.play()
+        mock_streaming_controller.get_position.return_value = 10
+
+        result = pc.seek_relative(-50)
+        assert result is True
+        mock_streaming_controller.seek.assert_called_with(0)
+
+    def test_seek_forward_clamps_to_duration(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+
+        song = create_mock_queue_item(id=1, content_status="ready", duration_seconds=180)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+
+        pc.play()
+        mock_streaming_controller.get_position.return_value = 170
+
+        result = pc.seek_relative(30)
+        assert result is True
+        # Should clamp to duration - 1 = 179
+        mock_streaming_controller.seek.assert_called_with(179)
+
+    def test_seek_when_not_playing_returns_false(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+        # State is IDLE, no song playing
+        assert pc.seek_relative(10) is False
+
+    def test_seek_when_no_current_song(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+        assert pc.seek_relative(10) is False
+
+
+class TestShutdown:
+    """Tests for shutdown()."""
+
+    def test_shutdown_stops_streaming(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+        pc.shutdown()
+        mock_streaming_controller.stop.assert_called_once()
+
+    def test_shutdown_sets_monitoring_false(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+        pc.shutdown()
+        assert pc._monitoring is False
