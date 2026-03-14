@@ -199,8 +199,9 @@ def create_app(
             """Middleware to authenticate guests via access token."""
 
             async def dispatch(self, request: Request, call_next):
-                # Allow display page without authentication (passive viewer)
-                if request.url.path == "/display":
+                # Allow display page and its API without authentication
+                # (passive viewer on TV/monitor, no user session)
+                if request.url.path == "/display" or request.url.path.startswith("/api/display/"):
                     return await call_next(request)
 
                 # Check if already authenticated via session

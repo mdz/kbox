@@ -213,8 +213,20 @@
 
     function onPlayerError(event) {
         console.error('[display] Player error:', event.data);
-        // Skip to next song on error
-        setTimeout(onSongEnded, 2000);
+        // Skip without marking as played -- embed errors (101, 150) are not
+        // the singer's fault.  Add to local set so we don't retry this session.
+        if (currentQueueId !== null) {
+            playedQueueIds.add(currentQueueId);
+        }
+        currentQueueId = null;
+        currentVideoId = null;
+
+        const unplayed = getUnplayedSongs();
+        if (unplayed.length === 0) {
+            showIdle();
+            return;
+        }
+        setTimeout(() => showTransition(unplayed[0]), 2000);
     }
 
     // =========================================================================
