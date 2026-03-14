@@ -16,19 +16,23 @@ import pytest
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.video_library import VideoLibrary, VideoSource, is_likely_karaoke, karaoke_quality_score
+from kbox.video_library import (
+    VideoLibrary,
+    VideoProvider,
+    VideoSearchSource,
+    is_likely_karaoke,
+    karaoke_quality_score,
+)
 
 
-class FakeVideoSource(VideoSource):
-    """Fake video source for testing."""
+class FakeVideoSource(VideoSearchSource):
+    """Fake video search source for testing."""
 
     def __init__(self, source_id: str = "fake", configured: bool = True):
         self._source_id = source_id
         self._configured = configured
         self._search_results: List[Dict[str, Any]] = []
         self._video_info: Optional[Dict[str, Any]] = None
-        self.download_calls: List[tuple] = []
-        self.download_should_succeed = True
         self.search_error: Optional[Exception] = None
 
     @property
@@ -48,16 +52,23 @@ class FakeVideoSource(VideoSource):
             return self._video_info.copy()
         return None
 
-    def download(self, video_id: str, output_dir: Path) -> Path:
-        self.download_calls.append((video_id, output_dir))
-        if self.download_should_succeed:
-            # Simulate download by creating file
+
+class FakeVideoProvider(VideoProvider):
+    """Fake video provider for testing."""
+
+    def __init__(self):
+        self.provide_calls: List[tuple] = []
+        self.should_succeed = True
+
+    def provide(self, video_id: str, output_dir: Path) -> Path:
+        self.provide_calls.append((video_id, output_dir))
+        if self.should_succeed:
             output_dir.mkdir(parents=True, exist_ok=True)
             video_file = output_dir / "video.mp4"
             video_file.write_bytes(b"x" * 1000)
             return video_file
         else:
-            raise RuntimeError("Download failed")
+            raise RuntimeError("Content preparation failed")
 
 
 def _set_mtime(path: Path, seconds_ago: float) -> None:
@@ -303,12 +314,12 @@ class TestGetInfo:
 class TestAvailability:
     """Tests for video availability checks and requests."""
 
-    def test_is_available_false_when_not_downloaded(self, video_library, temp_storage_dir):
-        """is_available should return False when video not downloaded."""
-        assert video_library.is_available("youtube:notdownloaded") is False
+    def test_is_available_false_when_not_present(self, video_library, temp_storage_dir):
+        """is_available should return False when video not present."""
+        assert video_library.is_available("youtube:notpresent") is False
 
-    def test_is_available_true_when_downloaded(self, video_library, temp_storage_dir):
-        """is_available should return True when video is downloaded."""
+    def test_is_available_true_when_present(self, video_library, temp_storage_dir):
+        """is_available should return True when video is present."""
         # Create video directory and file
         video_dir = Path(temp_storage_dir) / "youtube" / "test123"
         video_dir.mkdir(parents=True)
@@ -344,21 +355,27 @@ class TestAvailability:
         assert result == str(video_file)
         callback.assert_called_once_with("ready", str(video_file), None)
 
-    def test_request_starts_download_when_not_cached(self, config_manager, temp_storage_dir):
-        """request should start download when video not cached."""
+    def test_request_starts_preparation_when_not_cached(self, config_manager, temp_storage_dir):
+        """request should start content preparation when video not cached."""
         library = VideoLibrary(config_manager)
 
         fake_source = FakeVideoSource("fake")
         library.register_source(fake_source)
 
+        fake_provider = FakeVideoProvider()
+        library.set_provider(fake_provider)
+
         callback = Mock()
         result = library.request("fake:newvideo", callback=callback)
 
-        # Should return None (download is async)
         assert result is None
-        # Download should have been called
-        assert len(fake_source.download_calls) == 1
-        assert fake_source.download_calls[0][0] == "newvideo"
+
+        import time
+
+        time.sleep(0.2)
+
+        assert len(fake_provider.provide_calls) == 1
+        assert fake_provider.provide_calls[0][0] == "newvideo"
 
 
 # =============================================================================

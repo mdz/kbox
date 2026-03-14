@@ -199,8 +199,9 @@ def create_app(
             """Middleware to authenticate guests via access token."""
 
             async def dispatch(self, request: Request, call_next):
-                # Allow display page without authentication (passive viewer)
-                if request.url.path == "/display":
+                # Allow display page and its API without authentication
+                # (passive viewer on TV/monitor, no user session)
+                if request.url.path == "/display" or request.url.path.startswith("/api/display/"):
                     return await call_next(request)
 
                 # Check if already authenticated via session
@@ -982,6 +983,16 @@ def create_app(
         # Authenticate the session so API calls from this page work
         request.session["guest_authenticated"] = True
         return templates.TemplateResponse(request, "display.html")
+
+    @app.post("/api/display/played/{item_id}")
+    async def display_mark_played(
+        item_id: int,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+    ):
+        """Mark a queue item as played (called by /display when a song ends)."""
+        if queue_mgr.mark_played(item_id):
+            return {"status": "ok"}
+        raise HTTPException(status_code=404, detail="Queue item not found")
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, config: ConfigManager = Depends(get_config_manager)):

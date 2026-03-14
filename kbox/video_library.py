@@ -150,13 +150,12 @@ def karaoke_quality_score(title: str, channel: str = "") -> int:
     return 0
 
 
-class VideoSource(ABC):
+class VideoSearchSource(ABC):
     """
-    Abstract base class for video sources.
+    Abstract base class for video search sources.
 
-    A VideoSource is a pure fetcher - it searches external services and downloads
-    videos to a directory provided by the VideoLibrary. It has no knowledge of
-    caching or storage management.
+    A VideoSearchSource finds videos via external services.  It has no knowledge
+    of downloading, caching, or storage management.
     """
 
     @property
@@ -198,22 +197,35 @@ class VideoSource(ABC):
         """
         ...
 
+
+class VideoProvider(ABC):
+    """
+    Abstract base class for making videos available for playback.
+
+    A VideoProvider fetches or locates a video file so the library can
+    serve it to the playback pipeline.
+    """
+
     @abstractmethod
-    def download(self, video_id: str, output_dir: Path) -> Path:
+    def provide(self, video_id: str, output_dir: Path) -> Path:
         """
-        Download a video to the specified directory (synchronous).
+        Make a video available as a local file for playback.
 
         Args:
             video_id: Source-specific video identifier
-            output_dir: Directory to download into (will be created if needed)
+            output_dir: Directory to place the file in (will be created if needed)
 
         Returns:
-            Path to the downloaded video file
+            Path to the video file
 
         Raises:
-            Exception: If download fails
+            Exception: If the video cannot be made available
         """
         ...
+
+
+# Keep the old name as an alias so existing imports don't break during migration.
+VideoSource = VideoSearchSource
 
 
 class VideoLibrary:
@@ -237,20 +249,36 @@ class VideoLibrary:
         """
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
-        self._sources: Dict[str, VideoSource] = {}
-        self._download_semaphore = threading.Semaphore(1)  # Limit concurrent downloads
+        self._sources: Dict[str, VideoSearchSource] = {}
+        self._provider: Optional[VideoProvider] = None
+        self._provide_semaphore = threading.Semaphore(1)
 
         self.logger.info("VideoLibrary initialized")
 
-    def register_source(self, source: VideoSource) -> None:
+    def register_source(self, source: VideoSearchSource) -> None:
         """
-        Register a video source.
+        Register a video search source.
 
         Args:
-            source: VideoSource instance to register
+            source: VideoSearchSource instance to register
         """
         self._sources[source.source_id] = source
         self.logger.info("Registered video source: %s", source.source_id)
+
+    def set_provider(self, provider: VideoProvider) -> None:
+        """
+        Set the video provider used to make content available for playback.
+
+        Args:
+            provider: VideoProvider instance
+        """
+        self._provider = provider
+        self.logger.info("Video provider set: %s", type(provider).__name__)
+
+    @property
+    def has_provider(self) -> bool:
+        """True when a VideoProvider has been configured."""
+        return self._provider is not None
 
     # =========================================================================
     # Video ID Handling
@@ -478,15 +506,15 @@ class VideoLibrary:
         """
         Request a video be made available for playback.
 
-        If the video is already downloaded, returns the path immediately.
-        Otherwise, starts an async download and returns None.
+        If the video is already present locally, returns the path immediately.
+        Otherwise, asks the provider to fetch it asynchronously and returns None.
 
         Args:
             video_id: Opaque video ID
             callback: Status callback function(status, path, error)
 
         Returns:
-            Path to video file if already available, None if download started
+            Path to video file if already available, None if preparation started
 
         Raises:
             ValueError: If video_id format is invalid
@@ -502,35 +530,37 @@ class VideoLibrary:
         # Parse and validate
         source, source_id = self._parse_video_id(video_id)
 
-        source_obj = self._sources.get(source)
-        if not source_obj:
-            self.logger.error("Unknown source: %s", source)
+        if not self._provider:
+            self.logger.error("No video provider configured")
             if callback:
-                callback("error", None, f"Unknown source: {source}")
+                callback("error", None, "No video provider configured")
             return None
 
         # Create video directory
         video_dir = self._get_video_directory(video_id)
         video_dir.mkdir(parents=True, exist_ok=True)
 
-        # Start download in background thread
-        def download_thread():
-            self._download_semaphore.acquire()
+        provider = self._provider
+
+        def provide_thread():
+            self._provide_semaphore.acquire()
             try:
                 if callback:
                     callback("downloading", None, None)
-                downloaded_path = source_obj.download(source_id, video_dir)
-                self.logger.info("Downloaded %s to %s", video_id, downloaded_path)
+                provided_path = provider.provide(source_id, video_dir)
+                self.logger.info("Prepared %s at %s", video_id, provided_path)
                 if callback:
-                    callback("ready", str(downloaded_path), None)
+                    callback("ready", str(provided_path), None)
             except Exception as e:
-                self.logger.error("Download failed for %s: %s", video_id, e, exc_info=True)
+                self.logger.error(
+                    "Content preparation failed for %s: %s", video_id, e, exc_info=True
+                )
                 if callback:
                     callback("error", None, str(e))
             finally:
-                self._download_semaphore.release()
+                self._provide_semaphore.release()
 
-        thread = threading.Thread(target=download_thread, daemon=True)
+        thread = threading.Thread(target=provide_thread, daemon=True)
         thread.start()
         return None
 
