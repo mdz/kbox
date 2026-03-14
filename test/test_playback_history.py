@@ -41,11 +41,13 @@ def mock_config_manager():
 @pytest.fixture
 def playback_controller(mock_queue_manager, mock_streaming_controller, mock_config_manager):
     """Create a PlaybackController instance for testing."""
-    return PlaybackController(
+    controller = PlaybackController(
         queue_manager=mock_queue_manager,
         streaming_controller=mock_streaming_controller,
         config_manager=mock_config_manager,
     )
+    controller._monitoring = False
+    yield controller
 
 
 def test_should_record_history_percentage_threshold(playback_controller, mock_config_manager):

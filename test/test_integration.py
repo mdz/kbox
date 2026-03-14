@@ -179,6 +179,7 @@ def full_system(temp_db, temp_storage_dir, fake_source, fake_provider):
     }
 
     # Cleanup
+    playback_controller.shutdown()
     queue_manager.stop_content_monitor()
 
 
