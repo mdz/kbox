@@ -224,10 +224,6 @@ class VideoProvider(ABC):
         ...
 
 
-# Keep the old name as an alias so existing imports don't break during migration.
-VideoSource = VideoSearchSource
-
-
 class VideoLibrary:
     """
     Unified interface for video search, retrieval, and storage.

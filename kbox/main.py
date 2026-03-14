@@ -219,7 +219,7 @@ class KboxServer:
             self.playback_controller.shutdown()
 
         if self.queue_manager:
-            self.queue_manager.stop_download_monitor()
+            self.queue_manager.stop_content_monitor()
 
         if self.streaming_controller:
             self.streaming_controller.stop()

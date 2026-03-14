@@ -133,7 +133,7 @@ def queue_manager(temp_db, mock_video_library):
     """Create a QueueManager for testing."""
     qm = QueueManager(temp_db, video_library=mock_video_library)
     yield qm
-    qm.stop_download_monitor()
+    qm.stop_content_monitor()
 
 
 @pytest.fixture

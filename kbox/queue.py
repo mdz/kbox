@@ -145,7 +145,7 @@ class QueueManager:
             self.update_content_status(item_id, self.STATUS_ERROR, error_message=error)
             self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
 
-    def stop_download_monitor(self):
+    def stop_content_monitor(self):
         """Stop the content monitor thread."""
         if not self._monitoring:
             return

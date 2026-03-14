@@ -974,9 +974,8 @@ def create_app(
         request.session["guest_authenticated"] = True
         return templates.TemplateResponse(request, "display.html")
 
-    @app.post("/api/display/played/{item_id}")
-    async def display_mark_played(
-        item_id: int,
+    @app.post("/api/display/song-ended")
+    async def display_song_ended(
         playback: PlaybackController = Depends(get_playback_controller),
     ):
         """Signal that a song finished playing (called by /display when embed ends)."""
