@@ -38,7 +38,7 @@ export function showEditQueueItemModal(item) {
         user_id: item.user_id,
         user_name: item.user_name,
         duration_seconds: item.duration_seconds,
-        download_status: item.download_status,
+        content_status: item.content_status,
         pitch_semitones: item.pitch_semitones || 0
     }, {
         context: 'edit-queue-item',
@@ -74,7 +74,7 @@ export function showEditQueueItemModal(item) {
     if (isOperator) {
         const jumpToButton = document.getElementById('jump-to-button');
         if (jumpToButton) {
-            if (item.download_status === 'ready') {
+            if (item.content_status === 'ready') {
                 jumpToButton.disabled = false;
                 jumpToButton.style.opacity = '1';
             } else {
@@ -139,7 +139,7 @@ export async function saveQueueItemPitch() {
 export async function jumpToQueueItem() {
     if (!currentQueueItemToEdit) return;
 
-    if (currentQueueItemToEdit.download_status !== 'ready') {
+    if (currentQueueItemToEdit.content_status !== 'ready') {
         alert('Song must be ready (downloaded) before it can be played');
         return;
     }
@@ -332,7 +332,7 @@ export async function loadQueue() {
             if (isPlayed) classes.push('played');
             div.className = classes.join(' ');
 
-            const statusClass = `status-${item.download_status}`;
+            const statusClass = `status-${item.content_status}`;
             const duration = item.duration_seconds || 0;
             const durationStr = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
 
@@ -350,7 +350,7 @@ export async function loadQueue() {
                     <div class="queue-item-user">${item.user_name} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
                     ${isOperator ? `<div class="queue-item-title">${primaryDisplay}</div>${secondaryDisplay}` : ''}
                 </div>
-                <span class="queue-item-status ${statusClass}">${item.download_status}</span>
+                <span class="queue-item-status ${statusClass}">${item.content_status}</span>
             `;
 
             // Make all queue items clickable to edit

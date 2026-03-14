@@ -6,7 +6,7 @@ import { userId } from './state.js';
 import { getIntervalName, createPitchControlHTML, updatePitchButtons } from './pitch.js';
 
 // Render reusable song settings component
-// songData: { title, thumbnail_url, user_name/channel, duration_seconds, download_status?, pitch_semitones }
+// songData: { title, thumbnail_url, user_name/channel, duration_seconds, content_status?, pitch_semitones }
 // options: { context, live, fontSize, showStatus, showThumbnail, additionalControls }
 export function renderSongSettings(containerId, songData, options = {}) {
     const container = document.getElementById(containerId);
@@ -80,7 +80,7 @@ export function renderSongSettings(containerId, songData, options = {}) {
             ${showUser && userText ? `<div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${userText}</div>` : ''}
             <div style="color: #888; font-size: 0.85em;" id="${context}-progress">${position !== undefined && position !== null ? '' : 'Duration: '}${durationText}</div>
             ${progressBarHTML}
-            ${showStatus && songData.download_status ? `<div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${songData.download_status}</div>` : ''}
+            ${showStatus && songData.content_status ? `<div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${songData.content_status}</div>` : ''}
         </div>
     `;
 

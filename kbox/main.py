@@ -22,8 +22,10 @@ from .streaming import StreamingController
 from .suggestions import SuggestionEngine
 from .user import UserManager
 from .video_library import VideoLibrary
+from .video_source import YouTubeSource
 from .web.server import create_app
-from .youtube import YouTubeSource
+from .youtube import YouTubeAPI
+from .ytdlp import YtDlpClient
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -63,9 +65,12 @@ class KboxServer:
             self.config_manager.set("session_secret", self.session_secret)
             logger.info("Generated new session secret")
 
-        # Initialize video library and register sources
+        # Initialize video library with separate search and content paths
         self.video_library = VideoLibrary(self.config_manager)
-        self.video_library.register_source(YouTubeSource(self.config_manager))
+        youtube_api = YouTubeAPI(self.config_manager)
+        ytdlp_client = YtDlpClient(self.config_manager)
+        self.video_library.register_source(YouTubeSource(youtube_api, fallback=ytdlp_client))
+        self.video_library.set_provider(ytdlp_client)
 
         if not self.video_library.is_source_configured("youtube"):
             logger.warning(

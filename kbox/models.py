@@ -50,8 +50,8 @@ class QueueItem:
     video_id: str  # Opaque video ID like "youtube:abc123"
     metadata: SongMetadata
     settings: SongSettings
-    download_status: str = "pending"
-    download_path: Optional[str] = None
+    content_status: str = "pending"
+    content_path: Optional[str] = None
     error_message: Optional[str] = None
     played_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
