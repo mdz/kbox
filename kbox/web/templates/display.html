@@ -308,8 +308,8 @@
     function onSongEnded() {
         if (currentQueueId !== null) {
             playedQueueIds.add(currentQueueId);
-            fetch(`/api/display/played/${currentQueueId}`, { method: 'POST' })
-                .catch(err => console.warn('[display] Failed to mark played:', err));
+            fetch('/api/display/song-ended', { method: 'POST' })
+                .catch(err => console.warn('[display] Failed to signal song ended:', err));
         }
         currentQueueId = null;
         currentVideoId = null;

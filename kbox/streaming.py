@@ -547,14 +547,14 @@ class StreamingController:
 
         Gst = _get_gst()
 
-        self.logger.debug("[DEBUG] load_file: entry, current_state=%s", self.state)
+        self.logger.debug("load_file: entry, current_state=%s", self.state)
 
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
 
         # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
-        self.logger.debug("[DEBUG] load_file: after NULL")
+        self.logger.debug("load_file: after NULL")
 
         # Unmute audio (may have been muted for interstitial)
         self.playbin.set_property("mute", False)
@@ -566,7 +566,7 @@ class StreamingController:
         # seek, then go to PLAYING. This prevents audio from position 0
         # playing briefly before the seek completes.
         if start_position_seconds > 0:
-            self.logger.debug("[DEBUG] load_file: going to PAUSED for pre-seek")
+            self.logger.debug("load_file: going to PAUSED for pre-seek")
             ret = self.playbin.set_state(Gst.State.PAUSED)
             if ret == Gst.StateChangeReturn.FAILURE:
                 raise RuntimeError("Failed to pause for seek")
@@ -578,9 +578,7 @@ class StreamingController:
 
             # Seek while paused
             position_ns = start_position_seconds * Gst.SECOND
-            self.logger.debug(
-                "[DEBUG] load_file: seeking to %s while paused", start_position_seconds
-            )
+            self.logger.debug("load_file: seeking to %s while paused", start_position_seconds)
             self.playbin.seek_simple(
                 Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
             )
@@ -590,14 +588,14 @@ class StreamingController:
         if ret == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("Failed to start playback")
 
-        self.logger.debug("[DEBUG] load_file: after PLAYING request, ret=%s", ret)
+        self.logger.debug("load_file: after PLAYING request, ret=%s", ret)
 
         # Wait for state change to complete or error
         ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
         if ret == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("Pipeline failed to reach PLAYING state")
 
-        self.logger.debug("[DEBUG] load_file: state reached %s", state)
+        self.logger.debug("load_file: state reached %s", state)
 
         self.state = "playing"
         self.current_file = filepath
@@ -611,9 +609,9 @@ class StreamingController:
         self.logger.info("Stopping playback")
 
         Gst = _get_gst()
-        self.logger.debug("[DEBUG] stop_playback: before READY, state=%s", self.state)
+        self.logger.debug("stop_playback: before READY, state=%s", self.state)
         self.playbin.set_state(Gst.State.READY)
-        self.logger.debug("[DEBUG] stop_playback: after READY")
+        self.logger.debug("stop_playback: after READY")
 
         self.state = "idle"
         self.current_file = None

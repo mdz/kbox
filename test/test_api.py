@@ -192,7 +192,7 @@ def app_components(
     }
 
     # Cleanup
-    queue_manager.stop_download_monitor()
+    queue_manager.stop_content_monitor()
 
 
 @pytest.fixture

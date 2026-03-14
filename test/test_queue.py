@@ -47,7 +47,7 @@ def queue_manager(temp_db, mock_video_library):
     """Create a QueueManager instance for testing."""
     qm = QueueManager(temp_db, video_library=mock_video_library)
     yield qm
-    qm.stop_download_monitor()
+    qm.stop_content_monitor()
 
 
 # Test user IDs - used consistently across tests
@@ -271,7 +271,7 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
     qm1 = QueueManager(temp_db, video_library=mock_video_library)
     item_id = qm1.add_song(alice, "youtube:vid1", "Song 1")
     qm1.update_content_status(item_id, QueueManager.STATUS_READY, content_path="/path/to/video.mp4")
-    qm1.stop_download_monitor()
+    qm1.stop_content_monitor()
 
     # Create new QueueManager with same database
     mock_video_library2 = MagicMock()
@@ -281,7 +281,7 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
     assert queue[0].user_id == ALICE_ID
     assert queue[0].user_name == "Alice"
     assert queue[0].content_status == QueueManager.STATUS_READY
-    qm2.stop_download_monitor()
+    qm2.stop_content_monitor()
 
 
 # =============================================================================
@@ -298,7 +298,7 @@ def test_download_monitor_calls_video_library(temp_db, user_manager):
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
     qm = QueueManager(temp_db, video_library=mock_video_library)
-    qm.stop_download_monitor()  # Stop background thread, we'll call directly
+    qm.stop_content_monitor()  # Stop background thread, we'll call directly
 
     # Add song (starts as pending)
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
@@ -329,7 +329,7 @@ def test_download_callback_updates_status_ready(temp_db, user_manager):
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
     qm = QueueManager(temp_db, video_library=mock_video_library)
-    qm.stop_download_monitor()
+    qm.stop_content_monitor()
 
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
@@ -363,7 +363,7 @@ def test_download_callback_updates_status_error(temp_db, user_manager):
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
     qm = QueueManager(temp_db, video_library=mock_video_library)
-    qm.stop_download_monitor()
+    qm.stop_content_monitor()
 
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
@@ -397,7 +397,7 @@ def test_cleanup_storage_calls_video_library(temp_db, user_manager):
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
     qm = QueueManager(temp_db, video_library=mock_video_library)
-    qm.stop_download_monitor()
+    qm.stop_content_monitor()
 
     # Add songs that will be protected
     qm.add_song(alice, "youtube:vid1", "Song 1")
@@ -431,7 +431,7 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
 
     alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
     qm = QueueManager(temp_db, video_library=mock_video_library)
-    qm.stop_download_monitor()
+    qm.stop_content_monitor()
 
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 

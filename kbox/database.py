@@ -284,6 +284,59 @@ class Database:
 
 
 # ============================================================================
+# Shared JSON Codecs
+# ============================================================================
+
+
+def _encode_metadata(metadata: SongMetadata) -> str:
+    """Encode SongMetadata to JSON for storage."""
+    return json.dumps(
+        {
+            "title": metadata.title,
+            "duration_seconds": metadata.duration_seconds,
+            "thumbnail_url": metadata.thumbnail_url,
+            "channel": metadata.channel,
+            "artist": metadata.artist,
+            "song_name": metadata.song_name,
+        }
+    )
+
+
+def _decode_metadata(metadata_json: str) -> SongMetadata:
+    """Decode SongMetadata from JSON."""
+    if not metadata_json:
+        return SongMetadata(title="Unknown")
+    try:
+        data = json.loads(metadata_json)
+        return SongMetadata(
+            title=data.get("title", "Unknown"),
+            duration_seconds=data.get("duration_seconds"),
+            thumbnail_url=data.get("thumbnail_url"),
+            channel=data.get("channel"),
+            artist=data.get("artist"),
+            song_name=data.get("song_name"),
+        )
+    except (json.JSONDecodeError, TypeError):
+        return SongMetadata(title="Unknown")
+
+
+def _encode_settings(settings: SongSettings) -> str:
+    """Encode SongSettings to JSON for storage."""
+    return json.dumps({"pitch_semitones": settings.pitch_semitones})
+
+
+def _decode_settings(settings_json: str) -> SongSettings:
+    """Decode SongSettings from JSON."""
+    if not settings_json:
+        return SongSettings()
+    try:
+        data = json.loads(settings_json)
+        return SongSettings(pitch_semitones=data.get("pitch_semitones", 0))
+    except (json.JSONDecodeError, TypeError):
+        return SongSettings()
+
+
+# ============================================================================
 # Repository Classes
 # ============================================================================
 
@@ -449,54 +502,6 @@ class HistoryRepository:
         self.logger = logging.getLogger(__name__)
 
     @staticmethod
-    def _encode_metadata(metadata: SongMetadata) -> str:
-        """Encode metadata to JSON."""
-        return json.dumps(
-            {
-                "title": metadata.title,
-                "duration_seconds": metadata.duration_seconds,
-                "thumbnail_url": metadata.thumbnail_url,
-                "channel": metadata.channel,
-                "artist": metadata.artist,
-                "song_name": metadata.song_name,
-            }
-        )
-
-    @staticmethod
-    def _decode_metadata(metadata_json: str) -> SongMetadata:
-        """Decode metadata from JSON."""
-        if not metadata_json:
-            return SongMetadata(title="Unknown")
-        try:
-            data = json.loads(metadata_json)
-            return SongMetadata(
-                title=data.get("title", "Unknown"),
-                duration_seconds=data.get("duration_seconds"),
-                thumbnail_url=data.get("thumbnail_url"),
-                channel=data.get("channel"),
-                artist=data.get("artist"),
-                song_name=data.get("song_name"),
-            )
-        except (json.JSONDecodeError, TypeError):
-            return SongMetadata(title="Unknown")
-
-    @staticmethod
-    def _encode_settings(settings: SongSettings) -> str:
-        """Encode settings to JSON."""
-        return json.dumps({"pitch_semitones": settings.pitch_semitones})
-
-    @staticmethod
-    def _decode_settings(settings_json: str) -> SongSettings:
-        """Decode settings from JSON."""
-        if not settings_json:
-            return SongSettings()
-        try:
-            data = json.loads(settings_json)
-            return SongSettings(pitch_semitones=data.get("pitch_semitones", 0))
-        except (json.JSONDecodeError, TypeError):
-            return SongSettings()
-
-    @staticmethod
     def _encode_performance(performance: Dict[str, Any]) -> str:
         """Encode performance metrics to JSON."""
         return json.dumps(performance)
@@ -539,8 +544,8 @@ class HistoryRepository:
                     user_id,
                     user_name,
                     video_id,
-                    self._encode_metadata(metadata),
-                    self._encode_settings(settings),
+                    _encode_metadata(metadata),
+                    _encode_settings(settings),
                     self._encode_performance(performance),
                 ),
             )
@@ -573,7 +578,7 @@ class HistoryRepository:
             )
             result = cursor.fetchone()
             if result:
-                return self._decode_settings(result["settings_json"])
+                return _decode_settings(result["settings_json"])
             return None
         finally:
             conn.close()
@@ -610,8 +615,8 @@ class HistoryRepository:
                         video_id=row["video_id"],
                         user_id=row["user_id"],
                         user_name=row["user_name"],
-                        metadata=self._decode_metadata(row["song_metadata_json"]),
-                        settings=self._decode_settings(row["settings_json"]),
+                        metadata=_decode_metadata(row["song_metadata_json"]),
+                        settings=_decode_settings(row["settings_json"]),
                         performance=self._decode_performance(row["performance_json"]),
                         performed_at=datetime.fromisoformat(row["performed_at"])
                         if row["performed_at"]
@@ -636,61 +641,13 @@ class QueueRepository:
         self.logger = logging.getLogger(__name__)
 
     @staticmethod
-    def _encode_metadata(metadata: SongMetadata) -> str:
-        """Encode metadata to JSON."""
-        return json.dumps(
-            {
-                "title": metadata.title,
-                "duration_seconds": metadata.duration_seconds,
-                "thumbnail_url": metadata.thumbnail_url,
-                "channel": metadata.channel,
-                "artist": metadata.artist,
-                "song_name": metadata.song_name,
-            }
-        )
+    def _encode_content_info(content_info: Dict[str, Any]) -> str:
+        """Encode content info to JSON for the download_json DB column."""
+        return json.dumps(content_info)
 
     @staticmethod
-    def _decode_metadata(metadata_json: str) -> SongMetadata:
-        """Decode metadata from JSON."""
-        if not metadata_json:
-            return SongMetadata(title="Unknown")
-        try:
-            data = json.loads(metadata_json)
-            return SongMetadata(
-                title=data.get("title", "Unknown"),
-                duration_seconds=data.get("duration_seconds"),
-                thumbnail_url=data.get("thumbnail_url"),
-                channel=data.get("channel"),
-                artist=data.get("artist"),
-                song_name=data.get("song_name"),
-            )
-        except (json.JSONDecodeError, TypeError):
-            return SongMetadata(title="Unknown")
-
-    @staticmethod
-    def _encode_settings(settings: SongSettings) -> str:
-        """Encode settings to JSON."""
-        return json.dumps({"pitch_semitones": settings.pitch_semitones})
-
-    @staticmethod
-    def _decode_settings(settings_json: str) -> SongSettings:
-        """Decode settings from JSON."""
-        if not settings_json:
-            return SongSettings()
-        try:
-            data = json.loads(settings_json)
-            return SongSettings(pitch_semitones=data.get("pitch_semitones", 0))
-        except (json.JSONDecodeError, TypeError):
-            return SongSettings()
-
-    @staticmethod
-    def _encode_download_info(download_info: Dict[str, Any]) -> str:
-        """Encode download info to JSON."""
-        return json.dumps(download_info)
-
-    @staticmethod
-    def _decode_download_info(download_json: Optional[str]) -> Dict[str, Any]:
-        """Decode download info from JSON."""
+    def _decode_content_info(download_json: Optional[str]) -> Dict[str, Any]:
+        """Decode content info from the download_json DB column."""
         if not download_json:
             return {}
         try:
@@ -709,8 +666,7 @@ class QueueRepository:
 
     def _row_to_queue_item(self, row: sqlite3.Row) -> QueueItem:
         """Convert a database row to a QueueItem."""
-        download_json = self._row_get(row, "download_json")
-        download_info = self._decode_download_info(download_json)
+        content_info = self._decode_content_info(self._row_get(row, "download_json"))
         created_at = self._row_get(row, "created_at")
         return QueueItem(
             id=row["id"],
@@ -718,11 +674,11 @@ class QueueRepository:
             user_id=row["user_id"],
             user_name=row["user_name"],
             video_id=row["video_id"],
-            metadata=self._decode_metadata(row["song_metadata_json"]),
-            settings=self._decode_settings(row["settings_json"]),
+            metadata=_decode_metadata(row["song_metadata_json"]),
+            settings=_decode_settings(row["settings_json"]),
             content_status=row["download_status"],
-            content_path=download_info.get("download_path"),
-            error_message=download_info.get("error_message"),
+            content_path=content_info.get("download_path"),
+            error_message=content_info.get("error_message"),
             created_at=datetime.fromisoformat(created_at) if created_at else None,
         )
 
@@ -756,8 +712,8 @@ class QueueRepository:
                     user.id,
                     user.display_name,
                     video_id,
-                    self._encode_metadata(metadata),
-                    self._encode_settings(settings),
+                    _encode_metadata(metadata),
+                    _encode_settings(settings),
                     self.STATUS_PENDING,
                 ),
             )
@@ -849,14 +805,14 @@ class QueueRepository:
                 self.logger.warning("Queue item %s not found for status update", item_id)
                 return False
 
-            download_info = self._decode_download_info(result["download_json"])
+            content_info = self._decode_content_info(result["download_json"])
 
             if content_path is not None:
-                download_info["download_path"] = content_path
+                content_info["download_path"] = content_path
             if error_message is not None:
-                download_info["error_message"] = error_message
+                content_info["error_message"] = error_message
             elif status != self.STATUS_ERROR:
-                download_info.pop("error_message", None)
+                content_info.pop("error_message", None)
 
             cursor.execute(
                 """
@@ -864,7 +820,7 @@ class QueueRepository:
                 SET download_status = ?, download_json = ?
                 WHERE id = ?
             """,
-                (status, self._encode_download_info(download_info), item_id),
+                (status, self._encode_content_info(content_info), item_id),
             )
 
             updated = cursor.rowcount > 0
@@ -955,7 +911,7 @@ class QueueRepository:
                 self.logger.warning("Queue item %s not found", item_id)
                 return False
 
-            settings = self._decode_settings(result["settings_json"])
+            settings = _decode_settings(result["settings_json"])
             settings.pitch_semitones = pitch_semitones
 
             # Update settings in queue item
@@ -965,7 +921,7 @@ class QueueRepository:
                 SET settings_json = ?
                 WHERE id = ?
             """,
-                (self._encode_settings(settings), item_id),
+                (_encode_settings(settings), item_id),
             )
 
             updated = cursor.rowcount > 0
@@ -995,7 +951,7 @@ class QueueRepository:
                 self.logger.warning("Queue item %s not found", item_id)
                 return False
 
-            metadata = self._decode_metadata(result["song_metadata_json"])
+            metadata = _decode_metadata(result["song_metadata_json"])
             metadata.artist = artist
             metadata.song_name = song_name
 
@@ -1006,7 +962,7 @@ class QueueRepository:
                 SET song_metadata_json = ?
                 WHERE id = ?
             """,
-                (self._encode_metadata(metadata), item_id),
+                (_encode_metadata(metadata), item_id),
             )
 
             updated = cursor.rowcount > 0

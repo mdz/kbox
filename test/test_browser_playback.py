@@ -2,7 +2,7 @@
 Tests for browser playback mode (no GStreamer).
 
 Covers StreamingController graceful degradation, the content monitor no-op
-behavior, and the /api/display/played endpoint.
+behavior, and the /api/display/song-ended endpoint.
 """
 
 import os
@@ -114,16 +114,16 @@ def test_process_pending_content_noop_without_provider(temp_db, user_manager):
         # request() should NOT have been called since there's no provider
         video_library.request.assert_not_called()
     finally:
-        qm.stop_download_monitor()
+        qm.stop_content_monitor()
 
 
 # =========================================================================
-# /api/display/played endpoint
+# /api/display/song-ended endpoint
 # =========================================================================
 
 
-def test_display_played_endpoint(temp_db, user_manager):
-    """POST /api/display/played/{item_id} signals song finished to playback controller."""
+def test_display_song_ended_endpoint(temp_db, user_manager):
+    """POST /api/display/song-ended signals song finished to playback controller."""
     from fastapi.testclient import TestClient
 
     from kbox.history import HistoryManager
@@ -180,11 +180,11 @@ def test_display_played_endpoint(temp_db, user_manager):
 
         # /display sets guest_authenticated, simulate that
         client.get("/display")
-        response = client.post("/api/display/played/1")
+        response = client.post("/api/display/song-ended")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
         # Endpoint should have called on_song_end on the playback controller
         mock_playback.on_song_end.assert_called_once()
     finally:
-        queue_manager.stop_download_monitor()
+        queue_manager.stop_content_monitor()

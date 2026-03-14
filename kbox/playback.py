@@ -432,7 +432,7 @@ class PlaybackController:
             # Set pitch for this song
             pitch = song.settings.pitch_semitones
             self.logger.debug(
-                "[DEBUG] _play_song: before set_pitch_shift, song=%s pitch=%s", song.id, pitch
+                "_play_song: before set_pitch_shift, song=%s pitch=%s", song.id, pitch
             )
             try:
                 self.streaming_controller.set_pitch_shift(pitch)
@@ -440,7 +440,7 @@ class PlaybackController:
                 self.logger.warning("Could not set pitch shift: %s", e)
 
             # Load file into streaming controller (always start from beginning)
-            self.logger.debug("[DEBUG] _play_song: before load_file")
+            self.logger.debug("_play_song: before load_file")
             try:
                 self.streaming_controller.load_file(content_path)
             except Exception as e:
@@ -574,12 +574,12 @@ class PlaybackController:
 
         # Stop current playback
         self.logger.debug(
-            "[DEBUG] skip: before stop_playback, current=%s next=%s",
+            "skip: before stop_playback, current=%s next=%s",
             self.current_song_id,
             next_song.id,
         )
         self.streaming_controller.stop_playback()
-        self.logger.debug("[DEBUG] skip: after stop_playback")
+        self.logger.debug("skip: after stop_playback")
 
         # Load and play the next song
         return self._play_song(next_song)

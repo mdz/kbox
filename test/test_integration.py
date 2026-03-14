@@ -179,7 +179,7 @@ def full_system(temp_db, temp_storage_dir, fake_source, fake_provider):
     }
 
     # Cleanup
-    queue_manager.stop_download_monitor()
+    queue_manager.stop_content_monitor()
 
 
 def test_add_song_to_queue_and_play(full_system):
@@ -234,7 +234,7 @@ def test_queue_persistence_across_restarts(temp_db, temp_storage_dir):
     id1 = queue1.add_song(alice, "fake:vid1", "Song 1")
     queue1.add_song(bob, "fake:vid2", "Song 2")
     queue1.update_content_status(id1, QueueManager.STATUS_READY, content_path="/path1")
-    queue1.stop_download_monitor()
+    queue1.stop_content_monitor()
 
     # Create second system (simulating restart)
     video_library2 = VideoLibrary(config1)
@@ -249,7 +249,7 @@ def test_queue_persistence_across_restarts(temp_db, temp_storage_dir):
     assert queue[0].video_id == "fake:vid1"
     assert queue[0].content_status == QueueManager.STATUS_READY
     assert queue[1].video_id == "fake:vid2"
-    queue2.stop_download_monitor()
+    queue2.stop_content_monitor()
 
 
 def test_download_and_ready_status(full_system):
