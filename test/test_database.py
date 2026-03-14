@@ -18,6 +18,10 @@ from kbox.database import (
     HistoryRepository,
     QueueRepository,
     UserRepository,
+    _decode_metadata,
+    _decode_settings,
+    _encode_metadata,
+    _encode_settings,
 )
 from kbox.models import SongMetadata, SongSettings, User
 
@@ -456,8 +460,8 @@ class TestConfigRepository:
 # ============================================================================
 
 
-class TestHistoryRepositoryEncodeDecode:
-    """Test JSON encode/decode helpers in isolation."""
+class TestSharedCodecs:
+    """Test the module-level JSON encode/decode helpers."""
 
     def test_metadata_round_trip(self):
         meta = SongMetadata(
@@ -468,8 +472,8 @@ class TestHistoryRepositoryEncodeDecode:
             artist="Queen",
             song_name="Bohemian Rhapsody",
         )
-        encoded = HistoryRepository._encode_metadata(meta)
-        decoded = HistoryRepository._decode_metadata(encoded)
+        encoded = _encode_metadata(meta)
+        decoded = _decode_metadata(encoded)
         assert decoded.title == "Bohemian Rhapsody"
         assert decoded.duration_seconds == 354
         assert decoded.thumbnail_url == "https://img.example.com/thumb.jpg"
@@ -479,46 +483,44 @@ class TestHistoryRepositoryEncodeDecode:
 
     def test_metadata_round_trip_minimal(self):
         meta = SongMetadata(title="Untitled")
-        encoded = HistoryRepository._encode_metadata(meta)
-        decoded = HistoryRepository._decode_metadata(encoded)
+        encoded = _encode_metadata(meta)
+        decoded = _decode_metadata(encoded)
         assert decoded.title == "Untitled"
         assert decoded.duration_seconds is None
         assert decoded.artist is None
 
     def test_decode_metadata_empty_string(self):
-        result = HistoryRepository._decode_metadata("")
-        assert result.title == "Unknown"
+        assert _decode_metadata("").title == "Unknown"
 
     def test_decode_metadata_none(self):
-        result = HistoryRepository._decode_metadata(None)
-        assert result.title == "Unknown"
+        assert _decode_metadata(None).title == "Unknown"
 
     def test_decode_metadata_invalid_json(self):
-        result = HistoryRepository._decode_metadata("{bad json")
-        assert result.title == "Unknown"
+        assert _decode_metadata("{bad json").title == "Unknown"
 
     def test_decode_metadata_missing_fields(self):
-        result = HistoryRepository._decode_metadata('{"channel": "foo"}')
+        result = _decode_metadata('{"channel": "foo"}')
         assert result.title == "Unknown"
         assert result.channel == "foo"
 
     def test_settings_round_trip(self):
         settings = SongSettings(pitch_semitones=-3)
-        encoded = HistoryRepository._encode_settings(settings)
-        decoded = HistoryRepository._decode_settings(encoded)
+        encoded = _encode_settings(settings)
+        decoded = _decode_settings(encoded)
         assert decoded.pitch_semitones == -3
 
     def test_decode_settings_empty(self):
-        result = HistoryRepository._decode_settings("")
-        assert result.pitch_semitones == 0
+        assert _decode_settings("").pitch_semitones == 0
 
     def test_decode_settings_none(self):
-        result = HistoryRepository._decode_settings(None)
-        assert result.pitch_semitones == 0
+        assert _decode_settings(None).pitch_semitones == 0
 
     def test_decode_settings_invalid_json(self):
-        result = HistoryRepository._decode_settings("not json")
-        assert result.pitch_semitones == 0
+        assert _decode_settings("not json").pitch_semitones == 0
+
+
+class TestHistoryRepositoryEncodeDecode:
+    """Test HistoryRepository-specific encode/decode helpers."""
 
     def test_performance_round_trip(self):
         perf = {"duration_played": 180, "completion_pct": 0.85}
@@ -611,29 +613,27 @@ def _make_meta(title="Test Song"):
 
 
 class TestQueueRepositoryEncodeDecode:
-    """Test JSON encode/decode helpers on QueueRepository."""
+    """Test QueueRepository-specific encode/decode helpers."""
 
-    def test_decode_download_info_none(self):
-        assert QueueRepository._decode_download_info(None) == {}
+    def test_decode_content_info_none(self):
+        assert QueueRepository._decode_content_info(None) == {}
 
-    def test_decode_download_info_empty(self):
-        assert QueueRepository._decode_download_info("") == {}
+    def test_decode_content_info_empty(self):
+        assert QueueRepository._decode_content_info("") == {}
 
-    def test_decode_download_info_invalid(self):
-        assert QueueRepository._decode_download_info("bad") == {}
+    def test_decode_content_info_invalid(self):
+        assert QueueRepository._decode_content_info("bad") == {}
 
-    def test_decode_download_info_valid(self):
+    def test_decode_content_info_valid(self):
         data = json.dumps({"download_path": "/tmp/video.mp4"})
-        result = QueueRepository._decode_download_info(data)
+        result = QueueRepository._decode_content_info(data)
         assert result["download_path"] == "/tmp/video.mp4"
 
-    def test_decode_metadata_corrupt_returns_default(self):
-        result = QueueRepository._decode_metadata("{invalid")
-        assert result.title == "Unknown"
-
-    def test_decode_settings_corrupt_returns_default(self):
-        result = QueueRepository._decode_settings("nope")
-        assert result.pitch_semitones == 0
+    def test_encode_content_info_round_trip(self):
+        info = {"download_path": "/tmp/v.mp4", "error_message": "fail"}
+        encoded = QueueRepository._encode_content_info(info)
+        decoded = QueueRepository._decode_content_info(encoded)
+        assert decoded == info
 
 
 class TestQueueRepository:

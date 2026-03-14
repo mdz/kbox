@@ -117,3 +117,103 @@ def test_config_persistence(temp_db):
     cm2 = ConfigManager(temp_db)
     assert cm2.get("operator_pin") == "7777"
     assert cm2.get("test_key") == "test_value"
+
+
+class TestConfigSchema:
+    def test_get_config_schema_returns_all_schema_keys(self, config_manager):
+        schema = config_manager.get_config_schema()
+        assert "operator_pin" in schema
+        assert "llm_model" in schema
+        assert "audio_output_device" in schema
+        assert "video_max_resolution" in schema
+
+    def test_schema_entries_have_required_fields(self, config_manager):
+        schema = config_manager.get_config_schema()
+        for key, entry in schema.items():
+            assert "group" in entry, f"{key} missing 'group'"
+            assert "label" in entry, f"{key} missing 'label'"
+            assert "control" in entry, f"{key} missing 'control'"
+
+    def test_schema_resolves_audio_device_options(self, config_manager):
+        # Simpler: just verify it doesn't crash and returns options list
+        schema = config_manager.get_config_schema()
+        audio_entry = schema["audio_output_device"]
+        assert "options" in audio_entry
+        assert isinstance(audio_entry["options"], list)
+
+    def test_schema_does_not_contain_options_provider(self, config_manager):
+        schema = config_manager.get_config_schema()
+        for key, entry in schema.items():
+            assert "options_provider" not in entry, f"{key} still has options_provider"
+
+
+class TestConfigGroups:
+    def test_get_config_groups_returns_expected_groups(self, config_manager):
+        groups = config_manager.get_config_groups()
+        assert "audio" in groups
+        assert "video" in groups
+        assert "overlays" in groups
+        assert "suggestions" in groups
+        assert "security" in groups
+        assert "api" in groups
+        assert "queue" in groups
+
+    def test_groups_have_label_and_order(self, config_manager):
+        groups = config_manager.get_config_groups()
+        for group_id, group in groups.items():
+            assert "label" in group, f"{group_id} missing 'label'"
+            assert "order" in group, f"{group_id} missing 'order'"
+
+    def test_get_config_groups_returns_copy(self, config_manager):
+        groups1 = config_manager.get_config_groups()
+        groups2 = config_manager.get_config_groups()
+        assert groups1 is not groups2
+
+
+class TestFullConfig:
+    def test_get_full_config_has_required_keys(self, config_manager):
+        full = config_manager.get_full_config()
+        assert "values" in full
+        assert "schema" in full
+        assert "groups" in full
+
+    def test_full_config_values_include_defaults(self, config_manager):
+        full = config_manager.get_full_config()
+        assert "operator_pin" in full["values"]
+        assert full["values"]["operator_pin"] == "1234"
+
+    def test_full_config_schema_matches_get_config_schema(self, config_manager):
+        full = config_manager.get_full_config()
+        schema = config_manager.get_config_schema()
+        assert set(full["schema"].keys()) == set(schema.keys())
+
+
+class TestPlatformDefaults:
+    def test_darwin_defaults(self):
+        from unittest.mock import patch
+
+        with patch("kbox.config_manager.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            defaults = ConfigManager._get_platform_defaults()
+            assert defaults["gstreamer_source"] == "osxaudiosrc"
+            assert defaults["gstreamer_sink"] == "autoaudiosink"
+            assert defaults["audio_output_device"] is None
+
+    def test_linux_defaults(self):
+        from unittest.mock import patch
+
+        with patch("kbox.config_manager.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            defaults = ConfigManager._get_platform_defaults()
+            assert defaults["gstreamer_source"] == "alsasrc"
+            assert defaults["gstreamer_sink"] == "alsasink"
+            assert defaults["audio_output_device"] == "plughw:CARD=CODEC,DEV=0"
+
+    def test_unknown_platform_defaults(self):
+        from unittest.mock import patch
+
+        with patch("kbox.config_manager.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            defaults = ConfigManager._get_platform_defaults()
+            assert defaults["gstreamer_source"] == "autoaudiosrc"
+            assert defaults["gstreamer_sink"] == "autoaudiosink"

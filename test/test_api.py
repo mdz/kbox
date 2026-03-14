@@ -1093,3 +1093,178 @@ class TestSuggestionsEndpoints:
         assert response.status_code == 503
         data = response.json()
         assert "could not find" in data["detail"].lower()
+
+
+class TestDisplayEndpoints:
+    """Tests for display page and display API."""
+
+    def test_display_page_returns_html(self, client):
+        """GET /display - returns the display HTML page."""
+        response = client.get("/display")
+        assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+
+    def test_display_song_ended_endpoint(self, client, app_components):
+        """POST /api/display/song-ended - signals song finished from display."""
+        response = client.post("/api/display/song-ended")
+        assert response.status_code == 200
+        app_components["playback"].on_song_end.assert_called_once()
+
+
+class TestQueueOperatorActions:
+    """Tests for operator queue management actions (play-next, move-to-end, etc.)."""
+
+    def test_play_next_moves_song(self, client, alice, bob, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        r1 = client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song1", "title": "Song 1"},
+        )
+        set_user(client, BOB_ID, "Bob")
+        r2 = client.post(
+            "/api/queue",
+            json={"user_id": BOB_ID, "video_id": "youtube:song2", "title": "Song 2"},
+        )
+        set_user(client, ALICE_ID, "Alice")
+        r3 = client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song3", "title": "Song 3"},
+        )
+        id3 = r3.json()["id"]
+
+        set_operator(client)
+        response = client.post(f"/api/queue/{id3}/play-next")
+        assert response.status_code == 200
+
+        # Verify the mock was called
+        app_components["playback"].move_to_next.assert_called_with(id3)
+
+    def test_move_to_end(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        r1 = client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song1", "title": "Song 1"},
+        )
+        id1 = r1.json()["id"]
+
+        set_operator(client)
+        response = client.post(f"/api/queue/{id1}/move-to-end")
+        assert response.status_code == 200
+        app_components["playback"].move_to_end.assert_called_with(id1)
+
+    def test_move_up(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song1", "title": "Song 1"},
+        )
+        r2 = client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song2", "title": "Song 2"},
+        )
+        id2 = r2.json()["id"]
+
+        # move_up/move_down return dicts with a "status" key
+        app_components["playback"].move_up.return_value = {"status": "moved"}
+        set_operator(client)
+        response = client.post(f"/api/queue/{id2}/move-up")
+        assert response.status_code == 200
+        app_components["playback"].move_up.assert_called_with(id2)
+
+    def test_move_down(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        r1 = client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song1", "title": "Song 1"},
+        )
+        id1 = r1.json()["id"]
+        client.post(
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:song2", "title": "Song 2"},
+        )
+
+        app_components["playback"].move_down.return_value = {"status": "moved"}
+        set_operator(client)
+        response = client.post(f"/api/queue/{id1}/move-down")
+        assert response.status_code == 200
+        app_components["playback"].move_down.assert_called_with(id1)
+
+
+class TestPitchEndpoint:
+    """Tests for the playback pitch endpoint beyond the existing no-song test."""
+
+    def test_pitch_success_own_song(self, client, alice, app_components):
+        """POST /api/playback/pitch - user sets pitch on their own playing song."""
+        set_user(client, ALICE_ID, "Alice")
+        # Mock get_status to return a current_song owned by Alice
+        app_components["playback"].get_status.return_value = {
+            "state": PlaybackState.PLAYING.value,
+            "current_song": {
+                "id": 1,
+                "user_id": ALICE_ID,
+                "title": "Test Song",
+            },
+            "position_seconds": 60,
+            "duration_seconds": 180,
+        }
+        app_components["playback"].set_pitch.return_value = True
+
+        response = client.post(
+            "/api/playback/pitch",
+            json={"semitones": 3, "user_id": ALICE_ID},
+        )
+        assert response.status_code == 200
+        assert response.json()["pitch"] == 3
+
+
+class TestConfigEndpointStructure:
+    """Tests for the config endpoint response structure."""
+
+    def test_get_config_returns_full_structure(self, client, app_components):
+        set_operator(client)
+        response = client.get("/api/config")
+        assert response.status_code == 200
+        data = response.json()
+        assert "values" in data
+        assert "schema" in data
+        assert "groups" in data
+
+    def test_config_schema_has_expected_keys(self, client, app_components):
+        set_operator(client)
+        response = client.get("/api/config")
+        data = response.json()
+        schema = data["schema"]
+        assert "operator_pin" in schema
+        assert "llm_model" in schema
+
+    def test_config_groups_present(self, client, app_components):
+        set_operator(client)
+        response = client.get("/api/config")
+        data = response.json()
+        groups = data["groups"]
+        assert "audio" in groups
+        assert "security" in groups
+
+
+class TestErrorPaths:
+    """Tests for error responses on invalid requests."""
+
+    def test_delete_nonexistent_queue_item(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        set_operator(client)
+        response = client.delete("/api/queue/99999")
+        assert response.status_code == 404
+
+    def test_get_video_info_unknown(self, client, app_components):
+        app_components["video_library"].get_info.return_value = None
+        response = client.get("/api/video/youtube:nonexistent")
+        assert response.status_code == 404
+
+    def test_reorder_nonexistent_item(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        set_operator(client)
+        response = client.patch(
+            "/api/queue/99999/position",
+            json={"new_position": 1},
+        )
+        assert response.status_code == 404

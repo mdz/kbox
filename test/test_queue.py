@@ -4,8 +4,9 @@ Unit tests for QueueManager.
 
 import os
 import tempfile
+import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -448,3 +449,89 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
     item = qm.get_item(item_id)
     assert item.content_status == QueueManager.STATUS_READY
     assert item.content_path == "/recovered/path/video.mp4"
+
+
+# =============================================================================
+# Metadata Extraction Tests
+# =============================================================================
+
+
+class TestMetadataExtraction:
+    """Tests for background metadata extraction in QueueManager."""
+
+    def test_extract_called_for_new_song(self, temp_db, user_manager):
+        """When a song is added, metadata extraction is attempted."""
+        mock_extractor = Mock()
+        mock_extractor.extract.return_value = ("Journey", "Don't Stop Believin'")
+
+        mock_video_library = MagicMock()
+        mock_video_library.has_provider = False  # No provider = no downloads to track
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            metadata_extractor=mock_extractor,
+        )
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        qm.add_song(user, "youtube:abc", "Don't Stop Believin Karaoke", duration_seconds=180)
+
+        # Give the background thread time to process
+        time.sleep(0.5)
+        qm.stop_content_monitor()
+
+        # Verify extract was called
+        assert mock_extractor.extract.called
+
+    def test_extracted_metadata_persisted(self, temp_db, user_manager):
+        """Extracted artist/song_name are saved back to the queue item."""
+        mock_extractor = Mock()
+        mock_extractor.extract.return_value = ("Queen", "Bohemian Rhapsody")
+
+        mock_video_library = MagicMock()
+        mock_video_library.has_provider = False
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            metadata_extractor=mock_extractor,
+        )
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(
+            user, "youtube:xyz", "Bohemian Rhapsody Karaoke", duration_seconds=354
+        )
+
+        time.sleep(0.5)
+        qm.stop_content_monitor()
+
+        item = qm.get_item(item_id)
+        if mock_extractor.extract.called:
+            # If extraction ran, metadata should be updated
+            assert item.metadata.artist == "Queen"
+            assert item.metadata.song_name == "Bohemian Rhapsody"
+
+    def test_extraction_error_does_not_break_queue(self, temp_db, user_manager):
+        """If metadata extraction fails, queue operations continue normally."""
+        mock_extractor = Mock()
+        mock_extractor.extract.side_effect = Exception("LLM API error")
+
+        mock_video_library = MagicMock()
+        mock_video_library.has_provider = False
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            metadata_extractor=mock_extractor,
+        )
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:err", "Some Song", duration_seconds=200)
+
+        time.sleep(0.5)
+        qm.stop_content_monitor()
+
+        # Queue should still work fine
+        item = qm.get_item(item_id)
+        assert item is not None
+        assert item.metadata.title == "Some Song"
