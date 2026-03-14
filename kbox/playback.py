@@ -255,7 +255,7 @@ class PlaybackController:
             next_song = self.queue_manager.get_song_at_offset(cursor, +1)
         else:
             next_song = self.queue_manager.get_song_at_offset(None, 0)
-        if next_song and next_song.download_status == QueueManager.STATUS_READY:
+        if next_song and next_song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
             self.play()
 
@@ -373,7 +373,7 @@ class PlaybackController:
                 if self.current_song_id:
                     # Resume the stopped song
                     song = self.queue_manager.get_item(self.current_song_id)
-                    if song and song.download_status == "ready":
+                    if song and song.content_status == "ready":
                         return self._play_song(song)
                     # Song was deleted or not ready - fall through to load next
                 # No remembered song - fall through to load next
@@ -400,7 +400,7 @@ class PlaybackController:
             self._set_state(PlaybackState.IDLE, "no more songs")
             return False
 
-        if next_song.download_status != QueueManager.STATUS_READY:
+        if next_song.content_status != QueueManager.STATUS_READY:
             self._set_state(PlaybackState.IDLE, "next song not ready yet")
             return False
 
@@ -416,11 +416,10 @@ class PlaybackController:
         Returns:
             True if playback started, False on error
         """
-        # Check if file exists
-        download_path = song.download_path
-        if not download_path:
-            self.logger.warning("No download path for song %s", song.id)
-            self._set_state(PlaybackState.IDLE, "no download path")
+        content_path = song.content_path
+        if not content_path:
+            self.logger.warning("No content path for song %s", song.id)
+            self._set_state(PlaybackState.IDLE, "no content path")
             return False
 
         # Reset notification flags for new song
@@ -443,7 +442,7 @@ class PlaybackController:
             # Load file into streaming controller (always start from beginning)
             self.logger.debug("[DEBUG] _play_song: before load_file")
             try:
-                self.streaming_controller.load_file(download_path)
+                self.streaming_controller.load_file(content_path)
             except Exception as e:
                 self.logger.error("Failed to load file into streaming controller: %s", e)
                 self._set_state(PlaybackState.ERROR, f"load failed: {e}")
@@ -621,9 +620,9 @@ class PlaybackController:
                 return False
 
             # Check if song is ready
-            if song.download_status != QueueManager.STATUS_READY:
+            if song.content_status != QueueManager.STATUS_READY:
                 self.logger.warning(
-                    "Song %s is not ready (status: %s)", item_id, song.download_status
+                    "Song %s is not ready (status: %s)", item_id, song.content_status
                 )
                 return False
 
@@ -962,11 +961,9 @@ class PlaybackController:
             self._show_end_of_queue_screen()
             return
 
-        if next_song.download_status != QueueManager.STATUS_READY:
+        if next_song.content_status != QueueManager.STATUS_READY:
             # Next song exists but isn't ready yet - go idle, auto-start will handle it
-            self._set_state(
-                PlaybackState.IDLE, f"next song not ready ({next_song.download_status})"
-            )
+            self._set_state(PlaybackState.IDLE, f"next song not ready ({next_song.content_status})")
             self._show_end_of_queue_screen()
             return
 

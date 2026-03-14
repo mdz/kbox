@@ -1,7 +1,7 @@
 """
 Queue management for kbox.
 
-Handles song queue operations with persistence and download management.
+Handles song queue operations with persistence and content preparation.
 """
 
 import logging
@@ -18,11 +18,10 @@ if TYPE_CHECKING:
 
 
 class QueueManager:
-    """Manages the song queue with persistence and downloads."""
+    """Manages the song queue with persistence and content preparation."""
 
-    # Download status constants
     STATUS_PENDING = "pending"
-    STATUS_DOWNLOADING = "downloading"
+    STATUS_PREPARING = "preparing"
     STATUS_READY = "ready"
     STATUS_ERROR = "error"
 
@@ -47,21 +46,19 @@ class QueueManager:
         self.metadata_extractor = metadata_extractor
         self.logger = logging.getLogger(__name__)
 
-        # Download monitoring
-        self._download_timeout = timedelta(minutes=10)
-        self._download_monitor_thread = None
+        self._content_timeout = timedelta(minutes=10)
+        self._content_monitor_thread = None
         self._monitoring = False
-        self._stop_event = threading.Event()  # Used to wake monitor thread on stop
+        self._stop_event = threading.Event()
 
-        # Start download monitor
-        self._start_download_monitor()
+        self._start_content_monitor()
 
     # =========================================================================
-    # Download Monitoring
+    # Content Monitoring
     # =========================================================================
 
-    def _start_download_monitor(self):
-        """Start background thread to monitor queue and trigger downloads."""
+    def _start_content_monitor(self):
+        """Start background thread to monitor queue and trigger content preparation."""
         if self._monitoring:
             return
 
@@ -71,100 +68,98 @@ class QueueManager:
         def monitor():
             while self._monitoring:
                 try:
-                    self._process_download_queue()
-                    # Sleep before next check (wakes immediately if stop_event is set)
+                    self._process_pending_content()
                     self._stop_event.wait(2.0)
                 except Exception as e:
-                    self.logger.error("Error in download monitor: %s", e, exc_info=True)
-                    self._stop_event.wait(5.0)  # Wait longer on error
+                    self.logger.error("Error in content monitor: %s", e, exc_info=True)
+                    self._stop_event.wait(5.0)
 
-        self._download_monitor_thread = threading.Thread(
-            target=monitor, daemon=True, name="DownloadMonitor"
+        self._content_monitor_thread = threading.Thread(
+            target=monitor, daemon=True, name="ContentMonitor"
         )
-        self._download_monitor_thread.start()
-        self.logger.info("Download monitor started")
+        self._content_monitor_thread.start()
+        self.logger.info("Content monitor started")
 
-    def _process_download_queue(self):
-        """Process pending and stuck downloads."""
+    def _process_pending_content(self):
+        """Process pending and stuck content preparations."""
+        if not self.video_library.has_provider:
+            return
+
         queue = self.get_queue()
 
         for item in queue:
-            if item.download_status == self.STATUS_PENDING:
-                self._start_download(item)
-            elif item.download_status == self.STATUS_DOWNLOADING:
-                self._check_stuck_download(item)
+            if item.content_status == self.STATUS_PENDING:
+                self._start_content_preparation(item)
+            elif item.content_status == self.STATUS_PREPARING:
+                self._check_stuck_content(item)
 
-    def _start_download(self, item: QueueItem):
-        """Start downloading a queue item."""
-        self.logger.info("Starting download for %s (ID: %s)", item.metadata.title, item.id)
+    def _start_content_preparation(self, item: QueueItem):
+        """Start preparing content for a queue item."""
+        self.logger.info(
+            "Starting content preparation for %s (ID: %s)", item.metadata.title, item.id
+        )
 
         item_id = item.id
 
         def on_status(status: str, path: Optional[str], error: Optional[str]):
-            self._on_download_status(item_id, status, path, error)
+            self._on_content_status(item_id, status, path, error)
 
-        # Use video library to request the video
-        # The callback will handle all status updates (downloading, ready, error)
         cached_path = self.video_library.request(item.video_id, callback=on_status)
 
         if cached_path:
-            # Already cached - callback already marked as ready
             pass
 
-    def _check_stuck_download(self, item: QueueItem):
-        """Check if a download is stuck and recover if possible."""
-        # Check if file exists (download completed but callback failed)
+    def _check_stuck_content(self, item: QueueItem):
+        """Check if content preparation is stuck and recover if possible."""
         cached_path = self.video_library.get_path(item.video_id)
         if cached_path and cached_path.exists():
             self.logger.info(
-                "Found completed download for %s (ID: %s), updating status",
+                "Found completed content for %s (ID: %s), updating status",
                 item.metadata.title,
                 item.id,
             )
-            self.update_download_status(item.id, self.STATUS_READY, download_path=str(cached_path))
+            self.update_content_status(item.id, self.STATUS_READY, content_path=str(cached_path))
             return
 
-        # Check if download has been stuck for too long
         if item.created_at:
-            if datetime.now(item.created_at.tzinfo) - item.created_at > self._download_timeout:
+            if datetime.now(item.created_at.tzinfo) - item.created_at > self._content_timeout:
                 self.logger.warning(
-                    "Download stuck for %s (ID: %s) for more than %s, resetting to pending",
+                    "Content preparation stuck for %s (ID: %s) for more than %s, resetting to pending",
                     item.metadata.title,
                     item.id,
-                    self._download_timeout,
+                    self._content_timeout,
                 )
-                self.update_download_status(item.id, self.STATUS_PENDING)
+                self.update_content_status(item.id, self.STATUS_PENDING)
 
-    def _on_download_status(
+    def _on_content_status(
         self, item_id: int, status: str, path: Optional[str], error: Optional[str]
     ):
-        """Callback for download status updates."""
+        """Callback for content preparation status updates."""
         if status == "downloading":
-            self.update_download_status(item_id, self.STATUS_DOWNLOADING)
+            self.update_content_status(item_id, self.STATUS_PREPARING)
         elif status == "ready" and path:
-            self.update_download_status(item_id, self.STATUS_READY, download_path=path)
-            self.logger.info("Download complete for queue item %s: %s", item_id, path)
-            # Trigger storage cleanup after successful download
+            self.update_content_status(item_id, self.STATUS_READY, content_path=path)
+            self.logger.info("Content ready for queue item %s: %s", item_id, path)
             self._cleanup_storage()
         elif status == "error" and error:
-            self.update_download_status(item_id, self.STATUS_ERROR, error_message=error)
-            self.logger.error("Download failed for queue item %s: %s", item_id, error)
+            self.update_content_status(item_id, self.STATUS_ERROR, error_message=error)
+            self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
 
     def stop_download_monitor(self):
-        """Stop the download monitor thread."""
+        """Stop the content monitor thread."""
         if not self._monitoring:
             return
 
-        self.logger.info("Stopping download monitor...")
+        self.logger.info("Stopping content monitor...")
         self._monitoring = False
-        self._stop_event.set()  # Wake the thread if it's sleeping
+        self._stop_event.set()
 
-        if self._download_monitor_thread and self._download_monitor_thread.is_alive():
-            self._download_monitor_thread.join(timeout=0.5)
-            if self._download_monitor_thread.is_alive():
-                self.logger.warning("Download monitor thread did not stop within timeout")
+        if self._content_monitor_thread and self._content_monitor_thread.is_alive():
+            self._content_monitor_thread.join(timeout=0.5)
+            if self._content_monitor_thread.is_alive():
+                self.logger.warning("Content monitor thread did not stop within timeout")
 
-        self.logger.info("Download monitor stopped")
+        self.logger.info("Content monitor stopped")
 
     def _cleanup_storage(self) -> None:
         """Trigger storage cleanup with all queue items protected from eviction."""
@@ -317,15 +312,15 @@ class QueueManager:
         """Clear all items from the queue."""
         return self.repository.clear()
 
-    def update_download_status(
+    def update_content_status(
         self,
         item_id: int,
         status: str,
-        download_path: Optional[str] = None,
+        content_path: Optional[str] = None,
         error_message: Optional[str] = None,
     ) -> bool:
-        """Update download status for a queue item."""
-        return self.repository.update_status(item_id, status, download_path, error_message)
+        """Update content status for a queue item."""
+        return self.repository.update_status(item_id, status, content_path, error_message)
 
     def get_item(self, item_id: int) -> Optional[QueueItem]:
         """Get a specific queue item by ID."""

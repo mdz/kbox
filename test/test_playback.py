@@ -67,8 +67,8 @@ def create_mock_queue_item(
     thumbnail_url=None,
     channel=None,
     pitch_semitones=0,
-    download_status="ready",
-    download_path="/path/to/video.mp4",
+    content_status="ready",
+    content_path="/path/to/video.mp4",
     error_message=None,
 ):
     """Helper to create a mock QueueItem for testing."""
@@ -84,8 +84,8 @@ def create_mock_queue_item(
         video_id=video_id,
         metadata=metadata,
         settings=settings,
-        download_status=download_status,
-        download_path=download_path,
+        content_status=content_status,
+        content_path=content_path,
         error_message=error_message,
     )
 
@@ -126,9 +126,9 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager, mock_stre
         id=1,
         title="Test Song",
         user_name="Alice",
-        download_path="/path/to/video.mp4",
+        content_path="/path/to/video.mp4",
         pitch_semitones=2,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
     # Mock get_song_at_offset to return the song (used by _load_and_play_next)
     mock_queue_manager.get_song_at_offset.return_value = mock_song
@@ -144,10 +144,10 @@ def test_play_with_ready_song(playback_controller, mock_queue_manager, mock_stre
     assert playback_controller.get_cursor() == 1
 
 
-def test_play_no_download_path(playback_controller, mock_queue_manager):
+def test_play_no_content_path(playback_controller, mock_queue_manager):
     """Test play when song has no download path."""
     mock_song = create_mock_queue_item(
-        id=1, title="Test Song", user_name="Alice", download_path=None
+        id=1, title="Test Song", user_name="Alice", content_path=None
     )
     mock_queue_manager.get_song_at_offset.return_value = mock_song
 
@@ -208,9 +208,9 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
         id=2,
         title="Next Song",
         user_name="Bob",
-        download_path="/path/to/next.mp4",
+        content_path="/path/to/next.mp4",
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
     # Mock get_song_at_offset to return the next song
     mock_queue_manager.get_song_at_offset.return_value = mock_next_song
@@ -237,7 +237,7 @@ def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streami
         video_id="youtube:abc123",
         duration_seconds=180,
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
     playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
@@ -297,9 +297,9 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
         id=2,
         title="Song 2",
         user_name="Bob",
-        download_path="/path/to/next.mp4",
+        content_path="/path/to/next.mp4",
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
     # Mock get_song_at_offset to return the next song (respects queue order)
     mock_queue_manager.get_song_at_offset.return_value = mock_next_song
@@ -381,9 +381,9 @@ def test_jump_to_song_while_playing(
         id=2,
         title="New Song",
         user_name="Bob",
-        download_path="/path/to/new.mp4",
+        content_path="/path/to/new.mp4",
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
     mock_queue_manager.get_item.return_value = mock_song
 
@@ -408,9 +408,9 @@ def test_jump_to_song_when_idle(playback_controller, mock_queue_manager, mock_st
         position=10,
         title="Jump To Song",
         user_name="Bob",
-        download_path="/path/to/jumpto.mp4",
+        content_path="/path/to/jumpto.mp4",
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
 
     # Mock get_item to return the song
@@ -442,9 +442,9 @@ def test_jump_to_song_does_not_reorder(
         position=10,
         title="Jump To Song",
         user_name="Bob",
-        download_path="/path/to/jumpto.mp4",
+        content_path="/path/to/jumpto.mp4",
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
 
     mock_queue_manager.get_item.return_value = target_song
@@ -464,7 +464,7 @@ def test_jump_to_song_does_not_reorder(
 def test_jump_to_song_not_ready(playback_controller, mock_queue_manager):
     """Test jump_to_song fails when song is not ready."""
     target_song = create_mock_queue_item(
-        id=3, position=10, title="Not Ready Song", download_status=QueueManager.STATUS_PENDING
+        id=3, position=10, title="Not Ready Song", content_status=QueueManager.STATUS_PENDING
     )
     mock_queue_manager.get_item.return_value = target_song
 
@@ -487,8 +487,8 @@ def test_jump_to_song_logs_position(
         id=5,
         position=7,
         title="Test Song",
-        download_path="/path/to/song.mp4",
-        download_status=QueueManager.STATUS_READY,
+        content_path="/path/to/song.mp4",
+        content_status=QueueManager.STATUS_READY,
     )
     mock_queue_manager.get_item.return_value = target_song
 
@@ -519,14 +519,14 @@ def test_move_to_next_with_stale_position_cache(
         position=5,
         title="Currently Playing",
         user_name="Alice",
-        download_path="/path/to/current.mp4",
-        download_status=QueueManager.STATUS_READY,
+        content_path="/path/to/current.mp4",
+        content_status=QueueManager.STATUS_READY,
         pitch_semitones=0,
     )
 
     # Song to move to "play next"
     song_to_move = create_mock_queue_item(
-        id=20, position=8, title="Move This Next", download_status=QueueManager.STATUS_READY
+        id=20, position=8, title="Move This Next", content_status=QueueManager.STATUS_READY
     )
 
     # Mock: get_item returns fresh data with correct position
@@ -570,8 +570,8 @@ def test_on_song_end_plays_next_in_queue_order(
         video_id="youtube:vid10",
         duration_seconds=180,
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
-        download_path="/path/to/song10.mp4",
+        content_status=QueueManager.STATUS_READY,
+        content_path="/path/to/song10.mp4",
     )
     playback_controller.current_song_id = 10
     playback_controller.state = PlaybackState.PLAYING
@@ -592,17 +592,17 @@ def test_on_song_end_plays_next_in_queue_order(
         title="Song at Position 3",
         user_name="TestUser",
         video_id="youtube:vid15",
-        download_path="/path/to/song15.mp4",
+        content_path="/path/to/song15.mp4",
         pitch_semitones=0,
-        download_status=QueueManager.STATUS_READY,
+        content_status=QueueManager.STATUS_READY,
     )
 
     song_at_position_4 = create_mock_queue_item(
-        id=20, position=4, title="Song at Position 4", download_status=QueueManager.STATUS_READY
+        id=20, position=4, title="Song at Position 4", content_status=QueueManager.STATUS_READY
     )
 
     song_at_position_5 = create_mock_queue_item(
-        id=25, position=5, title="Song at Position 5", download_status=QueueManager.STATUS_READY
+        id=25, position=5, title="Song at Position 5", content_status=QueueManager.STATUS_READY
     )
 
     # Mock get_queue to return unplayed songs (excludes the one that just finished)
@@ -649,8 +649,8 @@ def test_auto_start_when_idle_with_ready_songs(
         position=2,
         title="Auto-play Song",
         user_name="TestUser",
-        download_status=QueueManager.STATUS_READY,
-        download_path="/path/to/song.mp4",
+        content_status=QueueManager.STATUS_READY,
+        content_path="/path/to/song.mp4",
     )
 
     # Cursor is on song 1 (already played); song 42 at position 2 is next
@@ -682,8 +682,8 @@ def test_auto_start_when_idle_no_ready_songs(
         id=42,
         position=1,
         title="Pending Song",
-        download_status=QueueManager.STATUS_PENDING,
-        download_path=None,
+        content_status=QueueManager.STATUS_PENDING,
+        content_path=None,
     )
     mock_queue_manager.get_queue.return_value = [pending_song]
 
@@ -713,8 +713,8 @@ def test_auto_start_waits_for_not_ready_song(
         id=2,
         position=2,
         title="Still Downloading",
-        download_status=QueueManager.STATUS_DOWNLOADING,
-        download_path=None,
+        content_status=QueueManager.STATUS_PREPARING,
+        content_path=None,
     )
     mock_queue_manager.get_song_at_offset.return_value = downloading_song
 
@@ -735,8 +735,8 @@ def test_load_and_play_next_waits_for_not_ready_song(
         id=2,
         position=2,
         title="Pending Song",
-        download_status=QueueManager.STATUS_PENDING,
-        download_path=None,
+        content_status=QueueManager.STATUS_PENDING,
+        content_path=None,
     )
     mock_queue_manager.get_song_at_offset.return_value = pending_song
 
@@ -760,8 +760,8 @@ def test_transition_waits_for_not_ready_next_song(
         id=2,
         position=2,
         title="Still Downloading",
-        download_status=QueueManager.STATUS_DOWNLOADING,
-        download_path=None,
+        content_status=QueueManager.STATUS_PREPARING,
+        content_path=None,
     )
     mock_queue_manager.get_song_at_offset.return_value = downloading_song
 
@@ -825,8 +825,8 @@ def test_single_song_does_not_loop_after_playing(
         user_name="Alice",
         video_id="youtube:only_song",
         duration_seconds=180,
-        download_path="/path/to/song.mp4",
-        download_status=QueueManager.STATUS_READY,
+        content_path="/path/to/song.mp4",
+        content_status=QueueManager.STATUS_READY,
     )
 
     # Initially, the song is in the queue and ready
@@ -915,7 +915,7 @@ def test_play_after_stop_resumes_same_song(
     """Test that play() after stop_playback() resumes the same song."""
     # Set up: song is stopped (simulating after stop_playback)
     stopped_song = create_mock_queue_item(
-        id=5, title="Stopped Song", download_path="/path/to/stopped.mp4"
+        id=5, title="Stopped Song", content_path="/path/to/stopped.mp4"
     )
     playback_controller.current_song_id = 5
     playback_controller.state = PlaybackState.STOPPED
@@ -943,7 +943,7 @@ def test_play_after_stop_song_deleted_falls_back(
 
     # First song in queue (ready)
     fallback_song = create_mock_queue_item(
-        id=10, title="Fallback Song", download_path="/path/to/fallback.mp4"
+        id=10, title="Fallback Song", content_path="/path/to/fallback.mp4"
     )
     mock_queue_manager.get_song_at_offset.return_value = fallback_song
 

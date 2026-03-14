@@ -626,9 +626,8 @@ class HistoryRepository:
 class QueueRepository:
     """Repository for queue operations."""
 
-    # Download status constants
     STATUS_PENDING = "pending"
-    STATUS_DOWNLOADING = "downloading"
+    STATUS_PREPARING = "preparing"
     STATUS_READY = "ready"
     STATUS_ERROR = "error"
 
@@ -721,8 +720,8 @@ class QueueRepository:
             video_id=row["video_id"],
             metadata=self._decode_metadata(row["song_metadata_json"]),
             settings=self._decode_settings(row["settings_json"]),
-            download_status=row["download_status"],
-            download_path=download_info.get("download_path"),
+            content_status=row["download_status"],
+            content_path=download_info.get("download_path"),
             error_message=download_info.get("error_message"),
             created_at=datetime.fromisoformat(created_at) if created_at else None,
         )
@@ -836,15 +835,14 @@ class QueueRepository:
         self,
         item_id: int,
         status: str,
-        download_path: Optional[str] = None,
+        content_path: Optional[str] = None,
         error_message: Optional[str] = None,
     ) -> bool:
-        """Update download status for a queue item."""
+        """Update content status for a queue item."""
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
 
-            # Get current download_json to merge updates
             cursor.execute("SELECT download_json FROM queue_items WHERE id = ?", (item_id,))
             result = cursor.fetchone()
             if not result:
@@ -853,16 +851,13 @@ class QueueRepository:
 
             download_info = self._decode_download_info(result["download_json"])
 
-            # Update download info
-            if download_path is not None:
-                download_info["download_path"] = download_path
+            if content_path is not None:
+                download_info["download_path"] = content_path
             if error_message is not None:
                 download_info["error_message"] = error_message
             elif status != self.STATUS_ERROR:
-                # Clear error message if status is not error
                 download_info.pop("error_message", None)
 
-            # Update database
             cursor.execute(
                 """
                 UPDATE queue_items
@@ -876,7 +871,7 @@ class QueueRepository:
             conn.commit()
 
             if updated:
-                self.logger.debug("Updated download status for item %s: %s", item_id, status)
+                self.logger.debug("Updated content status for item %s: %s", item_id, status)
             else:
                 self.logger.warning("Queue item %s not found for status update", item_id)
 

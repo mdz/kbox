@@ -86,7 +86,7 @@ def test_add_song(queue_manager, test_users):
     assert queue[0].metadata.title == "Test Song"
     assert queue[0].metadata.duration_seconds == 180
     assert queue[0].settings.pitch_semitones == 2
-    assert queue[0].download_status == QueueManager.STATUS_PENDING
+    assert queue[0].content_status == QueueManager.STATUS_PENDING
     assert queue[0].position == 1
 
 
@@ -177,7 +177,7 @@ def test_get_song_at_offset(queue_manager, test_users):
     second = queue_manager.get_song_at_offset(id1, +1)
     assert second is not None
     assert second.id == id2
-    assert second.download_status == QueueManager.STATUS_PENDING  # Not ready!
+    assert second.content_status == QueueManager.STATUS_PENDING  # Not ready!
 
     # Get previous song before second
     prev = queue_manager.get_song_at_offset(id2, -1)
@@ -202,39 +202,39 @@ def test_get_song_at_offset(queue_manager, test_users):
     assert queue_manager.get_song_at_offset(None, 0) is None
 
 
-def test_update_download_status(queue_manager, test_users):
+def test_update_content_status(queue_manager, test_users):
     """Test updating download status."""
     item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
     # Update to downloading
-    result = queue_manager.update_download_status(item_id, QueueManager.STATUS_DOWNLOADING)
+    result = queue_manager.update_content_status(item_id, QueueManager.STATUS_PREPARING)
     assert result is True
 
     item = queue_manager.get_item(item_id)
-    assert item.download_status == QueueManager.STATUS_DOWNLOADING
+    assert item.content_status == QueueManager.STATUS_PREPARING
 
     # Update to ready with path
-    result = queue_manager.update_download_status(
-        item_id, QueueManager.STATUS_READY, download_path="/path/to/video.mp4"
+    result = queue_manager.update_content_status(
+        item_id, QueueManager.STATUS_READY, content_path="/path/to/video.mp4"
     )
     assert result is True
 
     item = queue_manager.get_item(item_id)
-    assert item.download_status == QueueManager.STATUS_READY
-    assert item.download_path == "/path/to/video.mp4"
+    assert item.content_status == QueueManager.STATUS_READY
+    assert item.content_path == "/path/to/video.mp4"
 
 
-def test_update_download_status_error(queue_manager, test_users):
+def test_update_content_status_error(queue_manager, test_users):
     """Test updating download status with error."""
     item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
 
-    result = queue_manager.update_download_status(
+    result = queue_manager.update_content_status(
         item_id, QueueManager.STATUS_ERROR, error_message="Download failed"
     )
     assert result is True
 
     item = queue_manager.get_item(item_id)
-    assert item.download_status == QueueManager.STATUS_ERROR
+    assert item.content_status == QueueManager.STATUS_ERROR
     assert item.error_message == "Download failed"
 
 
@@ -270,9 +270,7 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
 
     qm1 = QueueManager(temp_db, video_library=mock_video_library)
     item_id = qm1.add_song(alice, "youtube:vid1", "Song 1")
-    qm1.update_download_status(
-        item_id, QueueManager.STATUS_READY, download_path="/path/to/video.mp4"
-    )
+    qm1.update_content_status(item_id, QueueManager.STATUS_READY, content_path="/path/to/video.mp4")
     qm1.stop_download_monitor()
 
     # Create new QueueManager with same database
@@ -282,7 +280,7 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
     assert len(queue) == 1
     assert queue[0].user_id == ALICE_ID
     assert queue[0].user_name == "Alice"
-    assert queue[0].download_status == QueueManager.STATUS_READY
+    assert queue[0].content_status == QueueManager.STATUS_READY
     qm2.stop_download_monitor()
 
 
@@ -306,7 +304,7 @@ def test_download_monitor_calls_video_library(temp_db, user_manager):
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Directly trigger download processing (what the monitor does)
-    qm._process_download_queue()
+    qm._process_pending_content()
 
     # Verify video_library.request was called with correct args
     mock_video_library.request.assert_called()
@@ -336,7 +334,7 @@ def test_download_callback_updates_status_ready(temp_db, user_manager):
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Directly trigger download processing
-    qm._process_download_queue()
+    qm._process_pending_content()
 
     assert captured_callback is not None
 
@@ -345,8 +343,8 @@ def test_download_callback_updates_status_ready(temp_db, user_manager):
 
     # Verify status was updated
     item = qm.get_item(item_id)
-    assert item.download_status == QueueManager.STATUS_READY
-    assert item.download_path == "/path/to/video.mp4"
+    assert item.content_status == QueueManager.STATUS_READY
+    assert item.content_path == "/path/to/video.mp4"
 
 
 def test_download_callback_updates_status_error(temp_db, user_manager):
@@ -370,7 +368,7 @@ def test_download_callback_updates_status_error(temp_db, user_manager):
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Directly trigger download processing
-    qm._process_download_queue()
+    qm._process_pending_content()
 
     assert captured_callback is not None
 
@@ -379,7 +377,7 @@ def test_download_callback_updates_status_error(temp_db, user_manager):
 
     # Verify status was updated
     item = qm.get_item(item_id)
-    assert item.download_status == QueueManager.STATUS_ERROR
+    assert item.content_status == QueueManager.STATUS_ERROR
     assert item.error_message == "Download failed: network error"
 
 
@@ -406,7 +404,7 @@ def test_cleanup_storage_calls_video_library(temp_db, user_manager):
     qm.add_song(alice, "youtube:vid2", "Song 2")
 
     # Trigger download processing
-    qm._process_download_queue()
+    qm._process_pending_content()
 
     # Simulate successful download (triggers storage cleanup)
     assert captured_callback is not None
@@ -438,15 +436,15 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
     item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
 
     # Manually set to downloading (simulating a stuck download)
-    qm.update_download_status(item_id, QueueManager.STATUS_DOWNLOADING)
+    qm.update_content_status(item_id, QueueManager.STATUS_PREPARING)
 
     # Trigger the stuck download check
-    qm._process_download_queue()
+    qm._process_pending_content()
 
     # Verify get_path was called
     mock_video_library.get_path.assert_called_with("youtube:test_vid")
 
     # Verify item was recovered to ready status
     item = qm.get_item(item_id)
-    assert item.download_status == QueueManager.STATUS_READY
-    assert item.download_path == "/recovered/path/video.mp4"
+    assert item.content_status == QueueManager.STATUS_READY
+    assert item.content_path == "/recovered/path/video.mp4"
