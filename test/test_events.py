@@ -130,14 +130,3 @@ def test_events_isolated_by_user(event_repo, database):
         assert cursor.fetchone()["query"] == "beyonce"
     finally:
         conn.close()
-
-
-def test_schema_version_is_4(database):
-    """Database schema version is 4 after migration."""
-    conn = database.get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT version FROM schema_version LIMIT 1")
-        assert cursor.fetchone()["version"] == 4
-    finally:
-        conn.close()

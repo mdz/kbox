@@ -63,13 +63,13 @@ def queue_repo(temp_db):
 
 
 class TestSchemaCreation:
-    def test_fresh_db_has_version_3(self, temp_db):
+    def test_fresh_db_has_current_version(self, temp_db):
         conn = temp_db.get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT version FROM schema_version LIMIT 1")
             row = cursor.fetchone()
-            assert row["version"] == 3
+            assert row["version"] == Database.SCHEMA_VERSION
         finally:
             conn.close()
 
@@ -84,6 +84,7 @@ class TestSchemaCreation:
             assert "queue_items" in tables
             assert "playback_history" in tables
             assert "song_metadata_cache" in tables
+            assert "user_events" in tables
             assert "schema_version" in tables
         finally:
             conn.close()
@@ -250,7 +251,7 @@ class TestSchemaMigrationV1ToV2:
         finally:
             os.unlink(path)
 
-    def test_migration_updates_version_to_3(self):
+    def test_migration_updates_version_to_current(self):
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         os.unlink(path)
@@ -262,7 +263,7 @@ class TestSchemaMigrationV1ToV2:
             try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT version FROM schema_version")
-                assert cursor.fetchone()["version"] == 3
+                assert cursor.fetchone()["version"] == Database.SCHEMA_VERSION
             finally:
                 conn.close()
             db.close()
