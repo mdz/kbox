@@ -41,6 +41,7 @@ class HistoryManager:
         played_duration_seconds: int,
         playback_end_position_seconds: int,
         completion_percentage: float,
+        theme: Optional[str] = None,
     ) -> int:
         """
         Record a performance in history.
@@ -54,6 +55,7 @@ class HistoryManager:
             played_duration_seconds: How long the song played
             playback_end_position_seconds: Position where playback ended
             completion_percentage: Percentage of song completed
+            theme: Active party theme at time of performance
 
         Returns:
             ID of the created history record
@@ -72,6 +74,7 @@ class HistoryManager:
             metadata=metadata,
             settings=settings,
             performance=performance,
+            theme=theme,
         )
 
         self.logger.info(

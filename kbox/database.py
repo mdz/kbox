@@ -19,7 +19,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 3  # Incremented for song_metadata_cache table
+    SCHEMA_VERSION = 4  # Incremented for user_events table
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -82,6 +82,12 @@ class Database:
         if current_version < 3:
             # Version 3: Add song_metadata_cache table
             self._create_song_metadata_cache(cursor)
+
+        if current_version < 4:
+            # Version 4: Add user_events table for interaction logging,
+            # and theme column to playback_history
+            self._create_user_events_table(cursor)
+            self._add_history_theme_column(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -216,7 +222,8 @@ class Database:
                     performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     song_metadata_json TEXT NOT NULL,
                     settings_json TEXT NOT NULL DEFAULT '{}',
-                    performance_json TEXT NOT NULL
+                    performance_json TEXT NOT NULL,
+                    theme TEXT
                 )
             """)
 
@@ -257,6 +264,40 @@ class Database:
         """)
 
         self.logger.info("song_metadata_cache table created")
+
+    def _create_user_events_table(self, cursor):
+        """Create user_events table for interaction logging (search queries, etc.)."""
+        self.logger.info("Creating user_events table...")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                data_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_events_user
+            ON user_events (user_id, created_at DESC)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_events_type
+            ON user_events (event_type, created_at DESC)
+        """)
+
+        self.logger.info("user_events table created")
+
+    def _add_history_theme_column(self, cursor):
+        """Add theme column to playback_history for existing databases."""
+        cursor.execute("PRAGMA table_info(playback_history)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "theme" not in columns:
+            self.logger.info("Adding theme column to playback_history...")
+            cursor.execute("ALTER TABLE playback_history ADD COLUMN theme TEXT")
 
     def get_connection(self):
         """
@@ -524,6 +565,7 @@ class HistoryRepository:
         metadata: SongMetadata,
         settings: SongSettings,
         performance: Dict[str, Any],
+        theme: Optional[str] = None,
     ) -> int:
         """Record a performance in history."""
         conn = self.database.get_connection()
@@ -537,8 +579,9 @@ class HistoryRepository:
                     video_id,
                     song_metadata_json,
                     settings_json,
-                    performance_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    performance_json,
+                    theme
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     user_id,
@@ -547,6 +590,7 @@ class HistoryRepository:
                     _encode_metadata(metadata),
                     _encode_settings(settings),
                     self._encode_performance(performance),
+                    theme or None,
                 ),
             )
             conn.commit()
@@ -598,7 +642,8 @@ class HistoryRepository:
                     performed_at,
                     song_metadata_json,
                     settings_json,
-                    performance_json
+                    performance_json,
+                    theme
                 FROM playback_history
                 WHERE user_id = ?
                 ORDER BY performed_at DESC, id DESC
@@ -621,6 +666,7 @@ class HistoryRepository:
                         performed_at=datetime.fromisoformat(row["performed_at"])
                         if row["performed_at"]
                         else None,
+                        theme=row["theme"],
                     )
                 )
             return records
@@ -1015,5 +1061,30 @@ class QueueRepository:
                 return None
 
             return self._row_to_queue_item(result)
+        finally:
+            conn.close()
+
+
+class EventRepository:
+    """Repository for user interaction events (search queries, etc.)."""
+
+    def __init__(self, database: Database):
+        self.database = database
+        self.logger = logging.getLogger(__name__)
+
+    def record(self, user_id: str, event_type: str, data: Optional[Dict[str, Any]] = None) -> int:
+        """Record a user interaction event."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_events (user_id, event_type, data_json)
+                VALUES (?, ?, ?)
+            """,
+                (user_id, event_type, json.dumps(data) if data else None),
+            )
+            conn.commit()
+            return cursor.lastrowid
         finally:
             conn.close()

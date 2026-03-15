@@ -766,6 +766,41 @@ class TestVideoSearchEndpoints:
         assert response.status_code == 200
         assert "results" in response.json()
 
+    def test_search_logs_event_for_authenticated_user(self, client, app_components, alice):
+        """Search queries are logged to user_events when user is authenticated."""
+        set_user(client, ALICE_ID, "Alice")
+        client.get("/api/search?q=bohemian+rhapsody")
+
+        conn = app_components["history"].database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT data_json FROM user_events WHERE user_id = ? AND event_type = 'search'",
+                (ALICE_ID,),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            import json
+
+            data = json.loads(row["data_json"])
+            assert data["query"] == "bohemian rhapsody"
+            assert "result_count" in data
+        finally:
+            conn.close()
+
+    def test_search_no_event_for_anonymous_user(self, client, app_components):
+        """Search works without logging when user is not authenticated."""
+        response = client.get("/api/search?q=test")
+        assert response.status_code == 200
+
+        conn = app_components["history"].database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM user_events")
+            assert cursor.fetchone()["count"] == 0
+        finally:
+            conn.close()
+
     def test_get_video_info(self, client):
         """GET /api/video/{source}/{id} - get video info."""
         response = client.get("/api/video/youtube/test123")

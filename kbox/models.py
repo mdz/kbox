@@ -68,6 +68,7 @@ class HistoryRecord:
     settings: SongSettings
     performance: Dict[str, Any]  # Performance metrics
     performed_at: Optional[datetime] = None
+    theme: Optional[str] = None
 
 
 @dataclass

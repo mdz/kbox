@@ -258,3 +258,42 @@ def test_get_user_history_empty(history_manager):
     """Test getting history for user with no history."""
     history = history_manager.get_user_history("nonexistent-user-id", limit=50)
     assert history == []
+
+
+def test_record_performance_with_theme(history_manager, test_users):
+    """Theme is stored on the history record and returned in queries."""
+    user = test_users["alice"]
+    history_manager.record_performance(
+        user_id=user["id"],
+        user_name=user["name"],
+        video_id="youtube:vid1",
+        metadata=SongMetadata(title="Ring of Fire", duration_seconds=160),
+        settings=SongSettings(pitch_semitones=0),
+        played_duration_seconds=150,
+        playback_end_position_seconds=150,
+        completion_percentage=93.8,
+        theme="Elements: Fire",
+    )
+
+    history = history_manager.get_user_history(user["id"])
+    assert len(history) == 1
+    assert history[0].theme == "Elements: Fire"
+
+
+def test_record_performance_without_theme(history_manager, test_users):
+    """Theme defaults to None when not provided."""
+    user = test_users["alice"]
+    history_manager.record_performance(
+        user_id=user["id"],
+        user_name=user["name"],
+        video_id="youtube:vid1",
+        metadata=SongMetadata(title="Bohemian Rhapsody", duration_seconds=355),
+        settings=SongSettings(pitch_semitones=0),
+        played_duration_seconds=340,
+        playback_end_position_seconds=340,
+        completion_percentage=95.8,
+    )
+
+    history = history_manager.get_user_history(user["id"])
+    assert len(history) == 1
+    assert history[0].theme is None
