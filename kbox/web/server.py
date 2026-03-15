@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
+from ..database import EventRepository
 from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..streaming import StreamingController
@@ -111,6 +112,14 @@ def get_history_manager(request: Request):
 def get_suggestion_engine(request: Request) -> SuggestionEngine:
     """Get SuggestionEngine from app state."""
     return request.app.state.suggestion_engine
+
+
+def get_event_repo(request: Request) -> EventRepository:
+    """Get EventRepository, lazily created from the database."""
+    if not hasattr(request.app.state, "_event_repo"):
+        db = request.app.state.history_manager.database
+        request.app.state._event_repo = EventRepository(db)
+    return request.app.state._event_repo
 
 
 def check_operator(request: Request) -> bool:
@@ -577,9 +586,22 @@ def create_app(
         q: str,
         max_results: int = 10,
         video_lib: VideoLibrary = Depends(get_video_library),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
+        event_repo: EventRepository = Depends(get_event_repo),
     ):
         """Search for videos across all configured sources."""
         results = video_lib.search(q, max_results)
+
+        if current_user_id:
+            try:
+                event_repo.record(
+                    current_user_id,
+                    "search",
+                    {"query": q, "result_count": len(results)},
+                )
+            except Exception:
+                logger.debug("Failed to log search event", exc_info=True)
+
         return {"results": results}
 
     @app.get("/api/suggestions")

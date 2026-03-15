@@ -19,7 +19,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 3  # Incremented for song_metadata_cache table
+    SCHEMA_VERSION = 4  # Incremented for user_events table
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -82,6 +82,10 @@ class Database:
         if current_version < 3:
             # Version 3: Add song_metadata_cache table
             self._create_song_metadata_cache(cursor)
+
+        if current_version < 4:
+            # Version 4: Add user_events table for interaction logging
+            self._create_user_events_table(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -257,6 +261,32 @@ class Database:
         """)
 
         self.logger.info("song_metadata_cache table created")
+
+    def _create_user_events_table(self, cursor):
+        """Create user_events table for interaction logging (search queries, etc.)."""
+        self.logger.info("Creating user_events table...")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                data_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_events_user
+            ON user_events (user_id, created_at DESC)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_events_type
+            ON user_events (event_type, created_at DESC)
+        """)
+
+        self.logger.info("user_events table created")
 
     def get_connection(self):
         """
@@ -1015,5 +1045,30 @@ class QueueRepository:
                 return None
 
             return self._row_to_queue_item(result)
+        finally:
+            conn.close()
+
+
+class EventRepository:
+    """Repository for user interaction events (search queries, etc.)."""
+
+    def __init__(self, database: Database):
+        self.database = database
+        self.logger = logging.getLogger(__name__)
+
+    def record(self, user_id: str, event_type: str, data: Optional[Dict[str, Any]] = None) -> int:
+        """Record a user interaction event."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO user_events (user_id, event_type, data_json)
+                VALUES (?, ?, ?)
+            """,
+                (user_id, event_type, json.dumps(data) if data else None),
+            )
+            conn.commit()
+            return cursor.lastrowid
         finally:
             conn.close()
