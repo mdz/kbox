@@ -1317,6 +1317,7 @@ class PlaybackController:
             playback_end_position_seconds: Where playback ended
             completion_percentage: Percentage of song completed
         """
+        theme = self.config_manager.get("suggestion_theme") or None
         self.history_manager.record_performance(
             user_id=queue_item.user_id,
             user_name=queue_item.user_name,
@@ -1326,6 +1327,7 @@ class PlaybackController:
             played_duration_seconds=played_duration_seconds,
             playback_end_position_seconds=playback_end_position_seconds,
             completion_percentage=completion_percentage,
+            theme=theme,
         )
 
     def shutdown(self):

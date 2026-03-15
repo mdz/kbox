@@ -368,6 +368,130 @@ class TestSchemaMigrationV2ToV3:
             os.unlink(path)
 
 
+class TestSchemaMigrationV3ToV4:
+    """Test migration from v3 (no user_events, no theme column) to v4."""
+
+    def _create_v3_db(self, path):
+        """Create a database with the v3 schema."""
+        conn = sqlite3.connect(path)
+        cursor = conn.cursor()
+
+        cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        cursor.execute("INSERT INTO schema_version (version) VALUES (3)")
+        cursor.execute("""
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE config (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE queue_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                position INTEGER NOT NULL,
+                content_status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id TEXT NOT NULL, user_name TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                song_metadata_json TEXT NOT NULL,
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                content_json TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE playback_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT NOT NULL,
+                user_id TEXT NOT NULL, user_name TEXT NOT NULL,
+                performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                song_metadata_json TEXT NOT NULL,
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                performance_json TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE song_metadata_cache (
+                video_id TEXT PRIMARY KEY,
+                artist TEXT, song_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def test_adds_user_events_table(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v3_db(path)
+
+        try:
+            db = Database(db_path=path)
+            conn = db.get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='user_events'"
+                )
+                assert cursor.fetchone() is not None
+            finally:
+                conn.close()
+            db.close()
+        finally:
+            os.unlink(path)
+
+    def test_adds_theme_column_to_playback_history(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v3_db(path)
+
+        try:
+            db = Database(db_path=path)
+            conn = db.get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(playback_history)")
+                columns = {row[1] for row in cursor.fetchall()}
+                assert "theme" in columns
+            finally:
+                conn.close()
+            db.close()
+        finally:
+            os.unlink(path)
+
+    def test_preserves_existing_history(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v3_db(path)
+
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "INSERT INTO playback_history (video_id, user_id, user_name, "
+            "song_metadata_json, performance_json) "
+            "VALUES ('youtube:abc', 'u1', 'Alice', '{\"title\":\"Old Song\"}', '{}')"
+        )
+        conn.commit()
+        conn.close()
+
+        try:
+            db = Database(db_path=path)
+            repo = HistoryRepository(db)
+            history = repo.get_user_history("u1")
+            assert len(history) == 1
+            assert history[0].video_id == "youtube:abc"
+            assert history[0].theme is None
+            db.close()
+        finally:
+            os.unlink(path)
+
+
 # ============================================================================
 # UserRepository Tests
 # ============================================================================
@@ -598,6 +722,22 @@ class TestHistoryRepository:
 
     def test_user_history_empty(self, history_repo):
         assert history_repo.get_user_history("nobody") == []
+
+    def test_record_with_theme(self, history_repo):
+        meta = SongMetadata(title="Ring of Fire")
+        history_repo.record(
+            "u1", "Alice", "vid:1", meta, SongSettings(), {}, theme="Elements: Fire"
+        )
+
+        history = history_repo.get_user_history("u1")
+        assert history[0].theme == "Elements: Fire"
+
+    def test_record_without_theme_is_none(self, history_repo):
+        meta = SongMetadata(title="Song")
+        history_repo.record("u1", "Alice", "vid:1", meta, SongSettings(), {})
+
+        history = history_repo.get_user_history("u1")
+        assert history[0].theme is None
 
 
 # ============================================================================

@@ -84,8 +84,10 @@ class Database:
             self._create_song_metadata_cache(cursor)
 
         if current_version < 4:
-            # Version 4: Add user_events table for interaction logging
+            # Version 4: Add user_events table for interaction logging,
+            # and theme column to playback_history
             self._create_user_events_table(cursor)
+            self._add_history_theme_column(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -220,7 +222,8 @@ class Database:
                     performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     song_metadata_json TEXT NOT NULL,
                     settings_json TEXT NOT NULL DEFAULT '{}',
-                    performance_json TEXT NOT NULL
+                    performance_json TEXT NOT NULL,
+                    theme TEXT
                 )
             """)
 
@@ -287,6 +290,14 @@ class Database:
         """)
 
         self.logger.info("user_events table created")
+
+    def _add_history_theme_column(self, cursor):
+        """Add theme column to playback_history for existing databases."""
+        cursor.execute("PRAGMA table_info(playback_history)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "theme" not in columns:
+            self.logger.info("Adding theme column to playback_history...")
+            cursor.execute("ALTER TABLE playback_history ADD COLUMN theme TEXT")
 
     def get_connection(self):
         """
@@ -554,6 +565,7 @@ class HistoryRepository:
         metadata: SongMetadata,
         settings: SongSettings,
         performance: Dict[str, Any],
+        theme: Optional[str] = None,
     ) -> int:
         """Record a performance in history."""
         conn = self.database.get_connection()
@@ -567,8 +579,9 @@ class HistoryRepository:
                     video_id,
                     song_metadata_json,
                     settings_json,
-                    performance_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    performance_json,
+                    theme
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     user_id,
@@ -577,6 +590,7 @@ class HistoryRepository:
                     _encode_metadata(metadata),
                     _encode_settings(settings),
                     self._encode_performance(performance),
+                    theme or None,
                 ),
             )
             conn.commit()
@@ -628,7 +642,8 @@ class HistoryRepository:
                     performed_at,
                     song_metadata_json,
                     settings_json,
-                    performance_json
+                    performance_json,
+                    theme
                 FROM playback_history
                 WHERE user_id = ?
                 ORDER BY performed_at DESC, id DESC
@@ -651,6 +666,7 @@ class HistoryRepository:
                         performed_at=datetime.fromisoformat(row["performed_at"])
                         if row["performed_at"]
                         else None,
+                        theme=row["theme"],
                     )
                 )
             return records
