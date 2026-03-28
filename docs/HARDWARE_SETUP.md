@@ -69,9 +69,66 @@ The mixing can happen in different places:
 
 ---
 
+## Basic Setup: Laptop + TV + Bluetooth Speaker (No Microphones)
+
+The simplest possible setup - just a laptop, a TV for lyrics, and a Bluetooth speaker for sound. Perfect for casual home karaoke where singers just sing along without amplification. No audio interfaces, no microphones, no configuration headaches.
+
+### What You Need
+
+| Item | Example | Purpose |
+|------|---------|---------|
+| Laptop | Any laptop that can run kbox | Runs kbox, also serves as queue controller |
+| TV | Any TV with HDMI input | Shows lyrics (video only) |
+| HDMI Cable | Standard HDMI cable | Video output to TV |
+| Bluetooth Speaker | JBL, UE Boom, or any Bluetooth speaker | Plays backing track |
+
+### Why a Laptop?
+
+A laptop is the best choice for this basic setup because:
+
+- **Bluetooth built in** - Pair with any Bluetooth speaker, no cables needed for audio
+- **Built-in control** - Use the laptop's browser to search songs and manage the queue, no second device needed
+- **No extra hardware** - A Raspberry Pi's 3.5mm audio output is noisy and underpowered, pushing you toward a USB audio interface which defeats the purpose of a minimal setup
+
+> **Note**: A Raspberry Pi or mini PC can work here too, but you'll need a USB audio interface for decent sound and a phone or tablet to control the queue.
+
+### How It Works
+
+```mermaid
+flowchart LR
+    LAPTOP[💻 Laptop running kbox] -->|HDMI| TV[📺 TV<br/>Lyrics Display]
+    LAPTOP -.->|Bluetooth| SPK[🔊 Speaker<br/>Backing Track]
+```
+
+The HDMI cable sends lyrics video to the TV. Bluetooth sends the backing track audio to the speaker. Singers just sing into the room - no microphone, no mixing, no equipment to manage.
+
+### Setup Steps
+
+1. Connect laptop to TV via HDMI (for lyrics display)
+2. Pair laptop with Bluetooth speaker
+3. Set the Bluetooth speaker as the audio output (OS sound settings or kbox config)
+4. Open kbox web UI on the laptop, queue a song, and sing!
+
+### When This Works Well
+
+- **Small rooms** - Singers can be heard naturally over the speaker
+- **Kids' parties** - Simple, nothing to break
+- **Practice sessions** - Just learning songs, no need for amplification
+- **Casual gatherings** - Low-key, minimal setup hassle
+
+### Limitations
+
+- No vocal amplification (fine for small spaces)
+- Can't adjust vocal/music balance (only the backing track volume)
+- Bluetooth adds slight audio latency (typically 50-200ms) - not noticeable for singing along, but would matter if mixing a live microphone
+
+> **Tip**: If you'd rather avoid Bluetooth latency or don't have a Bluetooth speaker, a 3.5mm aux cable from the laptop's headphone jack to any powered speaker works just as well.
+
+---
+
 ## Simple Setup: Scarlett Solo
 
-This is the most accessible setup for casual karaoke. It uses a USB audio interface to handle both audio output and microphone mixing.
+This is the simplest setup that includes a microphone. It uses a USB audio interface to handle both audio output and microphone mixing.
 
 ### What You Need
 
