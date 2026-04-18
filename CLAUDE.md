@@ -45,6 +45,25 @@ Before committing substantial changes (especially to streaming, playback, queue,
 
 Don't commit based on pytest alone for changes that could affect the real pipeline.
 
+# Tech Stack
+
+- **Python package/env manager: `uv`.** Always use `uv` — do not call `pip`, `python -m venv`, or a bare `python`/`pytest` directly.
+- [FastAPI](https://fastapi.tiangolo.com/) + Jinja2 templates for the web server.
+- SQLite for persistent storage (queue, config, history).
+- [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) on the `/display` page; [YouTube Data API v3](https://developers.google.com/youtube/v3) for search.
+- [LiteLLM](https://github.com/BerriAI/litellm) for AI suggestions and metadata extraction (works with OpenAI, Anthropic, Google, Ollama, etc.).
+- Runs on macOS, Linux/Raspberry Pi, and in Docker.
+
+## Common Commands
+
+```bash
+uv sync --group dev          # install deps (incl. dev tools)
+uv run python -m kbox.main   # run the app (http://localhost:8000)
+uv run pytest                # tests
+uv run ruff check .          # lint
+uv run mypy kbox/            # type-check
+```
+
 # Product Context
 
 This software runs karaoke parties. Primary focus is home karaoke; bar/KJ environments are a secondary consideration (keep flexibility, don't hardcode one mode).
