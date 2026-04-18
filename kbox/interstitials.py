@@ -116,11 +116,14 @@ class InterstitialGenerator:
         x = (self.width - text_width) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    def generate_idle_screen(self) -> str:
+    def generate_idle_screen(self, party_theme: Optional[str] = None) -> str:
         """
         Generate the idle screen (before playback starts).
 
         Instructs the audience to scan the QR code overlay to pick songs.
+
+        Args:
+            party_theme: Optional party theme to display below the QR instruction.
 
         Returns:
             Path to the generated image file
@@ -149,6 +152,16 @@ class InterstitialGenerator:
             instruction_font,
             PRIMARY_TEXT_COLOR,
         )
+
+        if party_theme:
+            theme_font = self._get_font(40)
+            self._center_text(
+                draw,
+                f"Tonight's theme: {party_theme}",
+                self.height // 2 + 130,
+                theme_font,
+                ACCENT_COLOR,
+            )
 
         # Note: QR code is handled by the streaming overlay for consistency
 

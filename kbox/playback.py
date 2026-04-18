@@ -1051,7 +1051,8 @@ class PlaybackController:
         self.logger.info("Showing idle screen")
 
         generator = self._get_interstitial_generator()
-        image_path = generator.generate_idle_screen()
+        party_theme = self.config_manager.get("suggestion_theme") or None
+        image_path = generator.generate_idle_screen(party_theme=party_theme)
 
         if image_path:
             self.streaming_controller.display_image(image_path)
