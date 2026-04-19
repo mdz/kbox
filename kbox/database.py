@@ -372,7 +372,7 @@ def _decode_settings(settings_json: str) -> SongSettings:
         return SongSettings()
     try:
         data = json.loads(settings_json)
-        return SongSettings(pitch_semitones=data.get("pitch_semitones", 0))
+        return SongSettings(pitch_semitones=data.get("pitch_semitones") or 0)
     except (json.JSONDecodeError, TypeError):
         return SongSettings()
 
