@@ -1018,6 +1018,7 @@ def create_app(
             "index.html",
             {
                 "long_song_warning_minutes": config.get_int("long_song_warning_minutes", 5),
+                "suggestion_theme": config.get("suggestion_theme"),
             },
         )
 
