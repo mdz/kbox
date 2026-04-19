@@ -145,9 +145,19 @@ class SongMetadataExtractor:
             parts.append(f'\nDescription: "{desc}"')
 
         parts.append(
-            "\n\nNote: The channel name is usually a karaoke provider (like 'Zoom Karaoke', "
-            "'SingKing', 'KaraFun'), NOT the artist. Extract the actual performing artist "
-            "and song title."
+            "\n\nThe 'artist' should be the performer of the specific recording this "
+            "karaoke video is based on — i.e., the artist whose version is being covered. "
+            "Disambiguation rules:\n"
+            "- The channel name is usually a karaoke provider (like 'Zoom Karaoke', "
+            "'SingKing', 'KaraFun'), NOT the artist.\n"
+            "- Do NOT return the songwriter/composer if they are different from the "
+            "performer (e.g., for a Jimi Hendrix cover of 'All Along the Watchtower', "
+            "the artist is Jimi Hendrix, not Bob Dylan).\n"
+            "- If the title or description explicitly names an artist (e.g., "
+            "'in the style of X', 'as performed by X', 'X - Song Title'), prefer that "
+            "artist over the most famous version you know of.\n"
+            "- Only fall back to the best-known recording artist when the title and "
+            "description give no indication of which version is being covered."
         )
 
         parts.append(
