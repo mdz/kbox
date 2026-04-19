@@ -299,7 +299,7 @@ def create_app(
         status = playback.get_status()
         current_song = status.get("current_song")
         current_song_id = current_song.get("id") if current_song else None
-        position_seconds = status.get("position_seconds", 0)
+        position_seconds = status.get("position_seconds") or 0
         cursor_id = playback.get_cursor()
 
         # Find cursor index — everything before it is "played"
@@ -340,7 +340,7 @@ def create_app(
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            current_duration = current_song.get("duration_seconds", 0) if current_song else 0
+            current_duration = (current_song.get("duration_seconds") or 0) if current_song else 0
             time_until = max(0, current_duration - position_seconds) if current_song else 0
             for songs_away, item in enumerate(upcoming):
                 if item.user_id == current_user_id:
