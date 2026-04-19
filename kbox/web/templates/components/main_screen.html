@@ -2,6 +2,9 @@
 <div class="main-content" id="main-content">
     <!-- Search Section -->
     <div class="section">
+        {% if suggestion_theme %}
+        <div class="party-theme">🎭 Tonight's theme: <span class="party-theme-value">{{ suggestion_theme }}</span></div>
+        {% endif %}
         <form id="search-form" onsubmit="search(); return false;" action="javascript:void(0);">
             <input type="text" id="search-input" placeholder="Search for a song..." />
             <button type="submit" id="search-button">Search</button>
