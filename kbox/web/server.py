@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
 from ..database import EventRepository
-from ..playback import PlaybackController
+from ..playback import PlaybackController, PlaybackState
 from ..queue import QueueManager
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine, SuggestionError
@@ -910,6 +910,12 @@ def create_app(
                     status_code=500,
                     detail=f"Config saved but failed to restart streaming: {str(e)}",
                 )
+
+        # Refresh the idle screen if the theme changed and we're currently
+        # showing it. If a song is playing, the next idle transition will
+        # pick up the new theme automatically.
+        if request_data.key == "suggestion_theme" and playback.state == PlaybackState.STOPPED:
+            playback.show_idle_screen()
 
         return {
             "status": "updated",
