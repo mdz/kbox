@@ -50,7 +50,8 @@ Don't commit based on pytest alone for changes that could affect the real pipeli
 - **Python package/env manager: `uv`.** Always use `uv` — do not call `pip`, `python -m venv`, or a bare `python`/`pytest` directly.
 - [FastAPI](https://fastapi.tiangolo.com/) + Jinja2 templates for the web server.
 - SQLite for persistent storage (queue, config, history).
-- [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) on the `/display` page; [YouTube Data API v3](https://developers.google.com/youtube/v3) for search.
+- **GStreamer** pipeline is the primary playback/display path (real audio/video pipeline, hardware output).
+- [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) is also embedded on the `/display` page; [YouTube Data API v3](https://developers.google.com/youtube/v3) is used for search.
 - [LiteLLM](https://github.com/BerriAI/litellm) for AI suggestions and metadata extraction (works with OpenAI, Anthropic, Google, Ollama, etc.).
 - Runs on macOS, Linux/Raspberry Pi, and in Docker.
 
