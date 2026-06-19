@@ -47,4 +47,4 @@ repos:
         entry: uv run pytest -x -q -m "not gstreamer"
         language: system
         pass_filenames: false
-        stages: [pre-commit]
+        stages: [pre-push]
