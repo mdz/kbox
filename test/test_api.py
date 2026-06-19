@@ -8,19 +8,23 @@ Tests all API endpoints with:
 
 import os
 import tempfile
-from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from support.app_factory import (
+    _mock_playback,
+    _mock_streaming,
+    _mock_suggestions,
+    _mock_video_library,
+)
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackController, PlaybackState
+from kbox.playback import PlaybackState
 from kbox.queue import QueueManager
-from kbox.suggestions import SuggestionEngine, SuggestionError
+from kbox.suggestions import SuggestionError
 from kbox.user import UserManager
-from kbox.video_library import VideoLibrary
 from kbox.web.server import create_app
 
 # Test user IDs
@@ -51,109 +55,22 @@ def temp_cache_dir():
 
 @pytest.fixture
 def mock_streaming():
-    """Create a mock StreamingController."""
-    streaming = Mock()
-    streaming.set_pitch_shift = Mock()
-    streaming.load_file = Mock()
-    streaming.pause = Mock()
-    streaming.resume = Mock()
-    streaming.stop = Mock()
-    streaming.stop_playback = Mock()
-    streaming.set_eos_callback = Mock()
-    streaming.get_position = Mock(return_value=0)
-    streaming.seek = Mock(return_value=True)
-    streaming.show_notification = Mock()
-    streaming.display_image = Mock()
-    streaming.reinitialize_pipeline = Mock()
-    streaming.server = None
-    return streaming
+    return _mock_streaming()
 
 
 @pytest.fixture
 def mock_playback():
-    """Create a mock PlaybackController.
-
-    API tests should use a mock playback controller since they're testing
-    the API layer, not playback logic. Only test_playback and test_integration
-    should use the real PlaybackController.
-    """
-    playback = Mock(spec=PlaybackController)
-    # get_status returns a dict with state info
-    playback.get_status.return_value = {
-        "state": PlaybackState.IDLE.value,
-        "current_song": None,
-        "position_seconds": 0,
-        "duration_seconds": 0,
-    }
-    # Cursor defaults (no cursor set)
-    playback.get_cursor.return_value = None
-    # Movement operations return bool
-    playback.move_to_next.return_value = True
-    playback.move_to_end.return_value = True
-    playback.move_down.return_value = True
-    playback.move_up.return_value = True
-    # Playback control operations return bool
-    playback.play.return_value = False  # False = no songs to play
-    playback.pause.return_value = True
-    playback.stop_playback.return_value = True
-    playback.skip.return_value = True
-    playback.previous.return_value = True
-    playback.jump_to_song.return_value = True
-    playback.restart.return_value = True
-    playback.seek_relative.return_value = True
-    # Pitch control
-    playback.set_pitch.return_value = False  # False = no song playing
-    # Properties
-    playback.state = PlaybackState.IDLE
-    playback.current_song_id = None
-    return playback
+    return _mock_playback()
 
 
 @pytest.fixture
 def mock_video_library():
-    """Create a mock VideoLibrary for API testing.
-
-    API tests focus on the HTTP layer, not video logic, so we use a simple mock.
-    """
-    video_library = Mock(spec=VideoLibrary)
-
-    # Configure search to return test results with opaque IDs
-    video_library.search.return_value = [
-        {"id": "youtube:test123", "title": "Test Song", "duration_seconds": 180}
-    ]
-
-    # Configure get_info to return test data with opaque ID
-    video_library.get_info.return_value = {
-        "id": "youtube:test123",
-        "title": "Test Song",
-        "duration_seconds": 180,
-        "thumbnail_url": "https://example.com/thumb.jpg",
-        "channel": "Test Channel",
-    }
-
-    # Configure other methods
-    video_library.request.return_value = None  # Async download
-    video_library.get_path.return_value = None
-    video_library.is_available.return_value = False
-    video_library.is_source_configured.return_value = True
-    video_library.manage_storage.return_value = 0
-
-    return video_library
+    return _mock_video_library()
 
 
 @pytest.fixture
 def mock_suggestion_engine():
-    """Create a mock SuggestionEngine for API testing.
-
-    API tests focus on the HTTP layer, not suggestion logic.
-    """
-    engine = Mock(spec=SuggestionEngine)
-
-    # Default: not configured
-    engine.is_configured.return_value = False
-    engine.get_suggestions.side_effect = SuggestionError("AI suggestions not configured")
-
-    return engine
+    return _mock_suggestions()
 
 
 @pytest.fixture
