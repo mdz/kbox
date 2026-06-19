@@ -189,7 +189,7 @@ def test_resume(playback_controller, mock_streaming_controller):
 
 
 def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller):
-    """Test skipping to next song."""
+    """Test skipping to next song stops current playback and enters transition."""
     current_song = create_mock_queue_item(
         id=1,
         title="Current Song",
@@ -201,7 +201,6 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
 
-    # Mock get_item to return current song data
     mock_queue_manager.get_item.return_value = current_song
 
     mock_next_song = create_mock_queue_item(
@@ -212,7 +211,6 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
         pitch_semitones=0,
         content_status=QueueManager.STATUS_READY,
     )
-    # Mock get_song_at_offset to return the next song
     mock_queue_manager.get_song_at_offset.return_value = mock_next_song
 
     result = playback_controller.skip()
@@ -221,7 +219,49 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     # IMPORTANT: skip() must call stop_playback() (returns to idle) NOT stop() (destroys pipeline)
     mock_streaming_controller.stop_playback.assert_called_once()
     mock_streaming_controller.stop.assert_not_called()
-    mock_streaming_controller.load_file.assert_called_once_with("/path/to/next.mp4")
+    # Skip goes to TRANSITION (interstitial), not directly to playing
+    assert playback_controller.state == PlaybackState.TRANSITION
+
+
+def test_skip_shows_interstitial_before_playing(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that skip shows the next-singer interstitial before starting the next song.
+
+    When an operator skips a song (e.g. long outro), the transition screen should
+    announce the next singer — giving them time to come up — before the song starts.
+    This is the same flow as a natural end-of-song.
+    """
+    current_song = create_mock_queue_item(
+        id=1,
+        title="Current Song",
+        user_name="Alice",
+        video_id="youtube:abc123",
+        duration_seconds=180,
+        pitch_semitones=0,
+    )
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    mock_queue_manager.get_item.return_value = current_song
+
+    mock_next_song = create_mock_queue_item(
+        id=2,
+        title="Next Song",
+        user_name="Bob",
+        content_path="/path/to/next.mp4",
+        pitch_semitones=0,
+        content_status=QueueManager.STATUS_READY,
+    )
+    mock_queue_manager.get_song_at_offset.return_value = mock_next_song
+
+    playback_controller.skip()
+
+    # Immediately after skip: should be in TRANSITION, not yet playing
+    assert playback_controller.state == PlaybackState.TRANSITION
+    # Next song is staged but not yet started
+    assert playback_controller._next_song_pending == mock_next_song
+    mock_streaming_controller.load_file.assert_not_called()
 
 
 def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streaming_controller):
