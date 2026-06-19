@@ -112,6 +112,9 @@ def operator_unlock(mobile_page):
         mobile_page.fill("#operator-pin-input", pin)
         with mobile_page.expect_navigation():
             mobile_page.locator("button:has-text('Authenticate')").click()
-        mobile_page.wait_for_load_state("networkidle")
+        # Wait for the search form — a concrete signal that the page has fully
+        # rendered after the post-auth redirect. networkidle is unreliable here
+        # because the app polls /api/queue every 1s, preventing true idle.
+        mobile_page.wait_for_selector("#search-form", state="visible")
 
     return _unlock

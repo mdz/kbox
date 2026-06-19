@@ -86,6 +86,28 @@ uv run ruff check .
 uv run mypy kbox/
 ```
 
+## Testing
+
+**Backend tests** (fast, no browser required):
+
+```bash
+uv run pytest
+```
+
+**E2E browser tests** — covers the web UI end-to-end on mobile Chrome (Chromium/Pixel 5) and mobile Safari (WebKit/iPhone 13). Install the browsers once:
+
+```bash
+uv run playwright install chromium webkit
+```
+
+Then run the suite:
+
+```bash
+uv run pytest -m e2e
+```
+
+Each E2E test runs on both engines automatically, so the report shows two entries per test (`mobile-chrome` and `mobile-safari`).
+
 ## License
 
 See [LICENSE](LICENSE).

@@ -27,5 +27,8 @@ def test_name_persists_on_reload(mobile_page, init_user):
     """After name is saved, reloading the page does not show the modal again."""
     init_user("Alice")
     mobile_page.reload()
-    mobile_page.wait_for_load_state("networkidle")
+    # Wait for the search form — a concrete signal the page has rendered its
+    # initial state. networkidle is unreliable because the 1s /api/queue poll
+    # prevents the browser from ever reaching truly idle.
+    mobile_page.wait_for_selector("#search-form", state="visible")
     expect(mobile_page.locator("#name-modal")).to_be_hidden()
