@@ -120,12 +120,18 @@ def is_likely_karaoke(title: str, channel: str = "", description: str = "") -> b
     return True
 
 
+_PREFERRED_CHANNELS = [
+    "karafun",
+]
+
+
 def karaoke_quality_score(title: str, channel: str = "") -> int:
     """
     Score a search result for ranking purposes.
 
     Higher scores sort first.  The tiers are:
 
+    * 3 – from a preferred karaoke channel (e.g. KaraFun)
     * 2 – from a known high-quality karaoke channel
     * 1 – title contains a strong karaoke keyword (but unknown channel)
     * 0 – ambiguous / no clear signal
@@ -134,6 +140,11 @@ def karaoke_quality_score(title: str, channel: str = "") -> int:
     preserved because :pyfunc:`sorted` is *stable*.
     """
     channel_lower = channel.lower()
+
+    # Tier 3: preferred karaoke channel
+    for ch in _PREFERRED_CHANNELS:
+        if ch in channel_lower:
+            return 3
 
     # Tier 2: known karaoke channel
     for ch in _KARAOKE_CHANNELS:
