@@ -579,3 +579,129 @@ def test_show_notification(controller):
     # Verify now silent
     silent = controller.text_overlay.get_property("silent")
     assert silent is True
+
+
+# =========================================================================
+# Resume from Position Tests
+# =========================================================================
+
+
+def test_load_file_with_start_position(controller, test_video_3s):
+    """load_file() with start_position_seconds pre-seeks before starting playback.
+
+    This is the operator recovery path: song was interrupted, resume from
+    the saved position. The pipeline must go PAUSED → seek → PLAYING
+    without error.
+    """
+    controller.load_file(test_video_3s, start_position_seconds=1)
+
+    assert controller.state == "playing"
+    assert controller.get_pipeline_state() == "playing"
+
+    controller.stop_playback()
+
+
+def test_load_file_with_start_position_zero_skips_preseak(controller, test_video_3s):
+    """load_file() with start_position_seconds=0 takes the normal (no pre-seek) path."""
+    controller.load_file(test_video_3s, start_position_seconds=0)
+
+    assert controller.state == "playing"
+    assert controller.get_pipeline_state() == "playing"
+
+    controller.stop_playback()
+
+
+# =========================================================================
+# Interstitial / Static Image Tests
+# =========================================================================
+
+
+@pytest.fixture
+def interstitial_image(tmp_path):
+    """A small PNG for interstitial display testing."""
+    from PIL import Image
+
+    path = tmp_path / "interstitial.png"
+    Image.new("RGB", (320, 240), color=(30, 30, 30)).save(path)
+    return str(path)
+
+
+def test_display_image_sets_interstitial_state(controller, interstitial_image):
+    """display_image() marks the controller as showing an interstitial."""
+    controller.display_image(interstitial_image)
+
+    assert controller._is_interstitial is True
+    assert controller.state == "playing"
+    assert controller.current_file == interstitial_image
+
+    controller.stop_playback()
+
+
+def test_display_image_mutes_audio(controller, interstitial_image):
+    """display_image() mutes the pipeline — interstitials have no audio track."""
+    controller.display_image(interstitial_image)
+
+    assert controller.playbin.get_property("mute") is True
+
+    controller.stop_playback()
+
+
+def test_load_file_clears_interstitial_flag(controller, interstitial_image, test_video_1s):
+    """Loading a song after an interstitial clears the interstitial flag."""
+    controller.display_image(interstitial_image)
+    assert controller._is_interstitial is True
+
+    controller.load_file(test_video_1s)
+
+    assert controller._is_interstitial is False
+    assert controller.state == "playing"
+
+    controller.stop_playback()
+
+
+def test_eos_suppressed_during_interstitial(controller):
+    """EOS must not propagate to the callback while showing an interstitial.
+
+    If this breaks, the queue auto-advances into the next song while the
+    between-song screen is still displayed.
+    """
+    eos_fired = threading.Event()
+    controller.set_eos_callback(eos_fired.set)
+
+    controller._is_interstitial = True
+    controller._on_eos(None, None)
+
+    assert not eos_fired.is_set()
+
+
+def test_eos_fires_for_song(controller):
+    """EOS propagates normally for regular songs (counterpart to suppression test)."""
+    eos_fired = threading.Event()
+    controller.set_eos_callback(eos_fired.set)
+
+    controller._is_interstitial = False
+    controller._on_eos(None, None)
+
+    assert eos_fired.is_set()
+
+
+def test_show_notification_during_interstitial(controller, interstitial_image):
+    """Notification shown while an interstitial is displayed sets overlay text correctly.
+
+    show_notification() has a special path for interstitials: it seeks to
+    position 0 to force imagefreeze to regenerate the frame so the text
+    overlay actually appears on the frozen image.
+    """
+    if controller.text_overlay is None:
+        pytest.skip("Text overlay not available")
+
+    controller.display_image(interstitial_image)
+    assert controller._is_interstitial is True
+
+    # Long duration so auto-hide doesn't fire during the test
+    controller.show_notification("Up next: Alice", duration_seconds=60.0)
+
+    assert controller.text_overlay.get_property("text") == "Up next: Alice"
+    assert controller.text_overlay.get_property("silent") is False
+
+    controller.stop_playback()
