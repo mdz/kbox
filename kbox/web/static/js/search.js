@@ -2,7 +2,7 @@
  * Search and add song functions for kbox web UI.
  */
 
-import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, queueDepthSeconds, queueDepthCount } from './state.js';
+import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, queueDepthSeconds, queueDepthCount, currentQueue } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
 
@@ -196,6 +196,17 @@ export function cancelAddToQueue() {
 // Confirm and add song to queue
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
+
+    // Warn if song was already added tonight (queued or already played)
+    const duplicate = currentQueue?.find(item => item.video_id === currentVideoToAdd.id);
+    if (duplicate) {
+        const msg = duplicate.is_played
+            ? `"${currentVideoToAdd.title}" was already performed tonight. Add it again?`
+            : `"${currentVideoToAdd.title}" is already in the queue. Add it again?`;
+        if (!confirm(msg)) {
+            return;
+        }
+    }
 
     // Warn if song exceeds the long song threshold
     const warningMinutes = window.kboxConfig?.longSongWarningMinutes || 0;
