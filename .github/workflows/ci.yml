@@ -76,3 +76,15 @@ jobs:
 
       - name: Run E2E tests
         run: uv run pytest -m e2e -v
+
+  gstreamer:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t kbox-test .
+
+      - name: Run GStreamer tests
+        run: docker run --rm kbox-test uv run pytest -m gstreamer -v
