@@ -625,6 +625,20 @@ class TestSearchFiltering:
 class TestKaraokeQualityScore:
     """Tests for the karaoke_quality_score ranking function."""
 
+    # -- Tier 3: preferred channels --
+
+    @pytest.mark.parametrize(
+        "channel",
+        [
+            "KaraFun",
+            "karafun",
+            "KaraFun Karaoke",
+        ],
+    )
+    def test_preferred_channel_scores_highest(self, channel):
+        """Preferred channels (KaraFun) should get the highest score."""
+        assert karaoke_quality_score("Some Random Title", channel=channel) == 3
+
     # -- Tier 2: known channels --
 
     @pytest.mark.parametrize(
@@ -632,7 +646,6 @@ class TestKaraokeQualityScore:
         [
             "Sing King Karaoke",
             "Sing King",
-            "KaraFun",
             "Stingray Karaoke",
             "Zoom Karaoke",
             "CC Karaoke",
@@ -640,8 +653,8 @@ class TestKaraokeQualityScore:
             "Premium Karaoke",
         ],
     )
-    def test_known_channel_scores_highest(self, channel):
-        """Known karaoke channels should get the highest score."""
+    def test_known_channel_scores_tier2(self, channel):
+        """Known karaoke channels should get score 2."""
         assert karaoke_quality_score("Some Random Title", channel=channel) == 2
 
     # -- Tier 1: title has karaoke keyword --
@@ -678,6 +691,7 @@ class TestKaraokeQualityScore:
 
     def test_case_insensitive(self):
         """Scoring should be case-insensitive."""
+        assert karaoke_quality_score("", channel="KARAFUN") == 3
         assert karaoke_quality_score("", channel="SING KING") == 2
         assert karaoke_quality_score("BOHEMIAN RHAPSODY KARAOKE") == 1
 
@@ -719,7 +733,7 @@ class TestSearchRanking:
         fake_source._search_results = [
             {"id": "vid1", "title": "Song A", "channel": "Sing King Karaoke"},
             {"id": "vid2", "title": "Song B", "channel": "Zoom Karaoke"},
-            {"id": "vid3", "title": "Song C", "channel": "KaraFun"},
+            {"id": "vid3", "title": "Song C", "channel": "Stingray Karaoke"},
         ]
         library.register_source(fake_source)
 
@@ -729,18 +743,24 @@ class TestSearchRanking:
         ids = [r["id"] for r in results]
         assert ids == ["youtube:vid1", "youtube:vid2", "youtube:vid3"]
 
-    def test_search_ranking_three_tiers(self, config_manager):
-        """All three ranking tiers should be ordered correctly."""
+    def test_search_ranking_four_tiers(self, config_manager):
+        """All four ranking tiers should be ordered correctly."""
         library = VideoLibrary(config_manager)
         fake_source = FakeVideoSource("youtube")
         fake_source._search_results = [
             {"id": "ambiguous", "title": "Hello", "channel": "Someone"},
             {"id": "title_kw", "title": "Hello Karaoke", "channel": "Someone"},
-            {"id": "channel", "title": "Hello", "channel": "KaraFun"},
+            {"id": "known_ch", "title": "Hello", "channel": "Sing King"},
+            {"id": "preferred_ch", "title": "Hello", "channel": "KaraFun"},
         ]
         library.register_source(fake_source)
 
         results = library.search("hello")
 
         ids = [r["id"] for r in results]
-        assert ids == ["youtube:channel", "youtube:title_kw", "youtube:ambiguous"]
+        assert ids == [
+            "youtube:preferred_ch",
+            "youtube:known_ch",
+            "youtube:title_kw",
+            "youtube:ambiguous",
+        ]
