@@ -581,8 +581,10 @@ class PlaybackController:
         self.streaming_controller.stop_playback()
         self.logger.debug("skip: after stop_playback")
 
-        # Load and play the next song
-        return self._play_song(next_song)
+        # Show interstitial then play next song (same flow as natural end-of-song)
+        skipped_song_id = self.current_song_id
+        self._show_transition_or_end(finished_song_id=skipped_song_id)
+        return True
 
     def skip(self) -> bool:
         """
