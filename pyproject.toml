@@ -39,9 +39,9 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-m 'not e2e'"
+addopts = "-m 'not e2e and not gstreamer'"
 markers = [
-    "gstreamer: tests that require GStreamer (may be skipped if unavailable)",
+    "gstreamer: tests that require GStreamer (run with -m gstreamer; requires GStreamer system packages)",
     "e2e: Playwright browser tests (run with -m e2e; requires playwright install chromium webkit)",
 ]
 filterwarnings = [
