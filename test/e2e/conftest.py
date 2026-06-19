@@ -86,3 +86,32 @@ def mobile_page(request):
         yield page
         context.close()
         browser.close()
+
+
+@pytest.fixture
+def init_user(mobile_page, live_app):
+    """Return a helper that navigates to the app and completes the name modal."""
+
+    def _go(name="Alice"):
+        mobile_page.goto(live_app)
+        mobile_page.wait_for_selector("#name-modal", state="visible")
+        mobile_page.fill("#name-modal-input", name)
+        mobile_page.locator("button:has-text('Continue')").click()
+        mobile_page.wait_for_selector("#name-modal", state="hidden")
+
+    return _go
+
+
+@pytest.fixture
+def operator_unlock(mobile_page):
+    """Return a helper that enters the operator PIN and waits for the page reload."""
+
+    def _unlock(pin="1234"):
+        mobile_page.locator("#operator-auth-button").click()
+        mobile_page.wait_for_selector("#operator-pin-modal", state="visible")
+        mobile_page.fill("#operator-pin-input", pin)
+        with mobile_page.expect_navigation():
+            mobile_page.locator("button:has-text('Authenticate')").click()
+        mobile_page.wait_for_load_state("networkidle")
+
+    return _unlock
