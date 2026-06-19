@@ -40,3 +40,4 @@ htmlcov/
 deploy.sh
 ldocs
 .env
+backup
