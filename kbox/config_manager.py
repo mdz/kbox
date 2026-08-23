@@ -188,6 +188,12 @@ CONFIG_SCHEMA = {
         "step": 1,
         "display_format": "minutes",
     },
+    "duplicate_singer_nudge_enabled": {
+        "group": "queue",
+        "label": "Second Song Nudge",
+        "description": "Show a soft confirmation when a guest adds a song while they already have one queued — a gentle 'give everyone a turn' reminder, not a hard block.",
+        "control": "checkbox",
+    },
 }
 
 
@@ -248,6 +254,7 @@ class ConfigManager:
         "llm_temperature": "0.9",  # AI creativity (0.0-1.5)
         # Queue
         "long_song_warning_minutes": "5",  # Warn when adding songs longer than N minutes (0 = disabled)
+        "duplicate_singer_nudge_enabled": "true",  # Soft nudge when a guest already has an unplayed song queued
     }
 
     # Editable keys are derived from CONFIG_SCHEMA

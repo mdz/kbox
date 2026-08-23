@@ -1186,6 +1186,9 @@ def create_app(
             "index.html",
             {
                 "long_song_warning_minutes": config.get_int("long_song_warning_minutes", 5),
+                "duplicate_singer_nudge_enabled": config.get_bool(
+                    "duplicate_singer_nudge_enabled", True
+                ),
                 "suggestion_theme": config.get("suggestion_theme"),
             },
         )

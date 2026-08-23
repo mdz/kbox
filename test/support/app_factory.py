@@ -67,9 +67,16 @@ def _mock_playback():
 
 def _mock_video_library():
     video_library = Mock(spec=VideoLibrary)
-    video_library.search.return_value = [
-        {"id": "youtube:test123", "title": "Test Song", "duration_seconds": 180}
-    ]
+
+    def _search(query, max_results=10):
+        # Queries containing "second" return a distinct video, so e2e tests
+        # can add two different songs without tripping the duplicate-song
+        # warning instead of the one under test.
+        if "second" in query.lower():
+            return [{"id": "youtube:test456", "title": "Second Song", "duration_seconds": 180}]
+        return [{"id": "youtube:test123", "title": "Test Song", "duration_seconds": 180}]
+
+    video_library.search.side_effect = _search
     video_library.get_info.return_value = {
         "id": "youtube:test123",
         "title": "Test Song",
