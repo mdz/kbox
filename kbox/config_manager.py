@@ -163,9 +163,9 @@ CONFIG_SCHEMA = {
     "cache_directory": {
         "group": "api",
         "label": "Cache Directory",
-        "description": "Where to store downloaded videos. Leave empty for default (~/.kbox/cache).",
+        "description": "Where to store downloaded videos. Leave empty for default (~/.kbox/library).",
         "control": "text",
-        "placeholder": "~/.kbox/cache",
+        "placeholder": "~/.kbox/library",
     },
     "cache_max_size_gb": {
         "group": "api",
@@ -228,7 +228,7 @@ class ConfigManager:
         "gstreamer_sink": None,  # Overridden by platform defaults
         "rubberband_plugin": None,  # Overridden by platform defaults
         "youtube_api_key": None,
-        "cache_directory": None,  # Will default to ~/.kbox/cache
+        "cache_directory": None,  # Will default to ~/.kbox/library
         "cache_max_size_gb": "10",  # Max cache size in GB (oldest unused videos evicted when exceeded)
         "video_max_resolution": "480",  # Max video height for downloads (480, 720, 1080, etc.)
         "operator_pin": "1234",
