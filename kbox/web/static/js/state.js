@@ -35,6 +35,10 @@ export let queueDepthCount = 0;
 // Store current video being added
 export let currentVideoToAdd = null;
 
+// When set, the next selected search result replaces this queue item's song
+// instead of adding a new one. { itemId, label } — cleared on confirm/cancel.
+export let currentSelectionTarget = null;
+
 // Setters for state that needs to be modified from other modules
 export function setIsOperator(value) { isOperator = value; }
 export function setCurrentQueue(value) { currentQueue = value; }
@@ -50,3 +54,4 @@ export function setCurrentQueueItemToEdit(value) { currentQueueItemToEdit = valu
 export function setQueueDepthSeconds(value) { queueDepthSeconds = value; }
 export function setQueueDepthCount(value) { queueDepthCount = value; }
 export function setCurrentVideoToAdd(value) { currentVideoToAdd = value; }
+export function setCurrentSelectionTarget(value) { currentSelectionTarget = value; }

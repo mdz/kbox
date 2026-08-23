@@ -889,6 +889,36 @@ class QueueRepository:
         finally:
             conn.close()
 
+    def replace(self, item_id: int, video_id: str, metadata: SongMetadata) -> bool:
+        """
+        Replace the video/metadata of an existing queue item, in place.
+
+        Keeps position, user attribution, and settings unchanged. Resets
+        download status so the new video is (re)downloaded, and clears any
+        previous content path/error and extracted artist/song metadata.
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE queue_items
+                SET video_id = ?, song_metadata_json = ?, download_status = ?, download_json = NULL
+                WHERE id = ?
+            """,
+                (video_id, _encode_metadata(metadata), self.STATUS_PENDING, item_id),
+            )
+
+            if cursor.rowcount == 0:
+                self.logger.warning("Queue item %s not found for replace", item_id)
+                return False
+
+            conn.commit()
+            self.logger.info("Replaced queue item %s with video_id: %s", item_id, video_id)
+            return True
+        finally:
+            conn.close()
+
     def remove(self, item_id: int) -> bool:
         """Remove a song from the queue."""
         conn = self.database.get_connection()

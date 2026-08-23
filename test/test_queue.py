@@ -131,6 +131,50 @@ def test_remove_nonexistent_song(queue_manager):
     assert result is False
 
 
+def test_replace_song(queue_manager, test_users):
+    """Replacing a song swaps video/metadata but keeps position and attribution."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    queue_manager.update_content_status(
+        id2, QueueManager.STATUS_READY, content_path="/tmp/vid2.mp4"
+    )
+
+    result = queue_manager.replace_song(
+        id2,
+        video_id="youtube:vid2-correct",
+        title="Song 2 (Correct Version)",
+        duration_seconds=210,
+        thumbnail_url="http://example.com/correct.jpg",
+        channel="Correct Channel",
+    )
+    assert result is True
+
+    queue = queue_manager.get_queue()
+    assert len(queue) == 2
+
+    replaced = queue_manager.get_item(id2)
+    assert replaced.id == id2
+    assert replaced.position == 2  # unchanged
+    assert replaced.user_id == BOB_ID  # attribution unchanged
+    assert replaced.user_name == "Bob"
+    assert replaced.video_id == "youtube:vid2-correct"
+    assert replaced.metadata.title == "Song 2 (Correct Version)"
+    assert replaced.metadata.duration_seconds == 210
+    assert replaced.content_status == QueueManager.STATUS_PENDING  # reset for redownload
+    assert replaced.content_path is None
+
+    # Other item untouched
+    other = queue_manager.get_item(id1)
+    assert other.video_id == "youtube:vid1"
+    assert other.position == 1
+
+
+def test_replace_nonexistent_song(queue_manager):
+    """Replacing a non-existent song fails cleanly."""
+    result = queue_manager.replace_song(999, video_id="youtube:x", title="X")
+    assert result is False
+
+
 def test_reorder_song(queue_manager, test_users):
     """Test reordering songs in the queue."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")

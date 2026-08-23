@@ -273,6 +273,50 @@ class QueueManager:
         )
         thread.start()
 
+    def replace_song(
+        self,
+        item_id: int,
+        video_id: str,
+        title: str,
+        duration_seconds: Optional[int] = None,
+        thumbnail_url: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> bool:
+        """
+        Replace the video for an existing queue item, in place.
+
+        Keeps the item's position and user attribution unchanged. Resets
+        content status so the new video is downloaded, and re-triggers
+        metadata extraction.
+
+        Args:
+            item_id: ID of the queue item to replace
+            video_id: Opaque video ID of the replacement video
+            title: Replacement song title (original video title)
+            duration_seconds: Duration in seconds (optional)
+            thumbnail_url: Thumbnail URL (optional)
+            channel: Channel/artist name (optional)
+
+        Returns:
+            True if the item was replaced, False if it wasn't found
+        """
+        metadata = SongMetadata(
+            title=title,
+            duration_seconds=duration_seconds,
+            thumbnail_url=thumbnail_url,
+            channel=channel,
+        )
+
+        if not self.repository.replace(item_id, video_id, metadata):
+            return False
+
+        self.logger.info("Replaced queue item %s with: %s (video_id: %s)", item_id, title, video_id)
+
+        if self.metadata_extractor:
+            self._start_metadata_extraction(item_id, video_id, title, channel)
+
+        return True
+
     def remove_song(self, item_id: int) -> bool:
         """Remove a song from the queue."""
         return self.repository.remove(item_id)

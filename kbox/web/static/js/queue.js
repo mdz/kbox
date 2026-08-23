@@ -6,7 +6,8 @@ import {
     isOperator, userId,
     currentQueue, setCurrentQueue,
     currentQueueItemToEdit, setCurrentQueueItemToEdit,
-    setQueueDepthSeconds, setQueueDepthCount
+    setQueueDepthSeconds, setQueueDepthCount,
+    setCurrentSelectionTarget
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
@@ -191,6 +192,27 @@ export async function moveToEndQueueItem() {
         }
     } catch (e) {
         alert('Error moving song to end');
+    }
+}
+
+// Replace song (works for song owner or operator) - sends the operator/user
+// to the search box to pick a replacement; the next result they select
+// replaces this item instead of adding a new one.
+export function replaceQueueItem() {
+    if (!currentQueueItemToEdit) return;
+
+    const item = currentQueueItemToEdit;
+    const label = (item.artist && item.song_name)
+        ? `${item.song_name} by ${item.artist}`
+        : item.title;
+
+    setCurrentSelectionTarget({ itemId: item.id, label, userName: item.user_name });
+    cancelEditQueueItem();
+
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        searchInput.focus();
     }
 }
 
