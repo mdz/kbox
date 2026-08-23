@@ -5,6 +5,9 @@
 import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, queueDepthSeconds, queueDepthCount, currentQueue } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
+// Note: window.fetch is patched in auth.js to retry once on a 401/403 to
+// /api/* if the session's identity got clobbered — no special handling
+// needed here.
 
 // Get AI-powered song suggestions
 export async function getSuggestions() {
