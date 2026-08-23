@@ -800,6 +800,20 @@
             color: #4a9eff;
         }
 
+        /* Checkbox control */
+        .config-checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .config-checkbox-wrapper input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #4a9eff;
+            cursor: pointer;
+        }
+
         /* Position picker (4 corners) */
         .config-position-picker {
             display: grid;
@@ -878,6 +892,7 @@
     <script>
         window.kboxConfig = {
             longSongWarningMinutes: {{ long_song_warning_minutes }},
+            duplicateSingerNudgeEnabled: {{ duplicate_singer_nudge_enabled | tojson }},
         };
     </script>
     <script type="module" src="/static/js/app.js"></script>

@@ -15,9 +15,9 @@ from playwright.sync_api import expect
 pytestmark = pytest.mark.e2e
 
 
-def _search_and_open_add_modal(page):
+def _search_and_open_add_modal(page, query="test song"):
     """Search for the mock result and open the Add to Queue modal."""
-    page.fill("#search-input", "test song")
+    page.fill("#search-input", query)
     page.locator("#search-button").click()
     page.wait_for_selector(".search-result")
     page.locator(".search-result").click()
@@ -59,3 +59,27 @@ def test_already_queued_warning(mobile_page, init_user):
 
     # Song count stays at 1 (user dismissed the confirmation)
     expect(mobile_page.locator(".queue-item")).to_have_count(1)
+
+
+def test_second_song_nudge(mobile_page, init_user):
+    """Adding a second, different song while one is still unplayed nudges (soft, dismissible)."""
+    init_user("Alice")
+
+    # Add a first song
+    _search_and_open_add_modal(mobile_page)
+    mobile_page.locator("button:has-text('Add to Queue')").click()
+    mobile_page.wait_for_selector("#add-song-modal", state="hidden")
+    mobile_page.wait_for_selector(".queue-item")
+
+    # Add a different song - should nudge since the first is still unplayed
+    _search_and_open_add_modal(mobile_page, query="second song")
+    messages = []
+    mobile_page.on("dialog", lambda d: (messages.append(d.message), d.accept()))
+    mobile_page.locator("button:has-text('Add to Queue')").click()
+    mobile_page.wait_for_selector("#add-song-modal", state="hidden")
+
+    assert messages, "expected a confirm() dialog for the second-song nudge"
+    assert "already have a song queued" in messages[0]
+
+    # User confirmed, so both songs are queued
+    expect(mobile_page.locator(".queue-item")).to_have_count(2)

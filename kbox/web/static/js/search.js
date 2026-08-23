@@ -240,6 +240,16 @@ export async function confirmAddToQueue() {
         }
     }
 
+    // Soft etiquette nudge: give everyone a turn. Doesn't apply when
+    // replacing an existing entry in place (see #88) — that's correcting
+    // a mistake, not queueing a second turn.
+    if (!replacing && window.kboxConfig?.duplicateSingerNudgeEnabled) {
+        const alreadyQueued = currentQueue?.some(item => item.user_id === userId && !item.is_played);
+        if (alreadyQueued && !confirm('You already have a song queued. Add another anyway?')) {
+            return;
+        }
+    }
+
     let url, body;
     if (replacing) {
         url = `/api/queue/${replacing.itemId}/replace`;

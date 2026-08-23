@@ -137,6 +137,9 @@ export function renderConfigField(key, schema, value) {
         case 'password':
             control = renderPasswordControl(key, schema, value);
             break;
+        case 'checkbox':
+            control = renderCheckboxControl(key, schema, value);
+            break;
         case 'text':
         default:
             control = renderTextControl(key, schema, value);
@@ -324,6 +327,21 @@ export function renderPasswordControl(key, schema, value) {
     `;
 }
 
+// Render checkbox (boolean toggle) control
+export function renderCheckboxControl(key, schema, value) {
+    const checked = ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase());
+    return `
+        <div class="config-checkbox-wrapper">
+            <input type="checkbox"
+                   id="config-${key}"
+                   ${checked ? 'checked' : ''}
+                   data-original-value="${checked}"
+                   data-is-checkbox="true"
+            />
+        </div>
+    `;
+}
+
 // Render text control
 export function renderTextControl(key, schema, value) {
     const placeholder = schema.placeholder || '';
@@ -351,7 +369,8 @@ export async function saveConfiguration() {
         const input = document.getElementById(`config-${key}`);
         if (!input) continue;
 
-        let newValue = input.value;
+        const isCheckbox = input.getAttribute('data-is-checkbox') === 'true';
+        let newValue = isCheckbox ? String(input.checked) : input.value;
         const originalValue = input.getAttribute('data-original-value') || '';
         const isPassword = input.getAttribute('data-is-password') === 'true';
 
