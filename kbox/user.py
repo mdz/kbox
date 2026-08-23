@@ -24,18 +24,8 @@ class UserManager:
         self.database = database
         self.repository = UserRepository(database)
         self.logger = logging.getLogger(__name__)
-        # Root logger stays at INFO (DEBUG globally is too spammy from
-        # third-party libs like httpx/litellm); opt this logger in on its
-        # own so the new-identity debug logging above is actually emitted.
-        self.logger.setLevel(logging.DEBUG)
 
-    def get_or_create_user(
-        self,
-        user_id: str,
-        display_name: str,
-        user_agent: Optional[str] = None,
-        session_already_bound: Optional[bool] = None,
-    ) -> User:
+    def get_or_create_user(self, user_id: str, display_name: str) -> User:
         """
         Get or create a user by ID.
 
@@ -45,9 +35,6 @@ class UserManager:
         Args:
             user_id: UUID of the user
             display_name: Display name for the user
-            user_agent: User-Agent header of the request, for debug logging only
-            session_already_bound: whether the request's session already had a
-                user_id bound before this call, for debug logging only
 
         Returns:
             User object
@@ -61,19 +48,7 @@ class UserManager:
                 user = self.repository.get_by_id(user_id)  # Refresh to get updated name
             return user
         else:
-            # Create new user. Log enough to tell apart the two root causes of
-            # identity churn: the client never had a UUID to send (real
-            # client-side storage loss) vs. the client sent a UUID that we
-            # simply didn't recognize (a lookup/session bug).
-            self.logger.debug(
-                "[DEBUG] Creating new user identity: user_id=%r client_sent_uuid=%s "
-                "session_already_bound=%s display_name=%r user_agent=%r",
-                user_id,
-                bool(user_id),
-                session_already_bound,
-                display_name,
-                user_agent,
-            )
+            # Create new user
             return self.repository.create(user_id, display_name)
 
     def get_user(self, user_id: str) -> Optional[User]:
