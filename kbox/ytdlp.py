@@ -19,12 +19,37 @@ if TYPE_CHECKING:
     from .config_manager import ConfigManager
 
 
+class _YtdlpLogAdapter:
+    """Routes yt-dlp's internal messages through a stdlib logger instead of stdout."""
+
+    def __init__(self, logger: logging.Logger):
+        self._logger = logger
+
+    def debug(self, msg: str) -> None:
+        # yt-dlp prefixes its own verbose/internal messages with "[debug] ";
+        # everything else (progress, status) is user-facing info.
+        if msg.startswith("[debug] "):
+            self._logger.debug(msg)
+        else:
+            self._logger.info(msg)
+
+    def info(self, msg: str) -> None:
+        self._logger.info(msg)
+
+    def warning(self, msg: str) -> None:
+        self._logger.warning(msg)
+
+    def error(self, msg: str) -> None:
+        self._logger.error(msg)
+
+
 class YtDlpClient(VideoProvider):
     """Client for YouTube operations via yt-dlp."""
 
     def __init__(self, config_manager: "ConfigManager"):
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
+        self._ydl_logger = _YtdlpLogAdapter(self.logger)
 
         self._min_interval = 2.0  # seconds between calls
         self._last_call: float = 0.0
@@ -60,7 +85,12 @@ class YtDlpClient(VideoProvider):
         search_query = f"{query} karaoke"
         self.logger.debug("Searching YouTube via yt-dlp: %s", search_query)
 
-        ydl_opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist"}
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": "in_playlist",
+            "logger": self._ydl_logger,
+        }
 
         try:
             self._rate_limit()
@@ -105,7 +135,7 @@ class YtDlpClient(VideoProvider):
             Video metadata dict, or None on failure.
         """
         url = f"https://www.youtube.com/watch?v={video_id}"
-        ydl_opts = {"quiet": True, "no_warnings": True}
+        ydl_opts = {"quiet": True, "no_warnings": True, "logger": self._ydl_logger}
 
         try:
             self._rate_limit()
@@ -156,8 +186,12 @@ class YtDlpClient(VideoProvider):
             ydl_opts = {
                 "format": f"bestvideo[height<={max_res}]+bestaudio/best",
                 "outtmpl": output_template,
-                "quiet": False,
+                # With a logger set, yt-dlp routes all output (including progress)
+                # through it regardless of quiet, so quiet just avoids a raw-print
+                # fallback; warnings still need no_warnings=False to surface.
+                "quiet": True,
                 "no_warnings": False,
+                "logger": self._ydl_logger,
                 "extractor_args": {
                     "youtube": {
                         "player_client": ["android", "web"],
