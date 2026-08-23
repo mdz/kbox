@@ -24,6 +24,9 @@ from ..user import UserManager
 from ..video_library import VideoLibrary
 
 logger = logging.getLogger(__name__)
+# Root logger stays at INFO (DEBUG globally is too spammy from third-party
+# libs like httpx/litellm); opt this logger in on its own.
+logger.setLevel(logging.DEBUG)
 
 
 # Request models
@@ -1038,6 +1041,21 @@ def create_app(
             # First registration - bind this user_id to session
             user_id = request_data.user_id
             request.session["user_id"] = user_id
+
+        if user_mgr.get_user(user_id) is None:
+            # About to create a new identity. Log enough to tell apart the two
+            # root causes of identity churn: the client never had a UUID to
+            # send (real client-side storage loss) vs. the client sent a UUID
+            # that we simply didn't recognize (a lookup/session bug).
+            logger.debug(
+                "[DEBUG] Creating new user identity: user_id=%r client_sent_uuid=%s "
+                "session_already_bound=%s display_name=%r user_agent=%r",
+                user_id,
+                bool(user_id),
+                bool(session_user_id),
+                request_data.display_name,
+                request.headers.get("user-agent"),
+            )
 
         user = user_mgr.get_or_create_user(user_id=user_id, display_name=request_data.display_name)
         return user
