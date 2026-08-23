@@ -18,6 +18,7 @@ from .overlay import generate_qr_code
 from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
 from .queue import QueueManager
+from .session import SessionManager
 from .song_metadata import SongMetadataExtractor
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
@@ -100,14 +101,20 @@ class KboxServer:
             llm_client=self.llm_client,
         )
 
+        # SessionManager tracks party sessions (bookended by clear-queue).
+        # Sessions are created lazily on first write — no startup-time
+        # initialization is required.
+        self.session_manager = SessionManager(self.database, self.config_manager)
+
         # Initialize queue manager with video library and metadata extractor
         self.queue_manager = QueueManager(
             self.database,
             video_library=self.video_library,
             metadata_extractor=self.metadata_extractor,
+            session_manager=self.session_manager,
         )
         self.user_manager = UserManager(self.database)
-        self.history_manager = HistoryManager(self.database)
+        self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
 
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(self.config_manager, self)
