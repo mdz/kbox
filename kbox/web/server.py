@@ -975,7 +975,12 @@ def create_app(
             user_id = request_data.user_id
             request.session["user_id"] = user_id
 
-        user = user_mgr.get_or_create_user(user_id=user_id, display_name=request_data.display_name)
+        user = user_mgr.get_or_create_user(
+            user_id=user_id,
+            display_name=request_data.display_name,
+            user_agent=request.headers.get("user-agent"),
+            session_already_bound=bool(session_user_id),
+        )
         return user
 
     # History endpoints
