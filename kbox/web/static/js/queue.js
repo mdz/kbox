@@ -277,14 +277,36 @@ export async function clearQueue() {
     }
 }
 
+// Set once a 401 is seen, so loadQueue stops making requests instead of
+// retrying forever on every 1-second poll tick.
+let authExpired = false;
+
+function handleAuthExpired() {
+    authExpired = true;
+    const queueDiv = document.getElementById('queue-list');
+    if (queueDiv) {
+        queueDiv.innerHTML = `
+            <div style="text-align: center; color: #e74c3c; padding: 20px;">
+                <p>⚠️ Not authenticated.</p>
+                <p>Scan the QR code on the TV to (re)join, or <a href="/" style="color: #4a9eff;">reload the page</a>.</p>
+            </div>`;
+    }
+}
+
 // Load queue
 export async function loadQueue() {
+    if (authExpired) return;
     try {
         // Get queue and current playback status
         const [queueResponse, statusResponse] = await Promise.all([
             fetch('/api/queue'),
             fetch('/api/playback/status')
         ]);
+
+        if (queueResponse.status === 401 || statusResponse.status === 401) {
+            handleAuthExpired();
+            return;
+        }
 
         const queueData = await queueResponse.json();
         const statusData = await statusResponse.json();
