@@ -54,6 +54,7 @@ class QueueItem:
     content_path: Optional[str] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
+    session_id: Optional[int] = None
 
 
 @dataclass
@@ -68,6 +69,21 @@ class HistoryRecord:
     settings: SongSettings
     performance: Dict[str, Any]  # Performance metrics
     performed_at: Optional[datetime] = None
+    theme: Optional[str] = None
+    session_id: Optional[int] = None
+
+
+@dataclass
+class Session:
+    """A party session — a bounded period of queueing/singing activity.
+
+    Sessions are bookended by the clear-queue action: the current session
+    ends (ended_at set) and a fresh session begins.
+    """
+
+    id: int
+    created_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
     theme: Optional[str] = None
 
 
