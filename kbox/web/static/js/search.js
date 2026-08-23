@@ -142,7 +142,7 @@ export async function showAddSongModal(video) {
     // Fetch saved settings for this video and user (pitch preset, etc.)
     let savedPitch = 0;
     try {
-        const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}?user_id=${encodeURIComponent(userId)}`);
+        const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}`);
         if (settingsResponse.ok) {
             const settingsData = await settingsResponse.json();
             savedPitch = settingsData.settings?.pitch_semitones || 0;
