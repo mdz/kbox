@@ -806,6 +806,13 @@ class PlaybackController:
                     self.logger.error("Current song ID %s not found", self.current_song_id)
                     return False
                 target_position = current_song.position + 1
+
+                # If the current song is last in the queue, "next" is simply
+                # the end of the queue - clamp so we don't request a
+                # position past the max (which reorder() would reject).
+                queue = self.queue_manager.get_queue()
+                max_position = max((q.position for q in queue), default=target_position)
+                target_position = min(target_position, max_position)
             else:
                 target_position = 1
 
