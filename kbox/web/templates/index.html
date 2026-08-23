@@ -13,6 +13,9 @@
     <link rel="icon" href="/static/favicon.ico">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     <link rel="apple-touch-icon-precomposed" href="/static/apple-touch-icon-precomposed.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -36,6 +39,15 @@
             position: relative;
         }
 
+        .wordmark {
+            font-family: 'Baloo 2', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+        }
+
+        .wordmark-k { color: #b06bff; }
+        .wordmark-box { color: #ff3fa4; }
+
         .history-button {
             position: fixed;
             top: 15px;
@@ -43,7 +55,7 @@
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            background: #9b59b6;
+            background: #b06bff;
             color: #fff;
             border: none;
             font-size: 20px;
@@ -56,7 +68,7 @@
         }
 
         .history-button:hover {
-            background: #a569c6;
+            background: #c48bff;
             transform: scale(1.05);
         }
 
@@ -230,16 +242,16 @@
         }
 
         #suggest-button {
-            background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+            background: linear-gradient(135deg, #b06bff 0%, #7d4fc4 100%);
             border: none;
             font-weight: 500;
             transition: all 0.2s ease;
         }
 
         #suggest-button:hover:not(:disabled) {
-            background: linear-gradient(135deg, #a569c6 0%, #9b59b6 100%);
+            background: linear-gradient(135deg, #c48bff 0%, #b06bff 100%);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(155, 89, 182, 0.3);
+            box-shadow: 0 4px 12px rgba(176, 107, 255, 0.3);
         }
 
         #suggest-button:disabled {
@@ -251,7 +263,7 @@
         .suggestions-loading {
             text-align: center;
             padding: 30px;
-            color: #9b59b6;
+            color: #b06bff;
             font-size: 1.1em;
             animation: pulse-text 1.5s ease-in-out infinite;
         }
@@ -263,7 +275,7 @@
 
         .suggestions-header {
             padding: 10px 0;
-            color: #9b59b6;
+            color: #b06bff;
             font-weight: 600;
             font-size: 0.95em;
             border-bottom: 1px solid #444;
