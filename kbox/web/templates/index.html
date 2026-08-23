@@ -57,6 +57,30 @@
             transform: scale(1.05);
         }
 
+        .favorites-button {
+            position: fixed;
+            top: 15px;
+            right: 115px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #d4a017;
+            color: #fff;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .favorites-button:hover {
+            background: #e4b027;
+            transform: scale(1.05);
+        }
+
         .help-button {
             position: fixed;
             top: 15px;
@@ -315,6 +339,59 @@
         }
 
         .search-result-channel {
+            font-size: 0.9em;
+            color: #aaa;
+        }
+
+        .favorite-star {
+            width: auto;
+            padding: 0 8px;
+            margin: 0;
+            align-self: center;
+            background: none;
+            border: none;
+            color: #666;
+            font-size: 1.6em;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .favorite-star:hover {
+            color: #d4a017;
+        }
+
+        .favorite-star.favorited {
+            color: #d4a017;
+        }
+
+        .favorite-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .favorite-item img {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            margin-right: 10px;
+        }
+
+        .favorite-item-info {
+            flex: 1;
+        }
+
+        .favorite-item-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .favorite-item-channel {
             font-size: 0.9em;
             color: #aaa;
         }

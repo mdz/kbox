@@ -88,6 +88,16 @@ class Session:
 
 
 @dataclass
+class Favorite:
+    """A song a user has starred to remember for later, independent of the queue."""
+
+    user_id: str
+    video_id: str  # Opaque video ID like "youtube:abc123"
+    metadata: SongMetadata
+    created_at: Optional[datetime] = None
+
+
+@dataclass
 class ConfigEntry:
     """Configuration entry."""
 

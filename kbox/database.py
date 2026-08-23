@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from .models import (
     ConfigEntry,
+    Favorite,
     HistoryRecord,
     QueueItem,
     Session,
@@ -27,7 +28,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 5  # Incremented for sessions table + session_id columns
+    SCHEMA_VERSION = 6  # Incremented for favorites table
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -103,6 +104,10 @@ class Database:
             # a single retroactive session.
             self._create_sessions_table(cursor)
             self._add_session_id_columns(cursor)
+
+        if current_version < 6:
+            # Version 6: Add favorites table
+            self._create_favorites_table(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -305,6 +310,27 @@ class Database:
         """)
 
         self.logger.info("user_events table created")
+
+    def _create_favorites_table(self, cursor):
+        """Create favorites table for user-starred songs."""
+        self.logger.info("Creating favorites table...")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                song_metadata_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, video_id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_favorites_user_id
+            ON favorites (user_id, created_at DESC)
+        """)
+
+        self.logger.info("favorites table created")
 
     def _add_history_theme_column(self, cursor):
         """Add theme column to playback_history for existing databases."""
@@ -779,6 +805,81 @@ class HistoryRepository:
                     )
                 )
             return records
+        finally:
+            conn.close()
+
+
+class FavoriteRepository:
+    """Repository for favorite (starred) song operations."""
+
+    def __init__(self, database: Database):
+        self.database = database
+        self.logger = logging.getLogger(__name__)
+
+    def add(self, user_id: str, video_id: str, metadata: SongMetadata) -> None:
+        """Star a song for a user (idempotent - re-starring refreshes metadata)."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO favorites (user_id, video_id, song_metadata_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, video_id) DO UPDATE SET
+                    song_metadata_json = excluded.song_metadata_json
+            """,
+                (user_id, video_id, _encode_metadata(metadata)),
+            )
+            conn.commit()
+            self.logger.info("Favorited video_id=%s for user %s", video_id, user_id)
+        finally:
+            conn.close()
+
+    def remove(self, user_id: str, video_id: str) -> bool:
+        """Unstar a song for a user."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM favorites WHERE user_id = ? AND video_id = ?",
+                (user_id, video_id),
+            )
+            removed = cursor.rowcount > 0
+            conn.commit()
+            if removed:
+                self.logger.info("Unfavorited video_id=%s for user %s", video_id, user_id)
+            return removed
+        finally:
+            conn.close()
+
+    def get_user_favorites(self, user_id: str) -> List[Favorite]:
+        """Get all favorites for a user, newest first."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT user_id, video_id, song_metadata_json, created_at
+                FROM favorites
+                WHERE user_id = ?
+                ORDER BY created_at DESC, rowid DESC
+            """,
+                (user_id,),
+            )
+
+            favorites = []
+            for row in cursor.fetchall():
+                favorites.append(
+                    Favorite(
+                        user_id=row["user_id"],
+                        video_id=row["video_id"],
+                        metadata=_decode_metadata(row["song_metadata_json"]),
+                        created_at=datetime.fromisoformat(row["created_at"])
+                        if row["created_at"]
+                        else None,
+                    )
+                )
+            return favorites
         finally:
             conn.close()
 

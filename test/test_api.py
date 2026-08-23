@@ -20,6 +20,7 @@ from support.app_factory import (
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
+from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackState
 from kbox.queue import QueueManager
@@ -96,6 +97,7 @@ def app_components(
     user_manager = UserManager(temp_db)
     queue_manager = QueueManager(temp_db, video_library=mock_video_library)
     history_manager = HistoryManager(temp_db)
+    favorites_manager = FavoritesManager(temp_db)
 
     yield {
         "config": config_manager,
@@ -105,6 +107,7 @@ def app_components(
         "streaming": mock_streaming,
         "playback": mock_playback,
         "history": history_manager,
+        "favorites": favorites_manager,
         "suggestion_engine": mock_suggestion_engine,
     }
 
@@ -122,6 +125,7 @@ def client(app_components):
         config_manager=app_components["config"],
         user_manager=app_components["user"],
         history_manager=app_components["history"],
+        favorites_manager=app_components["favorites"],
         suggestion_engine=app_components["suggestion_engine"],
         streaming_controller=app_components["streaming"],
     )
@@ -862,6 +866,99 @@ class TestHistoryEndpoints:
 
 
 # =============================================================================
+# Favorites Endpoints
+# =============================================================================
+
+
+class TestFavoritesEndpoints:
+    """Tests for favorites (starred songs) endpoints."""
+
+    def test_add_favorite_requires_auth(self, client):
+        """POST /api/favorites - requires an authenticated session."""
+        response = client.post(
+            "/api/favorites",
+            json={"video_id": "youtube:vid1", "title": "Test Song"},
+        )
+        assert response.status_code == 401
+
+    def test_add_and_get_favorite(self, client):
+        """POST /api/favorites then GET /api/favorites/{user_id} - round trip."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.post(
+            "/api/favorites",
+            json={
+                "video_id": "youtube:vid1",
+                "title": "Test Song",
+                "duration_seconds": 180,
+                "thumbnail_url": "http://example.com/thumb.jpg",
+                "channel": "Test Channel",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "favorited"
+
+        response = client.get(f"/api/favorites/{ALICE_ID}")
+        assert response.status_code == 200
+        favorites = response.json()["favorites"]
+        assert len(favorites) == 1
+        assert favorites[0]["video_id"] == "youtube:vid1"
+        assert favorites[0]["title"] == "Test Song"
+        assert favorites[0]["duration_seconds"] == 180
+        assert favorites[0]["thumbnail_url"] == "http://example.com/thumb.jpg"
+        assert favorites[0]["channel"] == "Test Channel"
+
+    def test_get_favorites_empty(self, client):
+        """GET /api/favorites/{user_id} - empty favorites list."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.get(f"/api/favorites/{ALICE_ID}")
+        assert response.status_code == 200
+        assert response.json()["favorites"] == []
+
+    def test_get_favorites_requires_own_user(self, client):
+        """GET /api/favorites/{user_id} - cannot view another user's favorites."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.get(f"/api/favorites/{BOB_ID}")
+        assert response.status_code == 403
+
+    def test_remove_favorite(self, client):
+        """DELETE /api/favorites/{video_id} - unstars a song."""
+        set_user(client, ALICE_ID, "Alice")
+        client.post("/api/favorites", json={"video_id": "youtube:vid1", "title": "Test Song"})
+
+        response = client.delete("/api/favorites/youtube:vid1")
+        assert response.status_code == 200
+        assert response.json()["status"] == "unfavorited"
+
+        response = client.get(f"/api/favorites/{ALICE_ID}")
+        assert response.json()["favorites"] == []
+
+    def test_remove_favorite_requires_auth(self, client):
+        """DELETE /api/favorites/{video_id} - requires an authenticated session."""
+        response = client.delete("/api/favorites/youtube:vid1")
+        assert response.status_code == 401
+
+    def test_favorites_are_private_between_users(self, client, alice, bob):
+        """One user's favorites don't show up for another user."""
+        # Sessions are cookie-bound per client, so use separate clients per user
+        # (the same client re-registering as a different user_id is treated as
+        # impersonation and ignored - see register_user in server.py).
+        bob_client = TestClient(client.app)
+
+        set_user(client, ALICE_ID, "Alice")
+        client.post("/api/favorites", json={"video_id": "youtube:vid1", "title": "Alice's Song"})
+
+        set_user(bob_client, BOB_ID, "Bob")
+        bob_client.post("/api/favorites", json={"video_id": "youtube:vid2", "title": "Bob's Song"})
+
+        response = bob_client.get(f"/api/favorites/{BOB_ID}")
+        assert len(response.json()["favorites"]) == 1
+        assert response.json()["favorites"][0]["video_id"] == "youtube:vid2"
+
+
+# =============================================================================
 # Web UI Endpoint - Smoke Test
 # =============================================================================
 
@@ -894,6 +991,7 @@ class TestGuestAuthentication:
             config_manager=app_components["config"],
             user_manager=app_components["user"],
             history_manager=app_components["history"],
+            favorites_manager=app_components["favorites"],
             streaming_controller=app_components["streaming"],
             access_token="test-secret-token-123",
             session_secret="test-session-secret",

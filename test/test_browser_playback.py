@@ -126,6 +126,7 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
     """POST /api/display/song-ended signals song finished to playback controller."""
     from fastapi.testclient import TestClient
 
+    from kbox.favorites import FavoritesManager
     from kbox.history import HistoryManager
     from kbox.playback import PlaybackController
     from kbox.video_library import VideoLibrary
@@ -144,6 +145,7 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
 
     queue_manager = QueueManager(temp_db, video_library=video_library)
     history_manager = HistoryManager(temp_db)
+    favorites_manager = FavoritesManager(temp_db)
 
     mock_streaming = Mock()
     mock_streaming.set_eos_callback = Mock()
@@ -166,6 +168,7 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
             config_manager=config,
             user_manager=user_manager,
             history_manager=history_manager,
+            favorites_manager=favorites_manager,
             streaming_controller=mock_streaming,
         )
         client = TestClient(app)
