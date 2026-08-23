@@ -862,7 +862,7 @@ class FavoriteRepository:
                 SELECT user_id, video_id, song_metadata_json, created_at
                 FROM favorites
                 WHERE user_id = ?
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, rowid DESC
             """,
                 (user_id,),
             )
