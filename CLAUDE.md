@@ -37,15 +37,13 @@ Guiding question: "Would someone cloning this repo to USE the software need this
 
 This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.
 
-**Always commit locally as soon as changes are done and pytest/lint/mypy pass — commit is for work preservation and is cheap and reversible. Never withhold a local commit waiting on e2e verification.** Uncommitted work is what gets lost (to a crashed session, a discarded worktree, a bad `git reset`); a local commit costs nothing and can always be amended, squashed, or reverted later.
-
-The e2e gate applies to *merge/PR/push readiness*, not to local commits. Before merging or pushing substantial changes (especially to streaming, playback, queue, or pipeline code):
+Before committing substantial changes (especially to streaming, playback, queue, or pipeline code):
 
 1. Run pytest as a quick sanity check
 2. Ask the user to test end-to-end — run the actual app, play a song, verify it works
-3. Only merge/push after the user confirms e2e testing passes
+3. Only commit after user confirms e2e testing passes
 
-Don't merge or push based on pytest alone for changes that could affect the real pipeline — but do commit locally regardless.
+Don't commit based on pytest alone for changes that could affect the real pipeline.
 
 # Tech Stack
 
