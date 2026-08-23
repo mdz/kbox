@@ -24,6 +24,10 @@ class UserManager:
         self.database = database
         self.repository = UserRepository(database)
         self.logger = logging.getLogger(__name__)
+        # Root logger stays at INFO (DEBUG globally is too spammy from
+        # third-party libs like httpx/litellm); opt this logger in on its
+        # own so the new-identity debug logging above is actually emitted.
+        self.logger.setLevel(logging.DEBUG)
 
     def get_or_create_user(
         self,
