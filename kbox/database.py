@@ -12,14 +12,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .models import ConfigEntry, HistoryRecord, QueueItem, SongMetadata, SongSettings, User
+from .models import (
+    ConfigEntry,
+    HistoryRecord,
+    QueueItem,
+    Session,
+    SongMetadata,
+    SongSettings,
+    User,
+)
 
 
 class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 4  # Incremented for user_events table
+    SCHEMA_VERSION = 5  # Incremented for sessions table + session_id columns
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -88,6 +96,13 @@ class Database:
             # and theme column to playback_history
             self._create_user_events_table(cursor)
             self._add_history_theme_column(cursor)
+
+        if current_version < 5:
+            # Version 5: Add sessions table and session_id columns on
+            # queue_items and playback_history. Backfill existing rows to
+            # a single retroactive session.
+            self._create_sessions_table(cursor)
+            self._add_session_id_columns(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -298,6 +313,95 @@ class Database:
         if "theme" not in columns:
             self.logger.info("Adding theme column to playback_history...")
             cursor.execute("ALTER TABLE playback_history ADD COLUMN theme TEXT")
+
+    def _create_sessions_table(self, cursor):
+        """Create sessions table."""
+        self.logger.info("Creating sessions table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP,
+                theme TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_current
+            ON sessions (ended_at, created_at DESC)
+        """)
+
+    def _add_session_id_columns(self, cursor):
+        """Add session_id columns to queue_items and playback_history and
+        backfill existing rows to a single retroactive session."""
+        # Check which tables need the column
+        cursor.execute("PRAGMA table_info(queue_items)")
+        queue_cols = {row["name"] for row in cursor.fetchall()}
+        cursor.execute("PRAGMA table_info(playback_history)")
+        history_cols = {row["name"] for row in cursor.fetchall()}
+
+        need_queue = "session_id" not in queue_cols
+        need_history = "session_id" not in history_cols
+
+        if not (need_queue or need_history):
+            return
+
+        # Find earliest created_at / performed_at across existing rows to
+        # use as the retroactive session's created_at.
+        earliest = None
+        if need_queue:
+            cursor.execute("SELECT MIN(created_at) AS m FROM queue_items")
+            row = cursor.fetchone()
+            if row and row["m"]:
+                earliest = row["m"]
+        if need_history:
+            cursor.execute("SELECT MIN(performed_at) AS m FROM playback_history")
+            row = cursor.fetchone()
+            if row and row["m"]:
+                if earliest is None or row["m"] < earliest:
+                    earliest = row["m"]
+
+        # Check whether there's any existing row that needs backfilling.
+        has_existing = False
+        if need_queue:
+            cursor.execute("SELECT COUNT(*) AS c FROM queue_items")
+            if cursor.fetchone()["c"] > 0:
+                has_existing = True
+        if not has_existing and need_history:
+            cursor.execute("SELECT COUNT(*) AS c FROM playback_history")
+            if cursor.fetchone()["c"] > 0:
+                has_existing = True
+
+        retro_session_id = None
+        if has_existing:
+            # Create a single closed session for all pre-existing rows.
+            if earliest is not None:
+                cursor.execute(
+                    "INSERT INTO sessions (created_at, ended_at) VALUES (?, CURRENT_TIMESTAMP)",
+                    (earliest,),
+                )
+            else:
+                cursor.execute("INSERT INTO sessions (ended_at) VALUES (CURRENT_TIMESTAMP)")
+            retro_session_id = cursor.lastrowid
+            self.logger.info(
+                "Created retroactive session %s for pre-existing queue/history rows",
+                retro_session_id,
+            )
+
+        if need_queue:
+            cursor.execute("ALTER TABLE queue_items ADD COLUMN session_id INTEGER")
+            if retro_session_id is not None:
+                cursor.execute(
+                    "UPDATE queue_items SET session_id = ? WHERE session_id IS NULL",
+                    (retro_session_id,),
+                )
+
+        if need_history:
+            cursor.execute("ALTER TABLE playback_history ADD COLUMN session_id INTEGER")
+            if retro_session_id is not None:
+                cursor.execute(
+                    "UPDATE playback_history SET session_id = ? WHERE session_id IS NULL",
+                    (retro_session_id,),
+                )
 
     def get_connection(self):
         """
@@ -566,6 +670,7 @@ class HistoryRepository:
         settings: SongSettings,
         performance: Dict[str, Any],
         theme: Optional[str] = None,
+        session_id: Optional[int] = None,
     ) -> int:
         """Record a performance in history."""
         conn = self.database.get_connection()
@@ -580,8 +685,9 @@ class HistoryRepository:
                     song_metadata_json,
                     settings_json,
                     performance_json,
-                    theme
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    theme,
+                    session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     user_id,
@@ -591,6 +697,7 @@ class HistoryRepository:
                     _encode_settings(settings),
                     self._encode_performance(performance),
                     theme or None,
+                    session_id,
                 ),
             )
             conn.commit()
@@ -643,7 +750,8 @@ class HistoryRepository:
                     song_metadata_json,
                     settings_json,
                     performance_json,
-                    theme
+                    theme,
+                    session_id
                 FROM playback_history
                 WHERE user_id = ?
                 ORDER BY performed_at DESC, id DESC
@@ -667,6 +775,7 @@ class HistoryRepository:
                         if row["performed_at"]
                         else None,
                         theme=row["theme"],
+                        session_id=row["session_id"],
                     )
                 )
             return records
@@ -726,6 +835,7 @@ class QueueRepository:
             content_path=content_info.get("download_path"),
             error_message=content_info.get("error_message"),
             created_at=datetime.fromisoformat(created_at) if created_at else None,
+            session_id=self._row_get(row, "session_id"),
         )
 
     def add(
@@ -734,6 +844,7 @@ class QueueRepository:
         video_id: str,
         metadata: SongMetadata,
         settings: SongSettings,
+        session_id: Optional[int] = None,
     ) -> int:
         """Add a song to the end of the queue."""
         conn = self.database.get_connection()
@@ -750,8 +861,8 @@ class QueueRepository:
                 """
                 INSERT INTO queue_items
                 (position, user_id, user_name, video_id, song_metadata_json,
-                 settings_json, download_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 settings_json, download_status, session_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     next_position,
@@ -761,6 +872,7 @@ class QueueRepository:
                     _encode_metadata(metadata),
                     _encode_settings(settings),
                     self.STATUS_PENDING,
+                    session_id,
                 ),
             )
 
@@ -850,7 +962,7 @@ class QueueRepository:
             cursor.execute("""
                 SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
-                       download_status, created_at
+                       download_status, created_at, session_id
                 FROM queue_items
                 ORDER BY position
             """)
@@ -1079,7 +1191,7 @@ class QueueRepository:
                 """
                 SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
-                       download_status, created_at
+                       download_status, created_at, session_id
                 FROM queue_items
                 WHERE id = ?
             """,
@@ -1091,6 +1203,103 @@ class QueueRepository:
                 return None
 
             return self._row_to_queue_item(result)
+        finally:
+            conn.close()
+
+
+class SessionRepository:
+    """Repository for party session operations.
+
+    A session represents a bounded period of karaoke activity, bookended
+    by the clear-queue action. Queue items and playback history rows carry
+    a session_id so future features can group per-party data.
+    """
+
+    def __init__(self, database: Database):
+        self.database = database
+        self.logger = logging.getLogger(__name__)
+
+    @staticmethod
+    def _row_to_session(row: sqlite3.Row) -> Session:
+        return Session(
+            id=row["id"],
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
+            theme=row["theme"],
+        )
+
+    def create(self, theme: Optional[str] = None) -> Session:
+        """Create a new session with the given theme and return it."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO sessions (theme) VALUES (?)",
+                (theme or None,),
+            )
+            session_id = cursor.lastrowid
+            conn.commit()
+            cursor.execute(
+                "SELECT id, created_at, ended_at, theme FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            self.logger.info("Created session %s (theme=%r)", session_id, theme)
+            return self._row_to_session(row)
+        finally:
+            conn.close()
+
+    def get_current(self) -> Optional[Session]:
+        """Return the most recent still-open session, if any."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, created_at, ended_at, theme
+                FROM sessions
+                WHERE ended_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+            return self._row_to_session(row) if row else None
+        finally:
+            conn.close()
+
+    def get_by_id(self, session_id: int) -> Optional[Session]:
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, created_at, ended_at, theme FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_session(row) if row else None
+        finally:
+            conn.close()
+
+    def end(self, session_id: int) -> bool:
+        """Mark a session ended. No-op if already ended. Returns True if it
+        was open and is now closed, False otherwise."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET ended_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND ended_at IS NULL
+                """,
+                (session_id,),
+            )
+            updated = cursor.rowcount > 0
+            conn.commit()
+            if updated:
+                self.logger.info("Ended session %s", session_id)
+            return updated
         finally:
             conn.close()
 

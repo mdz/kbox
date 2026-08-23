@@ -9,6 +9,9 @@ import {
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
+// Note: window.fetch is patched in auth.js to retry once on a 401/403 to
+// /api/* if the session's identity got clobbered — no special handling
+// needed here.
 
 // Render a list of tappable search-result rows into a container.
 // Used for search results and suggestions - selecting a row always goes
@@ -148,9 +151,10 @@ export async function showAddSongModal(video) {
         titleEl.textContent = 'Add to Queue';
         confirmBtn.textContent = 'Add to Queue';
 
-        // Fetch saved settings for this video and user (pitch preset, etc.)
+        // Fetch saved settings for this video (pitch preset, etc.) - identity
+        // comes from the session, not a query param.
         try {
-            const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}?user_id=${encodeURIComponent(userId)}`);
+            const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}`);
             if (settingsResponse.ok) {
                 const settingsData = await settingsResponse.json();
                 savedPitch = settingsData.settings?.pitch_semitones || 0;

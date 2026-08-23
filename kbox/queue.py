@@ -13,6 +13,7 @@ from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
+    from .session import SessionManager
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
 
@@ -30,6 +31,7 @@ class QueueManager:
         database: Database,
         video_library: "VideoLibrary",
         metadata_extractor: Optional["SongMetadataExtractor"] = None,
+        session_manager: Optional["SessionManager"] = None,
     ):
         """
         Initialize QueueManager.
@@ -38,12 +40,16 @@ class QueueManager:
             database: Database instance for persistence
             video_library: VideoLibrary for video search/download
             metadata_extractor: Optional SongMetadataExtractor for LLM-based extraction
+            session_manager: Optional SessionManager; when provided, new queue
+                items are tagged with the current session and clear_queue
+                rotates the session.
         """
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
+        self.session_manager = session_manager
         self.logger = logging.getLogger(__name__)
 
         self._content_timeout = timedelta(minutes=10)
@@ -207,8 +213,16 @@ class QueueManager:
         )
         settings = SongSettings(pitch_semitones=pitch_semitones)
 
+        session_id = None
+        if self.session_manager is not None:
+            session_id = self.session_manager.get_or_create_current().id
+
         item_id = self.repository.add(
-            user=user, video_id=video_id, metadata=metadata, settings=settings
+            user=user,
+            video_id=video_id,
+            metadata=metadata,
+            settings=settings,
+            session_id=session_id,
         )
 
         self.logger.info(
@@ -353,8 +367,16 @@ class QueueManager:
         return None
 
     def clear_queue(self) -> int:
-        """Clear all items from the queue."""
-        return self.repository.clear()
+        """Clear all items from the queue and rotate the party session.
+
+        Clearing the queue is the ritual that bookends a party: the current
+        session is marked ended and a fresh session is started (snapshotting
+        the currently-configured party theme, if any).
+        """
+        count = self.repository.clear()
+        if self.session_manager is not None:
+            self.session_manager.end_and_rotate()
+        return count
 
     def update_content_status(
         self,

@@ -94,13 +94,19 @@ document.addEventListener('DOMContentLoaded', async function() {
     updateOperatorButton();
     setupSearchHandlers();
 
-    // Initialize user identity and AWAIT registration with server.
-    // This must complete before any other API calls so the session cookie
-    // has user_id set. Otherwise concurrent responses overwrite the cookie.
+    // Initialize user identity and AWAIT registration with server. For a
+    // brand-new guest this doesn't resolve until they submit the name modal
+    // and registerUser() completes (see auth.js). This must complete before
+    // any other API calls so the session cookie has user_id set — otherwise
+    // a concurrent poll response can overwrite the cookie and lose it.
     await initializeUserIdentity();
 
-    // Now safe to make API calls - session cookie has user_id
-    checkOperatorStatus();
+    // Now safe to make API calls - session cookie has user_id.
+    // Await operator status before the first loadQueue() so its initial
+    // render (which shows/hides #playback-controls-section based on
+    // isOperator) is correct immediately, instead of depending on a later
+    // polling tick to catch up.
+    await checkOperatorStatus();
     loadQueue();
 
     // Auto-refresh queue every 1 second

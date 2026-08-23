@@ -6,10 +6,13 @@ and playback metrics.
 """
 
 import logging
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from .database import Database, HistoryRepository
 from .models import HistoryRecord, SongMetadata, SongSettings
+
+if TYPE_CHECKING:
+    from .session import SessionManager
 
 
 class HistoryManager:
@@ -20,15 +23,22 @@ class HistoryManager:
     Operates independently from the queue - history is permanent, queue is ephemeral.
     """
 
-    def __init__(self, database: Database):
+    def __init__(
+        self,
+        database: Database,
+        session_manager: Optional["SessionManager"] = None,
+    ):
         """
         Initialize history manager.
 
         Args:
             database: Database instance for persistence
+            session_manager: Optional SessionManager; when provided, recorded
+                performances are tagged with the current session.
         """
         self.database = database
         self.repository = HistoryRepository(database)
+        self.session_manager = session_manager
         self.logger = logging.getLogger(__name__)
 
     def record_performance(
@@ -67,6 +77,10 @@ class HistoryManager:
             "completion_percentage": completion_percentage,
         }
 
+        session_id = None
+        if self.session_manager is not None:
+            session_id = self.session_manager.get_or_create_current().id
+
         history_id = self.repository.record(
             user_id=user_id,
             user_name=user_name,
@@ -75,6 +89,7 @@ class HistoryManager:
             settings=settings,
             performance=performance,
             theme=theme,
+            session_id=session_id,
         )
 
         self.logger.info(

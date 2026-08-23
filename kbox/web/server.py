@@ -211,6 +211,33 @@ def create_app(
     # Middleware is added in LIFO order (last added runs first)
     # So we add GuestAuthMiddleware BEFORE SessionMiddleware so it runs AFTER
 
+    class RequestLogMiddleware(BaseHTTPMiddleware):
+        """Logs each request with the guest's user_id/display_name instead of IP.
+
+        All guest traffic arrives via a Cloudflare Tunnel sidecar, so every
+        request in uvicorn's access log shows the same source IP. user_id
+        (from the session cookie) is the identity that actually distinguishes
+        guests/devices.
+        """
+
+        async def dispatch(self, request: Request, call_next):
+            response = await call_next(request)
+            user_id = request.session.get("user_id")
+            who = "anonymous"
+            if user_id:
+                user = user_manager.get_user(user_id)
+                who = f"{user.display_name} ({user_id})" if user else user_id
+            logger.info(
+                "%s %s -> %s user=%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                who,
+            )
+            return response
+
+    app.add_middleware(RequestLogMiddleware)
+
     # Add guest authentication middleware (if access token is configured)
     if access_token:
 

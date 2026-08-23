@@ -6,6 +6,7 @@ Initializes all components and starts the server.
 
 import logging
 import secrets
+import sys
 
 import uvicorn
 
@@ -17,6 +18,7 @@ from .overlay import generate_qr_code
 from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
 from .queue import QueueManager
+from .session import SessionManager
 from .song_metadata import SongMetadataExtractor
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
@@ -27,8 +29,14 @@ from .web.server import create_app
 from .youtube import YouTubeAPI
 from .ytdlp import YtDlpClient
 
+# stream=sys.stdout: uvicorn's access logger and yt-dlp both write directly to
+# stdout, and log capture (e.g. `docker compose logs kbox > file`) only follows
+# each stream to its matching fd. Without this, basicConfig's stderr default
+# silently drops every app-level log line from a captured party log.
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,14 +101,20 @@ class KboxServer:
             llm_client=self.llm_client,
         )
 
+        # SessionManager tracks party sessions (bookended by clear-queue).
+        # Sessions are created lazily on first write — no startup-time
+        # initialization is required.
+        self.session_manager = SessionManager(self.database, self.config_manager)
+
         # Initialize queue manager with video library and metadata extractor
         self.queue_manager = QueueManager(
             self.database,
             video_library=self.video_library,
             metadata_extractor=self.metadata_extractor,
+            session_manager=self.session_manager,
         )
         self.user_manager = UserManager(self.database)
-        self.history_manager = HistoryManager(self.database)
+        self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
 
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(self.config_manager, self)
