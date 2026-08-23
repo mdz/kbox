@@ -492,6 +492,92 @@ class TestSchemaMigrationV3ToV4:
             os.unlink(path)
 
 
+class TestSchemaMigrationV6ToV7:
+    """Test migration from v6 (no normalized_name/icon/color/last_seen_at) to v7.
+
+    Only `users` needs to exist pre-migration: at current_version=6, every
+    earlier `if current_version < N` migration block is skipped (6 is not
+    less than 2..6), so this migration runs in isolation against whatever
+    `users` rows already exist — exactly the real-world upgrade path.
+    """
+
+    def _create_v6_db(self, path, users=()):
+        conn = sqlite3.connect(path)
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        cursor.execute("INSERT INTO schema_version (version) VALUES (6)")
+        cursor.execute("""
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        for user_id, display_name in users:
+            cursor.execute(
+                "INSERT INTO users (id, display_name) VALUES (?, ?)", (user_id, display_name)
+            )
+        conn.commit()
+        conn.close()
+
+    def test_adds_identity_columns(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v6_db(path)
+
+        try:
+            db = Database(db_path=path)
+            conn = db.get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(users)")
+                columns = {row["name"] for row in cursor.fetchall()}
+                assert {"normalized_name", "icon", "color", "last_seen_at"} <= columns
+            finally:
+                conn.close()
+            db.close()
+        finally:
+            os.unlink(path)
+
+    def test_backfills_existing_rows(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v6_db(path, users=[("u1", "  Vlad  "), ("u2", "Lessa")])
+
+        try:
+            db = Database(db_path=path)
+            repo = UserRepository(db)
+
+            vlad = repo.get_by_id("u1")
+            assert vlad.normalized_name == "vlad"
+            assert vlad.icon
+            assert vlad.color
+
+            # Backfilled rows are findable by the same lookup a fresh guest
+            # typing their name would use.
+            assert [u.id for u in repo.find_by_normalized_name("vlad")] == ["u1"]
+            db.close()
+        finally:
+            os.unlink(path)
+
+    def test_migration_is_idempotent(self):
+        """Running the schema upgrade twice against the same db is safe."""
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v6_db(path, users=[("u1", "Vlad")])
+
+        try:
+            Database(db_path=path).close()
+            db2 = Database(db_path=path)  # re-run schema upgrade on a v7 db
+            repo = UserRepository(db2)
+            assert repo.get_by_id("u1").normalized_name == "vlad"
+            db2.close()
+        finally:
+            os.unlink(path)
+
+
 # ============================================================================
 # UserRepository Tests
 # ============================================================================
@@ -527,6 +613,24 @@ class TestUserRepository:
         user_repo.create("u2", "Bob")
         assert user_repo.get_by_id("u1").display_name == "Alice"
         assert user_repo.get_by_id("u2").display_name == "Bob"
+
+    def test_create_sets_normalized_name(self, user_repo):
+        user = user_repo.create("u1", "  Matt  ")
+        assert user.normalized_name == "matt"
+
+    def test_update_display_name_recomputes_normalized_name(self, user_repo):
+        user_repo.create("u1", "Mike")
+        user_repo.update_display_name("u1", "Mike B.")
+        assert user_repo.get_by_id("u1").normalized_name == "mike b."
+
+    def test_find_by_normalized_name_no_match(self, user_repo):
+        user_repo.create("u1", "Vlad")
+        assert user_repo.find_by_normalized_name("lessa") == []
+
+    def test_find_by_normalized_name_matches(self, user_repo):
+        user_repo.create("u1", "Vlad")
+        found = user_repo.find_by_normalized_name("vlad")
+        assert [u.id for u in found] == ["u1"]
 
 
 # ============================================================================

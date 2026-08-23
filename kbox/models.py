@@ -11,11 +11,23 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class User:
-    """User entity with UUID-based identity."""
+    """User entity with UUID-based identity.
+
+    Identity is self-declared and unverified by design (see
+    ldocs/GUEST_IDENTITY_CONTINUITY.md): `id` is the durable key everything
+    else foreign-keys against, `normalized_name` is a lookup path onto it
+    (not itself unique — a name shared by two real guests is an expected,
+    designed-for case), and `icon`/`color` exist purely to make same-named
+    guests visually distinguishable in a recognition list.
+    """
 
     id: str
     display_name: str
     created_at: Optional[datetime] = None
+    normalized_name: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
 
 
 @dataclass

@@ -8,6 +8,19 @@
     </div>
 </div>
 
+<!-- Name Recognition Modal: shown when a typed name matches one or more
+     existing identities. Guest either recognizes themselves or says
+     they're new — see ldocs/GUEST_IDENTITY_CONTINUITY.md. The candidate
+     list itself is built in JS (auth.js) via DOM APIs, not innerHTML,
+     since display names and song titles are free text. -->
+<div class="modal-overlay hidden" id="recognition-modal" style="display: none;">
+    <div class="modal">
+        <h2 id="recognition-modal-title">Is this you?</h2>
+        <div id="recognition-candidate-list"></div>
+        <button id="recognition-new-button" onclick="chooseNewIdentity()">None of these — I'm new</button>
+    </div>
+</div>
+
 <!-- Add Song Confirmation Modal -->
 <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
     <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
