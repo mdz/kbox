@@ -37,13 +37,13 @@ Guiding question: "Would someone cloning this repo to USE the software need this
 
 This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.
 
-Before committing substantial changes (especially to streaming, playback, queue, or pipeline code):
+Before a PR with substantial changes (especially to streaming, playback, queue, or pipeline code) can be merged:
 
 1. Run pytest as a quick sanity check
 2. Ask the user to test end-to-end — run the actual app, play a song, verify it works
-3. Only commit after user confirms e2e testing passes
+3. Only merge after the user confirms e2e testing passes
 
-Don't commit based on pytest alone for changes that could affect the real pipeline.
+Don't merge based on pytest alone for changes that could affect the real pipeline.
 
 # Tech Stack
 
