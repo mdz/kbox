@@ -37,6 +37,16 @@ class AddSongRequest(BaseModel):
     pitch_semitones: int = 0
 
 
+class ReplaceSongRequest(BaseModel):
+    """Request model for replacing a queue item's video in place."""
+
+    video_id: str  # Opaque video ID like "youtube:abc123"
+    title: str
+    duration_seconds: Optional[int] = None
+    thumbnail_url: Optional[str] = None
+    channel: Optional[str] = None
+
+
 class ReorderRequest(BaseModel):
     new_position: int
 
@@ -447,6 +457,42 @@ def create_app(
         if not queue_mgr.remove_song(item_id):
             raise HTTPException(status_code=404, detail="Queue item not found")
         return {"status": "removed"}
+
+    @app.post("/api/queue/{item_id}/replace")
+    async def replace_song(
+        item_id: int,
+        request_data: ReplaceSongRequest,
+        queue_mgr: QueueManager = Depends(get_queue_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
+        is_operator: bool = Depends(check_operator),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
+    ):
+        """
+        Replace a queue item's song in place (e.g. wrong version was added).
+
+        Keeps the item's queue position and attribution unchanged. Operators
+        can replace any song; users can only replace their own.
+        User identity is determined from session to prevent impersonation.
+        """
+        item = queue_mgr.get_item(item_id)
+        if not item:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+
+        if not is_operator:
+            if not current_user_id or current_user_id != item.user_id:
+                raise HTTPException(status_code=403, detail="You can only replace songs you added")
+
+        if not playback.replace_song(
+            item_id,
+            video_id=request_data.video_id,
+            title=request_data.title,
+            duration_seconds=request_data.duration_seconds,
+            thumbnail_url=request_data.thumbnail_url,
+            channel=request_data.channel,
+        ):
+            raise HTTPException(status_code=404, detail="Queue item not found")
+
+        return {"status": "replaced"}
 
     @app.patch("/api/queue/{item_id}/position")
     async def reorder_song(

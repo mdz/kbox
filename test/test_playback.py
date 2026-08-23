@@ -540,6 +540,129 @@ def test_jump_to_song_logs_position(
     mock_streaming_controller.load_file.assert_called_once_with("/path/to/song.mp4")
 
 
+def test_replace_song_not_currently_playing(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Replacing a song that isn't playing has no playback side effects."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    target_item = create_mock_queue_item(id=2, user_name="Bob")
+    mock_queue_manager.get_item.return_value = target_item
+    mock_queue_manager.replace_song.return_value = True
+
+    result = playback_controller.replace_song(2, video_id="youtube:new", title="Correct Song")
+
+    assert result is True
+    mock_streaming_controller.stop_playback.assert_not_called()
+    assert playback_controller.state == PlaybackState.PLAYING
+    assert playback_controller.current_song_id == 1
+    mock_queue_manager.replace_song.assert_called_once_with(
+        2, "youtube:new", "Correct Song", None, None, None
+    )
+
+
+def test_replace_song_not_found(playback_controller, mock_queue_manager):
+    """Replacing a queue item that no longer exists fails cleanly."""
+    mock_queue_manager.get_item.return_value = None
+
+    result = playback_controller.replace_song(99, video_id="youtube:new", title="X")
+
+    assert result is False
+    mock_queue_manager.replace_song.assert_not_called()
+
+
+def test_replace_currently_playing_song_stops_playback(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Replacing the currently playing song stops it immediately and arms auto-resume."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    current_item = create_mock_queue_item(id=1, user_name="Alice")
+    mock_queue_manager.get_item.return_value = current_item
+    mock_queue_manager.replace_song.return_value = True
+
+    result = playback_controller.replace_song(1, video_id="youtube:fixed", title="Fixed Song")
+
+    assert result is True
+    mock_streaming_controller.stop_playback.assert_called_once()
+    assert playback_controller.state == PlaybackState.STOPPED
+    # Cursor/current_song_id are untouched - same item, position is unchanged
+    assert playback_controller.current_song_id == 1
+    assert playback_controller._awaiting_replace_item_id == 1
+    mock_streaming_controller.set_overlay_text.assert_called_with("Fixing song for Alice...")
+
+
+def test_replace_currently_playing_song_auto_resumes_when_ready(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Once the replacement finishes downloading, playback resumes without operator action."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    current_item = create_mock_queue_item(
+        id=1, user_name="Alice", content_status=QueueManager.STATUS_PENDING
+    )
+    mock_queue_manager.get_item.return_value = current_item
+    mock_queue_manager.replace_song.return_value = True
+
+    playback_controller.replace_song(1, video_id="youtube:fixed", title="Fixed Song")
+    assert playback_controller.state == PlaybackState.STOPPED
+
+    # Content isn't ready yet - the monitor's check should be a no-op
+    playback_controller._check_auto_resume_after_replace()
+    mock_streaming_controller.load_file.assert_not_called()
+    assert playback_controller._awaiting_replace_item_id == 1
+
+    # Content finishes downloading
+    ready_item = create_mock_queue_item(
+        id=1,
+        user_name="Alice",
+        content_status=QueueManager.STATUS_READY,
+        content_path="/path/to/fixed.mp4",
+    )
+    mock_queue_manager.get_item.return_value = ready_item
+
+    playback_controller._check_auto_resume_after_replace()
+
+    assert playback_controller._awaiting_replace_item_id is None
+    assert playback_controller.state == PlaybackState.PLAYING
+    mock_streaming_controller.load_file.assert_called_once_with("/path/to/fixed.mp4")
+
+
+def test_manual_stop_clears_pending_replace_auto_resume(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """An explicit operator stop overrides a pending replace auto-resume."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    playback_controller._awaiting_replace_item_id = 1
+
+    playback_controller.stop_playback()
+
+    assert playback_controller._awaiting_replace_item_id is None
+
+
+def test_navigating_away_clears_pending_replace_auto_resume(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Navigating to a different song (e.g. Previous) clears a stale pending replace auto-resume."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.STOPPED
+    playback_controller._awaiting_replace_item_id = 1
+
+    prev_song = create_mock_queue_item(
+        id=2, title="Prev", content_status=QueueManager.STATUS_READY, content_path="/prev.mp4"
+    )
+    mock_queue_manager.get_song_at_offset.return_value = prev_song
+
+    playback_controller.previous()
+
+    assert playback_controller._awaiting_replace_item_id is None
+    assert playback_controller.current_song_id == 2
+
+
 def test_move_to_next_with_stale_position_cache(
     playback_controller, mock_queue_manager, mock_streaming_controller
 ):

@@ -11,12 +11,12 @@
 <!-- Add Song Confirmation Modal -->
 <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
     <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
-        <h2>Add to Queue</h2>
+        <h2 id="add-song-modal-title">Add to Queue</h2>
         <div id="add-song-modal-content">
             <!-- Song settings will be rendered here by JavaScript -->
         </div>
         <div style="display: flex; gap: 10px; margin-top: 20px;">
-            <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
+            <button onclick="confirmAddToQueue()" id="add-song-modal-confirm" style="flex: 1;">Add to Queue</button>
             <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
         </div>
     </div>
@@ -32,6 +32,7 @@
         <!-- Owner options (visible to song owner OR operator) -->
         <div id="edit-queue-item-owner-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
             <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="replaceQueueItem()" style="width: 100%;">🔁 Replace Song</button>
                 <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
             </div>
         </div>

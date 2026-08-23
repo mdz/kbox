@@ -77,6 +77,10 @@ class PlaybackController:
             False  # Track if "current singer" notification was shown for current song
         )
 
+        # Set when replace_song() stops the currently-playing song to swap its
+        # content; the monitor auto-resumes once that item's content is ready.
+        self._awaiting_replace_item_id: Optional[int] = None
+
         # Overlay management - PlaybackController owns overlay state
         self._base_overlay_text = ""  # Persistent overlay (current singer, up next, etc.)
         self._notification_timer: Optional[threading.Timer] = None
@@ -225,6 +229,10 @@ class PlaybackController:
                         # Auto-start playback if we're idle and there are ready songs
                         # This handles the "that's all" screen -> someone adds a song case
                         self._check_auto_start_when_idle()
+                    elif self.state == PlaybackState.STOPPED and self._awaiting_replace_item_id:
+                        # Auto-resume a song that was stopped to replace its content,
+                        # once the replacement has finished downloading
+                        self._check_auto_resume_after_replace()
                     time.sleep(2)  # Check every 2 seconds
                 except Exception as e:
                     self.logger.error("Error in monitor: %s", e, exc_info=True)
@@ -257,6 +265,26 @@ class PlaybackController:
             next_song = self.queue_manager.get_song_at_offset(None, 0)
         if next_song and next_song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
+            self.play()
+
+    def _check_auto_resume_after_replace(self):
+        """
+        Check if a song we stopped to replace has finished downloading, and
+        resume it automatically without requiring operator intervention.
+
+        Only acts while self._awaiting_replace_item_id is set (by
+        replace_song()) and still matches the current song - any other
+        control action (play/skip/previous/jump/manual stop) clears it,
+        so this never overrides an operator's explicit choice.
+        """
+        item_id = self._awaiting_replace_item_id
+        if item_id is None or item_id != self.current_song_id:
+            return
+
+        song = self.queue_manager.get_item(item_id)
+        if song and song.content_status == QueueManager.STATUS_READY:
+            self.logger.info("Replacement ready for song %s, auto-resuming", item_id)
+            self._awaiting_replace_item_id = None
             self.play()
 
     def _check_current_singer_notification(self, current_position: int):
@@ -422,6 +450,9 @@ class PlaybackController:
             self._set_state(PlaybackState.IDLE, "no content path")
             return False
 
+        # Any pending "waiting for replacement" is moot once a song starts playing
+        self._awaiting_replace_item_id = None
+
         # Reset notification flags for new song
         self._up_next_shown = False
         self._current_singer_shown = False
@@ -525,6 +556,8 @@ class PlaybackController:
 
             self.logger.info("Stopping playback")
             try:
+                # An explicit operator stop overrides any pending auto-resume
+                self._awaiting_replace_item_id = None
                 self._stop_internal()
                 return True
             except Exception as e:
@@ -636,6 +669,56 @@ class PlaybackController:
 
             # Load and play the song (always from beginning)
             return self._play_song(song)
+
+    def replace_song(
+        self,
+        item_id: int,
+        video_id: str,
+        title: str,
+        duration_seconds: Optional[int] = None,
+        thumbnail_url: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> bool:
+        """
+        Replace the video for a queue item in place (e.g. wrong version added).
+
+        Position and attribution are untouched. If the item is currently
+        playing, playback stops immediately (the wrong content shouldn't
+        keep playing) and auto-resumes the same item once the replacement
+        finishes downloading - the operator/singer doesn't have to babysit it.
+
+        Args:
+            item_id: ID of the queue item to replace
+            video_id: Opaque video ID of the replacement video
+            title: Replacement song title
+            duration_seconds: Duration in seconds (optional)
+            thumbnail_url: Thumbnail URL (optional)
+            channel: Channel/artist name (optional)
+
+        Returns:
+            True if successful, False if the item wasn't found
+        """
+        with self.lock:
+            item = self.queue_manager.get_item(item_id)
+            if not item:
+                self.logger.warning("Cannot replace: queue item %s not found", item_id)
+                return False
+
+            is_current = self.current_song_id == item_id
+
+            if is_current:
+                self.logger.info("Replacing currently playing song %s", item_id)
+                self.streaming_controller.stop_playback()
+                self._set_base_overlay("")
+                self._set_state(PlaybackState.STOPPED, "replacing current song")
+                self._awaiting_replace_item_id = item_id
+                self.show_notification(
+                    f"Fixing song for {item.user_name}...", duration_seconds=10.0
+                )
+
+            return self.queue_manager.replace_song(
+                item_id, video_id, title, duration_seconds, thumbnail_url, channel
+            )
 
     def _switch_to_song(self, song: QueueItem) -> bool:
         """
