@@ -213,6 +213,15 @@ def create_app(
                 if request.url.path == "/display" or request.url.path.startswith("/api/display/"):
                     return await call_next(request)
 
+                # Allow icon probes without authentication (browsers request
+                # these automatically at the site root, before any session exists)
+                if request.url.path in (
+                    "/favicon.ico",
+                    "/apple-touch-icon.png",
+                    "/apple-touch-icon-precomposed.png",
+                ):
+                    return await call_next(request)
+
                 # Check if already authenticated via session
                 if request.session.get("guest_authenticated"):
                     return await call_next(request)
@@ -283,6 +292,22 @@ def create_app(
     from fastapi.staticfiles import StaticFiles
 
     app.mount("/static", StaticFiles(directory="kbox/web/static"), name="static")
+
+    # Browsers (notably iOS Safari) probe these paths at the site root
+    # regardless of <link> tags, so serve them directly to avoid log noise.
+    from fastapi.responses import FileResponse
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return FileResponse("kbox/web/static/favicon.ico")
+
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    async def apple_touch_icon():
+        return FileResponse("kbox/web/static/apple-touch-icon.png")
+
+    @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    async def apple_touch_icon_precomposed():
+        return FileResponse("kbox/web/static/apple-touch-icon-precomposed.png")
 
     # Queue endpoints
     @app.get("/api/queue")
