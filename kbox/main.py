@@ -6,6 +6,7 @@ Initializes all components and starts the server.
 
 import logging
 import secrets
+import sys
 
 import uvicorn
 
@@ -27,8 +28,14 @@ from .web.server import create_app
 from .youtube import YouTubeAPI
 from .ytdlp import YtDlpClient
 
+# stream=sys.stdout: uvicorn's access logger and yt-dlp both write directly to
+# stdout, and log capture (e.g. `docker compose logs kbox > file`) only follows
+# each stream to its matching fd. Without this, basicConfig's stderr default
+# silently drops every app-level log line from a captured party log.
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
 )
 
 logger = logging.getLogger(__name__)
