@@ -83,6 +83,16 @@ class SeekRequest(BaseModel):
     delta_seconds: int
 
 
+class AddFavoriteRequest(BaseModel):
+    """Request model for starring a song."""
+
+    video_id: str  # Opaque video ID like "youtube:abc123"
+    title: str
+    duration_seconds: Optional[int] = None
+    thumbnail_url: Optional[str] = None
+    channel: Optional[str] = None
+
+
 # Dependency to get components
 def get_queue_manager(request: Request) -> QueueManager:
     """Get QueueManager from app state."""
@@ -122,6 +132,11 @@ def get_history_manager(request: Request):
 def get_suggestion_engine(request: Request) -> SuggestionEngine:
     """Get SuggestionEngine from app state."""
     return request.app.state.suggestion_engine
+
+
+def get_favorites_manager(request: Request):
+    """Get FavoritesManager from app state."""
+    return request.app.state.favorites_manager
 
 
 def get_event_repo(request: Request) -> EventRepository:
@@ -167,6 +182,7 @@ def create_app(
     config_manager: ConfigManager,
     user_manager: UserManager,
     history_manager,  # HistoryManager - avoid circular import
+    favorites_manager,  # FavoritesManager - avoid circular import
     suggestion_engine: Optional[SuggestionEngine] = None,
     streaming_controller: Optional[StreamingController] = None,
     access_token: Optional[str] = None,
@@ -182,6 +198,7 @@ def create_app(
         config_manager: ConfigManager instance
         user_manager: UserManager instance
         history_manager: HistoryManager instance
+        favorites_manager: FavoritesManager instance
         suggestion_engine: SuggestionEngine instance (optional, for AI suggestions)
         streaming_controller: StreamingController instance (optional, for overlays)
         access_token: Access token for guest authentication (if None, auth disabled)
@@ -204,6 +221,7 @@ def create_app(
     app.state.config_manager = config_manager
     app.state.user_manager = user_manager
     app.state.history_manager = history_manager
+    app.state.favorites_manager = favorites_manager
     app.state.suggestion_engine = suggestion_engine
     app.state.streaming_controller = streaming_controller
     app.state.access_token = access_token
@@ -1066,6 +1084,65 @@ def create_app(
                 }
             )
         return {"history": history_dicts}
+
+    # Favorites endpoints
+    @app.post("/api/favorites")
+    async def add_favorite(
+        request_data: AddFavoriteRequest,
+        favorites_mgr=Depends(get_favorites_manager),
+        current_user_id: str = Depends(require_user),
+    ):
+        """Star a song for the current user."""
+        from ..models import SongMetadata
+
+        metadata = SongMetadata(
+            title=request_data.title,
+            duration_seconds=request_data.duration_seconds,
+            thumbnail_url=request_data.thumbnail_url,
+            channel=request_data.channel,
+        )
+        favorites_mgr.add_favorite(current_user_id, request_data.video_id, metadata)
+        return {"status": "favorited"}
+
+    @app.delete("/api/favorites/{video_id}")
+    async def remove_favorite(
+        video_id: str,
+        favorites_mgr=Depends(get_favorites_manager),
+        current_user_id: str = Depends(require_user),
+    ):
+        """Unstar a song for the current user."""
+        favorites_mgr.remove_favorite(current_user_id, video_id)
+        return {"status": "unfavorited"}
+
+    @app.get("/api/favorites/{user_id}")
+    async def get_user_favorites(
+        user_id: str,
+        favorites_mgr=Depends(get_favorites_manager),
+        current_user_id: Optional[str] = Depends(get_current_user_id),
+    ):
+        """
+        Get favorited songs for a specific user.
+
+        Favorites are private - users can only view their own.
+        User identity is determined from session to prevent impersonation.
+        """
+        if not current_user_id or current_user_id != user_id:
+            raise HTTPException(status_code=403, detail="You can only view your own favorites")
+
+        favorites = favorites_mgr.get_user_favorites(user_id)
+        favorite_dicts = []
+        for fav in favorites:
+            favorite_dicts.append(
+                {
+                    "video_id": fav.video_id,
+                    "title": fav.metadata.title,
+                    "duration_seconds": fav.metadata.duration_seconds,
+                    "thumbnail_url": fav.metadata.thumbnail_url,
+                    "channel": fav.metadata.channel,
+                    "created_at": fav.created_at.isoformat() if fav.created_at else None,
+                }
+            )
+        return {"favorites": favorite_dicts}
 
     # Web UI
     @app.get("/display", response_class=HTMLResponse)

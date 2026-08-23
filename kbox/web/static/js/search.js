@@ -9,6 +9,8 @@ import {
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
+import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
+
 // Note: window.fetch is patched in auth.js to retry once on a 401/403 to
 // /api/* if the session's identity got clobbered — no special handling
 // needed here.
@@ -31,6 +33,7 @@ function renderResultsList(container, videos) {
                 <div class="search-result-title">${video.title}</div>
                 <div class="search-result-channel">${video.channel}</div>
             </div>
+            ${renderFavoriteStar(video)}
         `;
         div.onclick = () => showAddSongModal(video);
         div.onkeydown = (e) => {
@@ -39,6 +42,7 @@ function renderResultsList(container, videos) {
                 showAddSongModal(video);
             }
         };
+        bindFavoriteStar(div.querySelector('.favorite-star'), video);
         container.appendChild(div);
     });
 }

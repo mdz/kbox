@@ -39,6 +39,9 @@ export let currentVideoToAdd = null;
 // instead of adding a new one. { itemId, label } — cleared on confirm/cancel.
 export let currentSelectionTarget = null;
 
+// Set of favorited video_ids for the current user (for star toggle state)
+export let favoriteVideoIds = new Set();
+
 // Setters for state that needs to be modified from other modules
 export function setIsOperator(value) { isOperator = value; }
 export function setCurrentQueue(value) { currentQueue = value; }
@@ -55,3 +58,4 @@ export function setQueueDepthSeconds(value) { queueDepthSeconds = value; }
 export function setQueueDepthCount(value) { queueDepthCount = value; }
 export function setCurrentVideoToAdd(value) { currentVideoToAdd = value; }
 export function setCurrentSelectionTarget(value) { currentSelectionTarget = value; }
+export function setFavoriteVideoIds(value) { favoriteVideoIds = value; }

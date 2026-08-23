@@ -20,6 +20,7 @@ from support.app_factory import (
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
+from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackState
 from kbox.queue import QueueManager
@@ -96,6 +97,7 @@ def app_components(
     user_manager = UserManager(temp_db)
     queue_manager = QueueManager(temp_db, video_library=mock_video_library)
     history_manager = HistoryManager(temp_db)
+    favorites_manager = FavoritesManager(temp_db)
 
     yield {
         "config": config_manager,
@@ -105,6 +107,7 @@ def app_components(
         "streaming": mock_streaming,
         "playback": mock_playback,
         "history": history_manager,
+        "favorites": favorites_manager,
         "suggestion_engine": mock_suggestion_engine,
     }
 
@@ -122,6 +125,7 @@ def client(app_components):
         config_manager=app_components["config"],
         user_manager=app_components["user"],
         history_manager=app_components["history"],
+        favorites_manager=app_components["favorites"],
         suggestion_engine=app_components["suggestion_engine"],
         streaming_controller=app_components["streaming"],
     )
@@ -894,6 +898,7 @@ class TestGuestAuthentication:
             config_manager=app_components["config"],
             user_manager=app_components["user"],
             history_manager=app_components["history"],
+            favorites_manager=app_components["favorites"],
             streaming_controller=app_components["streaming"],
             access_token="test-secret-token-123",
             session_secret="test-session-secret",

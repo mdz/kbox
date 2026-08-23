@@ -12,6 +12,7 @@ import uvicorn
 
 from .config_manager import ConfigManager
 from .database import Database
+from .favorites import FavoritesManager
 from .history import HistoryManager
 from .llm import LLMClient
 from .overlay import generate_qr_code
@@ -115,6 +116,7 @@ class KboxServer:
         )
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
+        self.favorites_manager = FavoritesManager(self.database)
 
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(self.config_manager, self)
@@ -144,6 +146,7 @@ class KboxServer:
             self.config_manager,
             self.user_manager,
             self.history_manager,
+            self.favorites_manager,
             suggestion_engine=self.suggestion_engine,
             streaming_controller=self.streaming_controller,
             access_token=self.access_token,

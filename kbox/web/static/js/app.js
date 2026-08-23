@@ -29,6 +29,7 @@ import {
     togglePlayPause, stopPlayback, playback, restartSong, seekForward, seekBackward
 } from './playback.js';
 import { showHelp, hideHelp, showHistoryModal, hideHistoryModal } from './modals.js';
+import { loadFavorites, showFavoritesModal, hideFavoritesModal } from './favorites.js';
 
 // Attach functions to window for HTML onclick handlers
 // Auth
@@ -86,6 +87,8 @@ window.showHelp = showHelp;
 window.hideHelp = hideHelp;
 window.showHistoryModal = showHistoryModal;
 window.hideHistoryModal = hideHistoryModal;
+window.showFavoritesModal = showFavoritesModal;
+window.hideFavoritesModal = hideFavoritesModal;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async function() {
@@ -108,6 +111,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     // polling tick to catch up.
     await checkOperatorStatus();
     loadQueue();
+    loadFavorites();
 
     // Auto-refresh queue every 1 second
     setInterval(loadQueue, 1000);

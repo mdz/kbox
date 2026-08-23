@@ -104,3 +104,14 @@
         <button onclick="hideHistoryModal()" style="margin-top: 20px;">Close</button>
     </div>
 </div>
+
+<!-- Favorites Modal -->
+<div class="modal-overlay hidden" id="favorites-modal" style="display: none;" onclick="if(event.target === this) hideFavoritesModal();">
+    <div class="modal" style="max-width: 600px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
+        <h2>My Favorites</h2>
+        <div id="favorites-content" style="margin-top: 20px;">
+            <!-- Favorites will be rendered here by JavaScript -->
+        </div>
+        <button onclick="hideFavoritesModal()" style="margin-top: 20px;">Close</button>
+    </div>
+</div>
