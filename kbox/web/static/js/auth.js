@@ -11,17 +11,13 @@ import {
 import { generateUUID } from './utils.js';
 
 // Resolves once identity registration has landed server-side (session cookie
-// has user_id). Callers that need an authenticated endpoint should await
-// waitForIdentity() first — see fetchAuthed() below, which does this
-// automatically and also recovers if the cookie gets clobbered afterward.
+// has user_id). initializeUserIdentity()/app.js await this before starting
+// any recurring polling, which is what prevents the session-cookie race
+// described below in the first place.
 let _resolveIdentityReady;
 let identityReadyPromise = new Promise((resolve) => {
     _resolveIdentityReady = resolve;
 });
-
-export function waitForIdentity() {
-    return identityReadyPromise;
-}
 
 // Register user with server (creates or updates)
 export async function registerUser(uid, displayName) {
@@ -42,20 +38,37 @@ export async function registerUser(uid, displayName) {
     }
 }
 
-// Fetch wrapper for endpoints that require an authenticated session
-// (require_user on the backend). Waits for initial identity registration,
-// and if the session cookie was clobbered by a concurrent unauthenticated
-// poll response in the meantime (a known race — see auth.js history),
-// re-registers once and retries instead of surfacing a 401 to the user.
-export async function fetchAuthed(url, options) {
-    await identityReadyPromise;
-    let response = await fetch(url, options);
-    if (response.status === 401) {
+// Backstop for the session-cookie race: Starlette's SessionMiddleware
+// re-signs the cookie on every response from whatever session dict that
+// request started with, so a concurrent unauthenticated poll response can
+// still (rarely) land after a registration POST and clobber a just-set
+// user_id, even with the identityReadyPromise sequencing above. When that
+// happens, any endpoint that keys off the session's user_id — whether it
+// 401s (require_user) or 403s (a manual "this isn't your resource" check,
+// e.g. /api/history) — fails until the browser re-registers.
+//
+// Rather than have every call site remember to opt in, patch window.fetch
+// once: any /api/ request that comes back 401/403 gets a single
+// re-register-and-retry. This covers every current and future
+// identity-dependent endpoint automatically. It excludes /api/users itself
+// (avoid recursion) and /api/auth/* (operator PIN auth — a 401 there is a
+// genuine wrong-PIN rejection, not a stale identity, and retrying would
+// just resubmit the same wrong PIN).
+const _nativeFetch = window.fetch.bind(window);
+
+window.fetch = async function (input, init) {
+    const response = await _nativeFetch(input, init);
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isIdentityDependent = (response.status === 401 || response.status === 403)
+        && url.startsWith('/api/')
+        && !url.startsWith('/api/users')
+        && !url.startsWith('/api/auth/');
+    if (isIdentityDependent) {
         await registerUser(userId, userName);
-        response = await fetch(url, options);
+        return _nativeFetch(input, init);
     }
     return response;
-}
+};
 
 // Save user name from modal
 export async function saveUserName() {
