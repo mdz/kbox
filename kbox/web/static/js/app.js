@@ -98,8 +98,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     // has user_id set. Otherwise concurrent responses overwrite the cookie.
     await initializeUserIdentity();
 
-    // Now safe to make API calls - session cookie has user_id
-    checkOperatorStatus();
+    // Now safe to make API calls - session cookie has user_id.
+    // Await operator status before the first loadQueue() so its initial
+    // render (which shows/hides #playback-controls-section based on
+    // isOperator) is correct immediately, instead of depending on a later
+    // polling tick to catch up.
+    await checkOperatorStatus();
     loadQueue();
 
     // Auto-refresh queue every 1 second
