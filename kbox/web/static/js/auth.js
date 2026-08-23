@@ -10,6 +10,19 @@ import {
 } from './state.js';
 import { generateUUID } from './utils.js';
 
+// Resolves once identity registration has landed server-side (session cookie
+// has user_id). Callers that need an authenticated endpoint should await
+// waitForIdentity() first — see fetchAuthed() below, which does this
+// automatically and also recovers if the cookie gets clobbered afterward.
+let _resolveIdentityReady;
+let identityReadyPromise = new Promise((resolve) => {
+    _resolveIdentityReady = resolve;
+});
+
+export function waitForIdentity() {
+    return identityReadyPromise;
+}
+
 // Register user with server (creates or updates)
 export async function registerUser(uid, displayName) {
     try {
@@ -27,6 +40,21 @@ export async function registerUser(uid, displayName) {
     } catch (e) {
         console.error('Error registering user:', e);
     }
+}
+
+// Fetch wrapper for endpoints that require an authenticated session
+// (require_user on the backend). Waits for initial identity registration,
+// and if the session cookie was clobbered by a concurrent unauthenticated
+// poll response in the meantime (a known race — see auth.js history),
+// re-registers once and retries instead of surfacing a 401 to the user.
+export async function fetchAuthed(url, options) {
+    await identityReadyPromise;
+    let response = await fetch(url, options);
+    if (response.status === 401) {
+        await registerUser(userId, userName);
+        response = await fetch(url, options);
+    }
+    return response;
 }
 
 // Save user name from modal
@@ -50,6 +78,7 @@ export async function saveUserName() {
     // Register with server - must await so the session cookie has user_id
     // before any concurrent loadQueue tick overwrites it
     await registerUser(userId, userName);
+    _resolveIdentityReady();
 
     // Hide modal
     const modal = document.getElementById('name-modal');
@@ -205,10 +234,15 @@ export async function initializeUserIdentity() {
                 setTimeout(() => nameInput.focus(), 100);
             }
         }
+        // Wait for saveUserName() to register and resolve identityReadyPromise.
+        // This does not block the UI — the modal is already visible and
+        // interactive; it just delays the caller's subsequent API calls.
+        await identityReadyPromise;
     } else {
         // Existing user - register/update with server to ensure display name is current
         // Must await so the session cookie with user_id is set before other API calls
         await registerUser(userId, userName);
+        _resolveIdentityReady();
     }
 }
 

@@ -5,6 +5,7 @@
 import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, queueDepthSeconds, queueDepthCount, currentQueue } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue } from './queue.js';
+import { fetchAuthed } from './auth.js';
 
 // Get AI-powered song suggestions
 export async function getSuggestions() {
@@ -23,7 +24,7 @@ export async function getSuggestions() {
     suggestButton.textContent = '✨ Thinking...';
 
     try {
-        const response = await fetch(`/api/suggestions?user_id=${encodeURIComponent(userId)}`);
+        const response = await fetchAuthed(`/api/suggestions?user_id=${encodeURIComponent(userId)}`);
 
         if (!response.ok) {
             const error = await response.json();
@@ -142,7 +143,7 @@ export async function showAddSongModal(video) {
     // Fetch saved settings for this video and user (pitch preset, etc.)
     let savedPitch = 0;
     try {
-        const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}?user_id=${encodeURIComponent(userId)}`);
+        const settingsResponse = await fetchAuthed(`/api/queue/settings/${encodeURIComponent(video.id)}?user_id=${encodeURIComponent(userId)}`);
         if (settingsResponse.ok) {
             const settingsData = await settingsResponse.json();
             savedPitch = settingsData.settings?.pitch_semitones || 0;
@@ -225,7 +226,7 @@ export async function confirmAddToQueue() {
     const pitchSemitones = parseInt(pitchInput.value) || 0;
 
     try {
-        const response = await fetch('/api/queue', {
+        const response = await fetchAuthed('/api/queue', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
