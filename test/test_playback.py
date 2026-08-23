@@ -591,6 +591,46 @@ def test_move_to_next_with_stale_position_cache(
     mock_queue_manager.reorder_song.assert_called_once_with(20, 6)
 
 
+def test_move_to_next_when_current_song_is_last_in_queue(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that move_to_next clamps to the queue's max position instead of failing.
+
+    Regression test for https://github.com/mdz/kbox/issues/89: when the
+    currently playing song is last in the queue, current_song.position + 1
+    exceeds the max position, so reorder() would reject it as an "invalid
+    position" - which the API layer misreports as "Queue item not found".
+    "Next" after the last song should simply mean the end of the queue.
+    """
+    playback_controller.current_song_id = 10
+    playback_controller.state = PlaybackState.PLAYING
+
+    # Current song is last in the queue, at position 2
+    current_song = create_mock_queue_item(
+        id=10, position=2, title="Currently Playing", content_status=QueueManager.STATUS_READY
+    )
+    song_to_move = create_mock_queue_item(
+        id=20, position=1, title="Move This Next", content_status=QueueManager.STATUS_READY
+    )
+
+    def get_item_side_effect(item_id):
+        if item_id == 10:
+            return current_song
+        elif item_id == 20:
+            return song_to_move
+        return None
+
+    mock_queue_manager.get_item.side_effect = get_item_side_effect
+    mock_queue_manager.get_queue.return_value = [song_to_move, current_song]
+    mock_queue_manager.reorder_song.return_value = True
+
+    result = playback_controller.move_to_next(20)
+
+    assert result is True
+    # Clamped to max position (2), not 3 (which would be rejected as invalid)
+    mock_queue_manager.reorder_song.assert_called_once_with(20, 2)
+
+
 def test_on_song_end_plays_next_in_queue_order(
     playback_controller, mock_queue_manager, mock_streaming_controller
 ):
