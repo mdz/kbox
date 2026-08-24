@@ -587,12 +587,14 @@ def test_replace_currently_playing_song_stops_playback(
     result = playback_controller.replace_song(1, video_id="youtube:fixed", title="Fixed Song")
 
     assert result is True
-    mock_streaming_controller.stop_playback.assert_called_once()
+    # display_image() (interstitial) drives the pipeline back to idle itself -
+    # no separate stop_playback() call, and no blank-screen text overlay.
+    mock_streaming_controller.stop_playback.assert_not_called()
+    mock_streaming_controller.display_image.assert_called_once()
     assert playback_controller.state == PlaybackState.STOPPED
     # Cursor/current_song_id are untouched - same item, position is unchanged
     assert playback_controller.current_song_id == 1
     assert playback_controller._awaiting_replace_item_id == 1
-    mock_streaming_controller.set_overlay_text.assert_called_with("Fixing song for Alice...")
 
 
 def test_replace_currently_playing_song_auto_resumes_when_ready(

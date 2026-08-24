@@ -302,6 +302,34 @@ class InterstitialGenerator:
         self.logger.info("Generated end-of-queue interstitial: %s", output_path)
         return output_path
 
+    def generate_message_screen(self, message: str) -> str:
+        """
+        Generate a generic centered-message screen (e.g. "Fixing song for X...").
+
+        Used for transient operator/system messages where a blank pipeline
+        state would otherwise leave the screen empty - e.g. while replacing
+        the currently-playing song's content.
+
+        Args:
+            message: Message to display
+
+        Returns:
+            Path to the generated image file
+        """
+        if not PIL_AVAILABLE:
+            return self._generate_fallback_image("message")
+
+        img, draw = self._create_base_image()
+
+        message_font = self._get_font(64, bold=True)
+        self._center_text(draw, message, self.height // 2 - 40, message_font, PRIMARY_TEXT_COLOR)
+
+        # Save and return path
+        output_path = os.path.join(self.cache_dir, "interstitial_message.png")
+        img.save(output_path, "PNG")
+        self.logger.info("Generated message interstitial: %s", message)
+        return output_path
+
     def _generate_fallback_image(self, screen_type: str) -> str:
         """Generate a simple fallback image when PIL is not available."""
         # Create a minimal 1x1 black image as fallback
