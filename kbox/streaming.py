@@ -560,14 +560,8 @@ class StreamingController:
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
 
-        # Set to NULL to reset pipeline. Wait for the transition to fully
-        # complete before reconfiguring for the next file - otherwise the new
-        # track's caps (e.g. channel layout) can reach the audio sink while
-        # the previous track's ring buffer is still tearing down, which
-        # triggers a GStreamer-Audio-CRITICAL in
-        # gst_audio_ring_buffer_set_channel_positions.
+        # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
-        self.playbin.get_state(5 * Gst.SECOND)
         self.logger.debug("load_file: after NULL")
 
         # Unmute audio (may have been muted for interstitial)
@@ -1094,10 +1088,8 @@ class StreamingController:
         # Mark that we're showing an interstitial
         self._is_interstitial = True
 
-        # Stop any current playback. Wait for the NULL transition to fully
-        # complete before reconfiguring the pipeline (see load_file for why).
+        # Stop any current playback
         self.playbin.set_state(Gst.State.NULL)
-        self.playbin.get_state(5 * Gst.SECOND)
 
         # Set the image URI - GStreamer will use imagefreeze for static images
         self.playbin.set_property("uri", f"file://{image_path}")
