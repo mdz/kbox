@@ -304,7 +304,7 @@ class InterstitialGenerator:
 
     def generate_message_screen(self, message: str) -> str:
         """
-        Generate a generic centered-message screen (e.g. "Fixing song for X...").
+        Generate a generic centered-message screen (e.g. "Loading new video for X...").
 
         Used for transient operator/system messages where a blank pipeline
         state would otherwise leave the screen empty - e.g. while replacing

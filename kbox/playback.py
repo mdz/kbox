@@ -824,7 +824,7 @@ class PlaybackController:
                 self._set_base_overlay("")
                 self._set_state(PlaybackState.STOPPED, "replacing current song")
                 self._awaiting_replace_item_id = item_id
-                self._show_message_screen(f"Fixing song for {item.user_name}...")
+                self._show_message_screen(f"Loading new video for {item.user_name}...")
 
             return self.queue_manager.replace_song(
                 item_id, video_id, title, duration_seconds, thumbnail_url, channel
@@ -1315,7 +1315,7 @@ class PlaybackController:
         """
         Display a generic centered-message interstitial screen.
 
-        Used for transient system messages (e.g. "Fixing song for X...")
+        Used for transient system messages (e.g. "Loading new video for X...")
         where the pipeline has no video loaded and a blank screen would
         otherwise result.
 
