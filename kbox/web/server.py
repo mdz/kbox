@@ -16,6 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
 from ..database import EventRepository
+from ..identity import normalize_name
 from ..playback import PlaybackController, PlaybackState
 from ..queue import QueueManager
 from ..streaming import StreamingController
@@ -167,7 +168,10 @@ def require_user(request: Request) -> str:
     Require authenticated user, returning their user ID.
 
     Raises HTTPException 401 if user is not authenticated (no user_id in session).
-    This ensures users cannot impersonate others by sending fake user_id values.
+    Guest identity here is self-declared and unverified, by design (see
+    ldocs/GUEST_IDENTITY_CONTINUITY.md) — this just requires *some* identity
+    to be bound to the session before allowing a write; it's not proof of
+    who that identity belongs to.
     """
     user_id = request.session.get("user_id")
     if not user_id:
@@ -472,7 +476,9 @@ def create_app(
     ):
         """Add song to queue."""
         try:
-            # Get user from session (ignore request_data.user_id to prevent impersonation)
+            # Get user from session, not the request body — the session is
+            # the source of truth for which self-declared identity this
+            # browser tab is currently acting as.
             user = user_mgr.get_user(current_user_id)
             if not user:
                 raise HTTPException(
@@ -515,7 +521,9 @@ def create_app(
         Remove song from queue.
 
         Operators can remove any song. Users can remove their own songs.
-        User identity is determined from session (not query params) to prevent impersonation.
+        User identity is determined from session (not query params) — identity is
+        self-declared and unverified, so this just fixes which UUID a write is
+        attributed to, not who it "really" belongs to.
         """
         # Get the item to check ownership
         item = queue_mgr.get_item(item_id)
@@ -545,7 +553,9 @@ def create_app(
 
         Keeps the item's queue position and attribution unchanged. Operators
         can replace any song; users can only replace their own.
-        User identity is determined from session to prevent impersonation.
+        User identity is determined from session — self-declared and unverified
+        by design, so this gates which UUID the current session is acting as,
+        not proof of who that UUID belongs to.
         """
         item = queue_mgr.get_item(item_id)
         if not item:
@@ -593,7 +603,9 @@ def create_app(
         """
         Update properties of a queue item.
         Operators can update any song, users can only update their own.
-        User identity is determined from session to prevent impersonation.
+        User identity is determined from session — self-declared and unverified
+        by design, so this gates which UUID the current session is acting as,
+        not proof of who that UUID belongs to.
 
         Currently supported fields:
         - pitch_semitones: Pitch adjustment in semitones
@@ -733,7 +745,9 @@ def create_app(
         Get AI-powered song suggestions for current user.
 
         Suggestions are based on user's history, current queue, and operator theme.
-        User identity is determined from session to prevent impersonation.
+        User identity is determined from session — self-declared and unverified
+        by design, so this gates which UUID the current session is acting as,
+        not proof of who that UUID belongs to.
         """
         if not suggestion_engine:
             raise HTTPException(
@@ -868,7 +882,9 @@ def create_app(
         """
         Set pitch adjustment for current song.
         Allowed if: user owns the song OR user is an operator.
-        User identity is determined from session to prevent impersonation.
+        User identity is determined from session — self-declared and unverified
+        by design, so this gates which UUID the current session is acting as,
+        not proof of who that UUID belongs to.
         """
         status = playback.get_status()
         current_song = status.get("current_song")
@@ -1050,11 +1066,19 @@ def create_app(
         user_mgr: UserManager = Depends(get_user_manager),
     ):
         """
-        Register or update a user.
+        Register or update a user, without switching identity.
 
-        On first call, binds the provided user_id to the session.
-        On subsequent calls, uses the session's user_id (ignores provided one).
-        This prevents user impersonation.
+        On first call, binds the provided user_id to the session. On
+        subsequent calls, uses the session's user_id (ignores provided one) —
+        this is a quiet resync, not a way to change who this session is
+        acting as. It stops a stale or concurrent request from switching an
+        already-bound session's identity out from under it (see the
+        window.fetch race backstop in auth.js); it has nothing to do with
+        guest-vs-guest impersonation, which this system doesn't defend
+        against (see ldocs/GUEST_IDENTITY_CONTINUITY.md).
+
+        To deliberately switch a session to a different (recognized or
+        brand-new) identity, use POST /api/users/claim instead.
         """
         # Check if session already has a user_id
         session_user_id = request.session.get("user_id")
@@ -1083,6 +1107,82 @@ def create_app(
             )
 
         user = user_mgr.get_or_create_user(user_id=user_id, display_name=request_data.display_name)
+        user_mgr.touch_last_seen(user.id)
+        return user
+
+    @app.get("/api/users/lookup")
+    async def lookup_user(
+        name: str,
+        user_mgr: UserManager = Depends(get_user_manager),
+        history_mgr=Depends(get_history_manager),
+    ):
+        """
+        Find existing identities matching a typed name.
+
+        This is the recognition step from ldocs/GUEST_IDENTITY_CONTINUITY.md:
+        a guest types a name, the client shows any matches so they can
+        recognize themselves (or say "none of these, I'm new"), then calls
+        POST /api/users/claim with whichever user_id they land on.
+
+        Unauthenticated by design — it runs before any identity is
+        established for this session, so there's no session identity to
+        check permissions against yet. Read-only, and the context returned
+        per candidate (last song, last visit) isn't new exposure: everything
+        in kbox is already visible to every guest at the party.
+        """
+        candidates = user_mgr.lookup_candidates(name)
+        candidate_dicts = []
+        for user in candidates:
+            last_song_title = None
+            recent = history_mgr.get_user_history(user.id, limit=1)
+            if recent:
+                last_song_title = recent[0].metadata.title
+            candidate_dicts.append(
+                {
+                    "user_id": user.id,
+                    "display_name": user.display_name,
+                    "icon": user.icon,
+                    "color": user.color,
+                    "last_seen_at": user.last_seen_at.isoformat() if user.last_seen_at else None,
+                    "last_song_title": last_song_title,
+                }
+            )
+        return {"normalized_name": normalize_name(name), "candidates": candidate_dicts}
+
+    @app.post("/api/users/claim")
+    async def claim_user(
+        request: Request,
+        request_data: UserRequest,
+        user_mgr: UserManager = Depends(get_user_manager),
+    ):
+        """
+        Explicitly claim an identity, switching the session to it.
+
+        Called from the recognition flow with either a user_id the guest
+        just recognized themselves in from GET /api/users/lookup, or a
+        freshly client-generated one for "none of these, I'm new."
+
+        Unlike POST /api/users, this unconditionally (re)binds the session
+        to the given user_id, even if the session was already bound to
+        something else. That's intentional: this endpoint only runs from a
+        human-driven action (name entry after localStorage was empty) —
+        exactly when a prior session binding is no longer trustworthy. The
+        window.fetch race backstop in auth.js never calls this; it only
+        resends the client's already-resolved identity via POST /api/users,
+        so it can't itself trigger an identity switch.
+
+        Claiming an existing user_id requires no proof beyond typing/tapping
+        a name — a deliberate choice (see ldocs/GUEST_IDENTITY_CONTINUITY.md),
+        not an oversight. UUIDs stay effectively unguessable (122 bits from
+        crypto.randomUUID()), and this system has already decided
+        guest-vs-guest impersonation isn't worth defending against at these
+        stakes.
+        """
+        user = user_mgr.get_or_create_user(
+            user_id=request_data.user_id, display_name=request_data.display_name
+        )
+        request.session["user_id"] = user.id
+        user_mgr.touch_last_seen(user.id)
         return user
 
     # History endpoints
@@ -1097,7 +1197,9 @@ def create_app(
         Get playback history for a specific user.
 
         Users can only view their own history. Operators can view anyone's history.
-        User identity is determined from session to prevent impersonation.
+        User identity is determined from session — self-declared and unverified
+        by design, so this gates which UUID the current session is acting as,
+        not proof of who that UUID belongs to.
         """
         # Check permissions: operators can view any, users can only view their own
         if not is_operator:
@@ -1167,7 +1269,9 @@ def create_app(
         Get favorited songs for a specific user.
 
         Favorites are private - users can only view their own.
-        User identity is determined from session to prevent impersonation.
+        User identity is determined from session — self-declared and unverified
+        by design, so this gates which UUID the current session is acting as,
+        not proof of who that UUID belongs to.
         """
         if not current_user_id or current_user_id != user_id:
             raise HTTPException(status_code=403, detail="You can only view your own favorites")

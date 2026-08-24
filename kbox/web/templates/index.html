@@ -608,6 +608,51 @@
             margin-bottom: 15px;
         }
 
+        #recognition-candidate-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .recognition-candidate {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            padding: 12px;
+            background: #333;
+            border: 2px solid #555;
+            border-radius: 8px;
+            color: #fff;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .recognition-candidate:hover {
+            background: #3a3a3a;
+        }
+
+        .recognition-candidate-icon {
+            font-size: 28px;
+            flex-shrink: 0;
+        }
+
+        .recognition-candidate-name {
+            font-weight: bold;
+        }
+
+        .recognition-candidate-context {
+            display: block;
+            color: #aaa;
+            font-size: 0.85em;
+        }
+
+        #recognition-new-button {
+            width: 100%;
+            background: #444;
+        }
+
         .pitch-control {
             display: flex;
             align-items: center;

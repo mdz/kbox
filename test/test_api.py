@@ -847,6 +847,113 @@ class TestUserEndpoints:
         assert response.json()["display_name"] == "Updated Name"
 
 
+class TestUserLookupAndClaimEndpoints:
+    """Tests for the name-keyed identity recognition flow.
+
+    See ldocs/GUEST_IDENTITY_CONTINUITY.md /
+    ldocs/GUEST_IDENTITY_TECHNICAL_DESIGN.md.
+    """
+
+    def test_lookup_unknown_name_returns_no_candidates(self, client):
+        response = client.get("/api/users/lookup", params={"name": "Nobody"})
+        assert response.status_code == 200
+        assert response.json()["candidates"] == []
+
+    def test_lookup_does_not_require_a_session(self, client):
+        """Lookup runs before any identity is established for this session."""
+        response = client.get("/api/users/lookup", params={"name": "Nobody"})
+        assert response.status_code == 200
+
+    def test_lookup_finds_existing_identity(self, client, alice):
+        response = client.get("/api/users/lookup", params={"name": "Alice"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["normalized_name"] == "alice"
+        assert len(data["candidates"]) == 1
+        candidate = data["candidates"][0]
+        assert candidate["user_id"] == ALICE_ID
+        assert candidate["display_name"] == "Alice"
+        assert candidate["icon"]
+        assert candidate["color"]
+        assert candidate["last_song_title"] is None
+
+    def test_lookup_matches_case_and_whitespace_insensitively(self, client, alice):
+        response = client.get("/api/users/lookup", params={"name": " alice  "})
+        assert len(response.json()["candidates"]) == 1
+
+    def test_lookup_returns_both_collisions(self, client, app_components):
+        app_components["user"].get_or_create_user("mike-1", "Mike")
+        app_components["user"].get_or_create_user("mike-2", "Mike")
+
+        response = client.get("/api/users/lookup", params={"name": "Mike"})
+        candidate_ids = {c["user_id"] for c in response.json()["candidates"]}
+        assert candidate_ids == {"mike-1", "mike-2"}
+
+    def test_lookup_includes_last_song(self, client, alice, app_components):
+        from kbox.models import SongMetadata, SongSettings
+
+        app_components["history"].record_performance(
+            user_id=ALICE_ID,
+            user_name="Alice",
+            video_id="youtube:abc",
+            metadata=SongMetadata(title="Take On Me"),
+            settings=SongSettings(),
+            played_duration_seconds=180,
+            playback_end_position_seconds=180,
+            completion_percentage=100.0,
+        )
+
+        response = client.get("/api/users/lookup", params={"name": "Alice"})
+        assert response.json()["candidates"][0]["last_song_title"] == "Take On Me"
+
+    def test_claim_new_identity_creates_and_binds(self, client):
+        response = client.post(
+            "/api/users/claim",
+            json={"user_id": "new-guest", "display_name": "Newbie"},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == "new-guest"
+
+        # Session is bound: can now access this user's own resources.
+        assert client.get("/api/favorites/new-guest").status_code == 200
+
+    def test_claim_can_switch_an_already_bound_session(self, client, alice, bob):
+        """Unlike POST /api/users, claim can rebind an already-bound session.
+
+        This is the deliberate difference from POST /api/users that makes
+        the recognition flow work: a guest whose localStorage was empty (so
+        they're going through name entry again) may have a stale session
+        binding from earlier, and explicitly recognizing themselves as an
+        existing identity should win over that stale binding.
+        """
+        set_user(client, ALICE_ID, "Alice")
+        assert client.get(f"/api/favorites/{ALICE_ID}").status_code == 200
+
+        response = client.post(
+            "/api/users/claim",
+            json={"user_id": BOB_ID, "display_name": "Bob"},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == BOB_ID
+
+        # Session now represents Bob, not Alice.
+        assert client.get(f"/api/favorites/{BOB_ID}").status_code == 200
+        assert client.get(f"/api/favorites/{ALICE_ID}").status_code == 403
+
+    def test_register_user_cannot_switch_an_already_bound_session(self, client, alice, bob):
+        """POST /api/users (unlike claim) never switches an already-bound session."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.post(
+            "/api/users",
+            json={"user_id": BOB_ID, "display_name": "Bob"},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == ALICE_ID  # unchanged, request ignored
+
+        assert client.get(f"/api/favorites/{ALICE_ID}").status_code == 200
+
+
 # =============================================================================
 # History Endpoints - Smoke Tests
 # =============================================================================

@@ -8,7 +8,7 @@ import { escapeHtml } from './utils.js';
 import {
     saveUserName, checkOperatorStatus, showOperatorPinModal, cancelOperatorPin,
     submitOperatorPin, promptOperatorAuth, updateOperatorButton,
-    initializeUserIdentity, setupPinInputHandler
+    initializeUserIdentity, setupPinInputHandler, chooseNewIdentity
 } from './auth.js';
 import { adjustPitch } from './pitch.js';
 import { toggleControlsLock, togglePlaybackControlsLock, resetPlaybackAutoLockTimer } from './controls.js';
@@ -34,6 +34,7 @@ import { loadFavorites, showFavoritesModal, hideFavoritesModal } from './favorit
 // Attach functions to window for HTML onclick handlers
 // Auth
 window.saveUserName = saveUserName;
+window.chooseNewIdentity = chooseNewIdentity;
 window.showOperatorPinModal = showOperatorPinModal;
 window.cancelOperatorPin = cancelOperatorPin;
 window.submitOperatorPin = submitOperatorPin;
