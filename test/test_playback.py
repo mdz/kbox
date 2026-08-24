@@ -348,8 +348,9 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
 
     # Should call get_song_at_offset with the finished song's ID and offset +1
     mock_queue_manager.get_song_at_offset.assert_called_once_with(1, 1)
-    # Should reset pitch
+    # Should reset pitch and volume gain
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
+    mock_streaming_controller.set_volume_gain_db.assert_any_call(0.0)
     # Should display transition interstitial image
     mock_streaming_controller.display_image.assert_called_once()
     # State should be TRANSITION (waiting for timer)
@@ -1450,3 +1451,104 @@ class TestTrailingSilenceSkip:
         pc._check_trailing_silence_skip(150)
 
         mock_streaming_controller.stop_playback.assert_not_called()
+
+
+class TestVolumeNormalization:
+    """Tests for the loudness-normalization feature."""
+
+    def _make_controller(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+    ):
+        from kbox.loudness import DEFAULT_TARGET_LUFS
+
+        mock_queue_manager.get_queue.return_value = []
+        mock_loudness_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = enabled
+        mock_config_manager.get_float.return_value = DEFAULT_TARGET_LUFS
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            loudness_analyzer=mock_loudness_analyzer,
+        )
+        pc._monitoring = False
+        return pc, mock_loudness_analyzer
+
+    def test_lookup_volume_gain_no_analyzer(self, playback_controller):
+        """No analyzer configured -- always 0.0, feature is a no-op."""
+        assert playback_controller.loudness_analyzer is None
+        assert playback_controller._lookup_volume_gain_db("youtube:abc") == 0.0
+
+    def test_lookup_volume_gain_disabled_by_config(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        from kbox.loudness import LoudnessInfo
+
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=False
+        )
+        mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
+            integrated_lufs=-10.0, true_peak_dbtp=-3.0
+        )
+
+        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+        mock_analyzer.get_cached_loudness.assert_not_called()
+
+    def test_lookup_volume_gain_unmeasured_video(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """A freshly-downloaded video without a measurement yet plays unadjusted."""
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.return_value = None
+
+        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+
+    def test_lookup_volume_gain_computes_gain_from_measurement(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        from kbox.loudness import LoudnessInfo
+
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
+            integrated_lufs=-10.0, true_peak_dbtp=-3.0
+        )
+
+        gain = pc._lookup_volume_gain_db("youtube:abc")
+
+        assert gain == pytest.approx(-6.0, abs=0.01)
+        mock_analyzer.get_cached_loudness.assert_called_once_with("youtube:abc")
+
+    def test_lookup_volume_gain_swallows_analyzer_errors(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.side_effect = Exception("db error")
+
+        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+
+    def test_play_song_applies_volume_gain(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        from kbox.loudness import LoudnessInfo
+
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
+            integrated_lufs=-10.0, true_peak_dbtp=-3.0
+        )
+
+        song = create_mock_queue_item(id=1, video_id="youtube:abc", content_status="ready")
+        mock_queue_manager.get_song_at_offset.return_value = song
+
+        pc.play()
+
+        mock_streaming_controller.set_volume_gain_db.assert_called_once()
+        (gain_db,), _ = mock_streaming_controller.set_volume_gain_db.call_args
+        assert gain_db == pytest.approx(-6.0, abs=0.01)

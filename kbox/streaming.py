@@ -65,6 +65,7 @@ class StreamingController:
         self.state = "idle"  # 'idle', 'playing', 'paused'
         self.current_file: Optional[str] = None
         self.pitch_shift_semitones = 0
+        self.volume_gain_linear = 1.0
         self.eos_callback = None
 
         # Pipeline components (set by _create_persistent_pipeline)
@@ -72,6 +73,7 @@ class StreamingController:
         self.audio_bin: Any = None
         self.video_bin: Any = None
         self.pitch_shift_element: Any = None
+        self.volume_element: Any = None
 
         # Overlay elements (set by _create_video_sink_bin)
         self.qr_overlay = None
@@ -202,8 +204,14 @@ class StreamingController:
         if ac2 is None:
             raise RuntimeError("Failed to create audioconvert element")
 
+        # Volume element for per-song loudness normalization
+        self.volume_element = Gst.ElementFactory.make("volume", "volume")
+        if self.volume_element is None:
+            raise RuntimeError("Failed to create volume element")
+        self.volume_element.set_property("volume", self.volume_gain_linear)
+
         # Build element chain
-        elements = [ac1, self.pitch_shift_element, ac2]
+        elements = [ac1, self.pitch_shift_element, ac2, self.volume_element]
 
         # Add capsfilter for channel upmixing if configured for more than 2 channels
         num_channels = self.config_manager.get_int("audio_output_channels", 2)
@@ -713,6 +721,7 @@ class StreamingController:
             self.audio_bin = None
             self.video_bin = None
             self.pitch_shift_element = None
+            self.volume_element = None
             self.qr_overlay = None
             self.text_overlay = None
 
@@ -771,6 +780,40 @@ class StreamingController:
                     self.logger.warning("Pitch shift element is identity, no effect")
             except Exception as e:
                 self.logger.warning("Could not update pitch shift: %s", e)
+
+    # =========================================================================
+    # Volume Control
+    # =========================================================================
+
+    def set_volume_gain_db(self, gain_db: float):
+        """
+        Set the loudness-normalization gain, in dB, applied on top of the
+        main output level.
+
+        Updates the volume element if available. The setting persists across
+        song changes since the element is in a persistent bin, so callers
+        should reset it to 0.0 when there's no measurement for a song.
+
+        Args:
+            gain_db: Gain adjustment in decibels (positive boosts, negative cuts)
+        """
+        from .loudness import db_to_linear
+
+        linear = db_to_linear(gain_db)
+        if linear == self.volume_gain_linear:
+            return
+
+        self.logger.info("Setting volume gain to %.1f dB (%.3fx)", gain_db, linear)
+        self.volume_gain_linear = linear
+
+        if not self._requires_gst():
+            return
+
+        if self.volume_element:
+            try:
+                self.volume_element.set_property("volume", linear)
+            except Exception as e:
+                self.logger.warning("Could not update volume gain: %s", e)
 
     # =========================================================================
     # Position and Seeking

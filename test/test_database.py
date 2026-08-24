@@ -492,6 +492,106 @@ class TestSchemaMigrationV3ToV4:
             os.unlink(path)
 
 
+class TestSchemaMigrationV7ToV8:
+    """Test migration adding loudness columns to song_metadata_cache (v8)."""
+
+    def _create_v7_db(self, path):
+        """Create a database with the v7 schema (nullable artist/song_name,
+        silence-detection columns present, no loudness columns yet)."""
+        conn = sqlite3.connect(path)
+        cursor = conn.cursor()
+
+        cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        cursor.execute("INSERT INTO schema_version (version) VALUES (7)")
+        cursor.execute("""
+            CREATE TABLE song_metadata_cache (
+                video_id TEXT PRIMARY KEY,
+                artist TEXT,
+                song_name TEXT,
+                extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                trailing_silence_start_seconds INTEGER,
+                silence_analyzed_at TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "INSERT INTO song_metadata_cache (video_id, artist, song_name, "
+            "trailing_silence_start_seconds) VALUES ('youtube:abc', 'Alice Artist', 'Old Song', 120)"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_adds_loudness_columns(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v7_db(path)
+
+        try:
+            db = Database(db_path=path)
+            conn = db.get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(song_metadata_cache)")
+                columns = {row["name"] for row in cursor.fetchall()}
+                assert "integrated_lufs" in columns
+                assert "true_peak_dbtp" in columns
+                assert "loudness_analyzed_at" in columns
+            finally:
+                conn.close()
+            db.close()
+        finally:
+            os.unlink(path)
+
+    def test_preserves_existing_metadata_and_silence_data(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v7_db(path)
+
+        try:
+            db = Database(db_path=path)
+            conn = db.get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT artist, song_name, trailing_silence_start_seconds "
+                    "FROM song_metadata_cache WHERE video_id = ?",
+                    ("youtube:abc",),
+                )
+                row = cursor.fetchone()
+                assert row["artist"] == "Alice Artist"
+                assert row["song_name"] == "Old Song"
+                assert row["trailing_silence_start_seconds"] == 120
+            finally:
+                conn.close()
+            db.close()
+        finally:
+            os.unlink(path)
+
+    def test_loudness_analyzer_can_write_after_migration(self):
+        """A row can be created by loudness analysis alone (video_id + loudness
+        columns only) since artist/song_name are already nullable from v7."""
+        from kbox.loudness import LoudnessAnalyzer, LoudnessInfo
+
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        os.unlink(path)
+        self._create_v7_db(path)
+
+        try:
+            db = Database(db_path=path)
+            analyzer = LoudnessAnalyzer(db)
+            analyzer._cache_result(
+                "youtube:new", LoudnessInfo(integrated_lufs=-14.0, true_peak_dbtp=-1.0)
+            )
+            cached = analyzer.get_cached_loudness("youtube:new")
+            assert cached is not None
+            assert cached.integrated_lufs == -14.0
+            db.close()
+        finally:
+            os.unlink(path)
+
+
 # ============================================================================
 # UserRepository Tests
 # ============================================================================

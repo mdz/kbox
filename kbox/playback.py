@@ -38,6 +38,7 @@ class PlaybackController:
         config_manager,
         history_manager=None,  # HistoryManager - avoid circular import, optional for tests
         silence_analyzer=None,  # TrailingSilenceAnalyzer - avoid circular import, optional
+        loudness_analyzer=None,  # LoudnessAnalyzer - avoid circular import, optional
     ):
         """
         Initialize PlaybackController.
@@ -51,12 +52,17 @@ class PlaybackController:
                 provided (and skip_trailing_silence_enabled is on), playback
                 advances early once a song reaches its cached trailing-silence
                 trim point instead of waiting for literal end-of-file.
+            loudness_analyzer: LoudnessAnalyzer instance (optional). When
+                provided (and loudness_normalization_enabled is on), a
+                compensating gain is applied so songs from different
+                sources play back at a consistent volume.
         """
         self.queue_manager = queue_manager
         self.streaming_controller = streaming_controller
         self.config_manager = config_manager
         self.history_manager = history_manager
         self.silence_analyzer = silence_analyzer
+        self.loudness_analyzer = loudness_analyzer
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
@@ -395,6 +401,32 @@ class PlaybackController:
             self.logger.warning("Error looking up trim point for %s: %s", video_id, e)
             return None
 
+    def _lookup_volume_gain_db(self, video_id: str) -> float:
+        """
+        Look up the loudness-normalization gain for a video, in dB.
+
+        Returns 0.0 (no adjustment) if normalization is disabled, no
+        analyzer is configured, or the video hasn't been measured yet - a
+        freshly-added song plays at its native level until analysis catches
+        up, rather than blocking playback. Never raises.
+        """
+        if not self.loudness_analyzer:
+            return 0.0
+        if not self.config_manager.get_bool("loudness_normalization_enabled", True):
+            return 0.0
+        try:
+            loudness = self.loudness_analyzer.get_cached_loudness(video_id)
+            if loudness is None:
+                return 0.0
+
+            from .loudness import DEFAULT_TARGET_LUFS, compute_gain_db
+
+            target_lufs = self.config_manager.get_float("loudness_target_lufs", DEFAULT_TARGET_LUFS)
+            return compute_gain_db(loudness, target_lufs=target_lufs)
+        except Exception as e:
+            self.logger.warning("Error looking up volume gain for %s: %s", video_id, e)
+            return 0.0
+
     def _check_trailing_silence_skip(self, current_position: int):
         """
         Check if playback has reached the cached trailing-silence trim point
@@ -539,6 +571,14 @@ class PlaybackController:
                 self.streaming_controller.set_pitch_shift(pitch)
             except Exception as e:
                 self.logger.warning("Could not set pitch shift: %s", e)
+
+            # Apply loudness-normalization gain for this song, if measured
+            try:
+                self.streaming_controller.set_volume_gain_db(
+                    self._lookup_volume_gain_db(song.video_id)
+                )
+            except Exception as e:
+                self.logger.warning("Could not set volume gain: %s", e)
 
             # Load file into streaming controller (always start from beginning)
             self.logger.debug("_play_song: before load_file")
@@ -1099,8 +1139,9 @@ class PlaybackController:
         else:
             self.logger.info("Song ended: unknown")
 
-        # Reset pitch
+        # Reset pitch and volume gain
         self.streaming_controller.set_pitch_shift(0)
+        self.streaming_controller.set_volume_gain_db(0.0)
 
         # Clear the singer/up next overlay
         self._set_base_overlay("")
