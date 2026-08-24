@@ -350,10 +350,23 @@ def create_app(
     # Templates
     templates = Jinja2Templates(directory="kbox/web/templates")
 
-    # Static files (CSS, JS)
+    # Static files (CSS, JS). Force revalidation on every request instead of
+    # letting browsers guess a freshness lifetime — with no Cache-Control at
+    # all, mobile Chrome in particular can hold onto a stale JS bundle across
+    # deploys (even surviving a plain page reload), silently calling
+    # window.* functions that no longer match the current server-rendered
+    # HTML/other JS files. no-cache still lets the browser use its cached
+    # copy once the server confirms via ETag/Last-Modified it's unchanged,
+    # so this costs a conditional request, not a full re-download.
     from fastapi.staticfiles import StaticFiles
 
-    app.mount("/static", StaticFiles(directory="kbox/web/static"), name="static")
+    class RevalidateStaticFiles(StaticFiles):
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.mount("/static", RevalidateStaticFiles(directory="kbox/web/static"), name="static")
 
     # Browsers (notably iOS Safari) probe these paths at the site root
     # regardless of <link> tags, so serve them directly to avoid log noise.
