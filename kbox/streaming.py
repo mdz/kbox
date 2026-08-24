@@ -560,11 +560,7 @@ class StreamingController:
         sinks that report explicit FRONT_LEFT/FRONT_RIGHT device positions - on every
         renegotiation, regardless of pipeline state-change timing. Confirmed via GStreamer
         1.26.2 source; do not treat this log line as evidence of an app-level bug without
-        new data. It is unrelated to the separately-reported audio bleed at song
-        transitions (a chunk of the outgoing track audible over the start of the next
-        one) - that bug's actual cause was the persistent audio chain (pitch shift /
-        volume elements, reused across every song) never receiving a flush on a
-        position-0 load, addressed below by always doing a flushing seek.
+        new data.
         """
         self.logger.info("Loading file: %s (start_position=%s)", filepath, start_position_seconds)
 
