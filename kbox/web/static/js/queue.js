@@ -7,7 +7,7 @@ import {
     currentQueue, setCurrentQueue,
     currentQueueItemToEdit, setCurrentQueueItemToEdit,
     setQueueDepthSeconds, setQueueDepthCount,
-    setCurrentSelectionTarget
+    currentSelectionTarget, setCurrentSelectionTarget
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
@@ -207,12 +207,29 @@ export function replaceQueueItem() {
         : item.title;
 
     setCurrentSelectionTarget({ itemId: item.id, label, userName: item.user_name });
+    updateReplaceTargetBanner();
     cancelEditQueueItem();
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
         searchInput.focus();
+    }
+}
+
+// Keep the "Replacing: X" banner above the search box in sync with
+// currentSelectionTarget. Called whenever that state changes (set on
+// replaceQueueItem, cleared on confirm/cancel of the add-song modal) so the
+// gap between tapping "Replace Song" and picking a result is never silent.
+export function updateReplaceTargetBanner() {
+    const banner = document.getElementById('replace-target-banner');
+    if (!banner) return;
+
+    if (currentSelectionTarget) {
+        banner.textContent = `Replacing "${currentSelectionTarget.label}" — search for a new song`;
+        banner.classList.remove('hidden');
+    } else {
+        banner.classList.add('hidden');
     }
 }
 
