@@ -125,6 +125,7 @@ class QueueManager:
                 item.id,
             )
             self.update_content_status(item.id, self.STATUS_READY, content_path=str(cached_path))
+            self._run_post_download_analysis(item.id, str(cached_path))
             return
 
         if item.created_at:
@@ -146,10 +147,40 @@ class QueueManager:
         elif status == "ready" and path:
             self.update_content_status(item_id, self.STATUS_READY, content_path=path)
             self.logger.info("Content ready for queue item %s: %s", item_id, path)
+            self._run_post_download_analysis(item_id, path)
             self._cleanup_storage()
         elif status == "error" and error:
             self.update_content_status(item_id, self.STATUS_ERROR, error_message=error)
             self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
+
+    def _run_post_download_analysis(self, item_id: int, path: str) -> None:
+        """Run per-video analysis steps once a queue item's content is ready.
+
+        Runs synchronously on the caller's thread. Each step is independent
+        and failures are logged, never allowed to break queue operations.
+        """
+        item = self.get_item(item_id)
+        if item is None:
+            return
+
+        if self.metadata_extractor:
+            try:
+                artist, song_name = self.metadata_extractor.extract(
+                    video_id=item.video_id,
+                    title=item.metadata.title,
+                    description=None,
+                    channel=item.metadata.channel,
+                )
+                if artist and song_name:
+                    self.update_extracted_metadata(item_id, artist, song_name)
+                    self.logger.info(
+                        "Extracted metadata for item %s: '%s' by '%s'",
+                        item_id,
+                        song_name,
+                        artist,
+                    )
+            except Exception as e:
+                self.logger.warning("Metadata extraction failed for item %s: %s", item_id, e)
 
     def stop_content_monitor(self):
         """Stop the content monitor thread."""
@@ -234,44 +265,7 @@ class QueueManager:
             pitch_semitones,
         )
 
-        # Trigger async metadata extraction (if extractor configured)
-        if self.metadata_extractor:
-            self._start_metadata_extraction(item_id, video_id, title, channel)
-
         return item_id
-
-    def _start_metadata_extraction(
-        self,
-        item_id: int,
-        video_id: str,
-        title: str,
-        channel: Optional[str],
-    ) -> None:
-        """Start background thread to extract metadata for a queue item."""
-
-        def extract_thread():
-            try:
-                artist, song_name = self.metadata_extractor.extract(
-                    video_id=video_id,
-                    title=title,
-                    description=None,
-                    channel=channel,
-                )
-                if artist and song_name:
-                    self.update_extracted_metadata(item_id, artist, song_name)
-                    self.logger.info(
-                        "Extracted metadata for item %s: '%s' by '%s'",
-                        item_id,
-                        song_name,
-                        artist,
-                    )
-            except Exception as e:
-                self.logger.warning("Metadata extraction failed for item %s: %s", item_id, e)
-
-        thread = threading.Thread(
-            target=extract_thread, daemon=True, name=f"MetadataExtract-{item_id}"
-        )
-        thread.start()
 
     def replace_song(
         self,
@@ -286,8 +280,9 @@ class QueueManager:
         Replace the video for an existing queue item, in place.
 
         Keeps the item's position and user attribution unchanged. Resets
-        content status so the new video is downloaded, and re-triggers
-        metadata extraction.
+        content status so the new video is downloaded; post-download
+        analysis (e.g. metadata extraction) runs once the new content
+        is ready.
 
         Args:
             item_id: ID of the queue item to replace
@@ -311,9 +306,6 @@ class QueueManager:
             return False
 
         self.logger.info("Replaced queue item %s with: %s (video_id: %s)", item_id, title, video_id)
-
-        if self.metadata_extractor:
-            self._start_metadata_extraction(item_id, video_id, title, channel)
 
         return True
 
