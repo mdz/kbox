@@ -170,7 +170,7 @@ export async function showAddSongModal(video) {
 
         // Build queue depth display from backend-computed values
         if (queueDepthCount === 0) {
-            additionalControls = '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">Queue is empty — your song will play first!</div>';
+            additionalControls = '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">Queue is empty — your song will play next!</div>';
         } else {
             const minutes = Math.round(queueDepthSeconds / 60);
             const timeStr = minutes < 1 ? 'less than a minute' : minutes === 1 ? '~1 minute' : `~${minutes} minutes`;

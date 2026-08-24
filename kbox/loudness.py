@@ -14,13 +14,17 @@ import logging
 import math
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+
+from .priority import lower_priority
 
 if TYPE_CHECKING:
     from .database import Database
 
 logger = logging.getLogger(__name__)
+
 
 # Single-pass loudnorm analysis. The I/TP/LRA values here only affect
 # ffmpeg's internal target_offset calculation, not our own gain formula --
@@ -56,6 +60,7 @@ def measure_loudness(file_path: str) -> Optional[LoudnessInfo]:
         LoudnessInfo, or None if ffmpeg is unavailable or analysis fails
     """
     cmd = ["ffmpeg", "-i", file_path, "-af", _LOUDNORM_FILTER, "-f", "null", "-"]
+    lower_priority()
     try:
         result = subprocess.run(
             cmd,
@@ -155,23 +160,28 @@ class LoudnessAnalyzer:
         if self._is_analyzed(video_id):
             return self.get_cached_loudness(video_id)
 
+        start = time.monotonic()
         try:
             loudness = measure_loudness(filepath)
         except Exception as e:
             self.logger.warning("Loudness analysis failed for %s: %s", video_id, e)
             loudness = None
+        elapsed = time.monotonic() - start
 
         self._cache_result(video_id, loudness)
 
         if loudness is not None:
             self.logger.info(
-                "Measured loudness for %s: %.1f LUFS, %.1f dBTP",
+                "Measured loudness for %s in %.1fs: %.1f LUFS, %.1f dBTP",
                 video_id,
+                elapsed,
                 loudness.integrated_lufs,
                 loudness.true_peak_dbtp,
             )
         else:
-            self.logger.debug("No loudness measurement available for %s", video_id)
+            self.logger.info(
+                "No loudness measurement available for %s (analyzed in %.1fs)", video_id, elapsed
+            )
 
         return loudness
 
