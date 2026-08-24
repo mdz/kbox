@@ -7,7 +7,7 @@ Handles song queue operations with persistence and content preparation.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
@@ -65,6 +65,14 @@ class QueueManager:
         self._monitoring = False
         self._stop_event = threading.Event()
 
+        # When the current content-preparation attempt for an item started,
+        # keyed by item id. Tracks the active attempt (reset on every restart,
+        # including after a replace), unlike the item's created_at, which
+        # never changes. Falls back to created_at in _check_stuck_content for
+        # items that reach STATUS_PREPARING without going through
+        # _start_content_preparation (e.g. restored from a prior process).
+        self._prep_started_at: Dict[int, datetime] = {}
+
         self._start_content_monitor()
 
     # =========================================================================
@@ -115,6 +123,17 @@ class QueueManager:
 
         item_id = item.id
 
+        # Mark PREPARING synchronously, before handing off to video_library,
+        # so the next poll (as little as ~2s away) sees this item as already
+        # in flight rather than still PENDING. video_library.request() only
+        # flips the status via the "downloading" callback once its background
+        # thread actually starts running, which can lag behind a poll cycle
+        # when the download-concurrency semaphore or the provider itself is
+        # slow — without this, each lagging poll spawns another competing
+        # download thread for the same video.
+        self._prep_started_at[item_id] = datetime.now()
+        self.update_content_status(item_id, self.STATUS_PREPARING)
+
         def on_status(status: str, path: Optional[str], error: Optional[str]):
             self._on_content_status(item_id, status, path, error)
 
@@ -134,10 +153,16 @@ class QueueManager:
             )
             self.update_content_status(item.id, self.STATUS_READY, content_path=str(cached_path))
             self._run_post_download_analysis(item.id, str(cached_path))
+            self._prep_started_at.pop(item.id, None)
             return
 
-        if item.created_at:
-            if datetime.now(item.created_at.tzinfo) - item.created_at > self._content_timeout:
+        # Prefer the current prep attempt's start time over created_at: a
+        # replace (or any other restart of preparation) doesn't change
+        # created_at, so comparing against it would flag a long-queued item
+        # as instantly "stuck" the moment its (fresh) replacement prep begins.
+        started_at = self._prep_started_at.get(item.id, item.created_at)
+        if started_at:
+            if datetime.now(started_at.tzinfo) - started_at > self._content_timeout:
                 self.logger.warning(
                     "Content preparation stuck for %s (ID: %s) for more than %s, resetting to pending",
                     item.metadata.title,
@@ -145,6 +170,7 @@ class QueueManager:
                     self._content_timeout,
                 )
                 self.update_content_status(item.id, self.STATUS_PENDING)
+                self._prep_started_at.pop(item.id, None)
 
     def _on_content_status(
         self, item_id: int, status: str, path: Optional[str], error: Optional[str]
@@ -155,10 +181,12 @@ class QueueManager:
         elif status == "ready" and path:
             self.update_content_status(item_id, self.STATUS_READY, content_path=path)
             self.logger.info("Content ready for queue item %s: %s", item_id, path)
+            self._prep_started_at.pop(item_id, None)
             self._run_post_download_analysis(item_id, path)
             self._cleanup_storage()
         elif status == "error" and error:
             self.update_content_status(item_id, self.STATUS_ERROR, error_message=error)
+            self._prep_started_at.pop(item_id, None)
             self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
 
     def _run_post_download_analysis(self, item_id: int, path: str) -> None:
