@@ -225,7 +225,12 @@ class KboxServer:
         logger.info("=" * 60)
 
         # Use uvicorn Server API for better control over shutdown
-        config = uvicorn.Config(self.web_app, host="0.0.0.0", port=8000, log_level="info")
+        # access_log=False: RequestLogMiddleware already logs every request with the
+        # real user identity, which uvicorn's IP-based access log can't show behind
+        # the Cloudflare Tunnel sidecar (every guest appears to come from the same IP)
+        config = uvicorn.Config(
+            self.web_app, host="0.0.0.0", port=8000, log_level="info", access_log=False
+        )
         self.uvicorn_server = uvicorn.Server(config)
 
         # On macOS, run uvicorn in a thread so main thread can run NSRunLoop
