@@ -7,7 +7,6 @@ READY (idle) and PLAYING (song) states.
 """
 
 import logging
-import os
 import sys
 import threading
 from typing import Any, Optional
@@ -543,14 +542,11 @@ class StreamingController:
         Temporarily raise GStreamer debug verbosity for the audio sink/ring
         buffer categories, to investigate the reported audio bleed at song
         transitions (a chunk of the outgoing track audible over the start of
-        the next one). Opt-in via KBOX_DEBUG_AUDIO_TRANSITION=1 so normal
-        runs aren't flooded - this is a diagnostic aid, not permanent
-        instrumentation. Auto-reverts a few seconds later via a timer so a
-        single transition's logs don't run on indefinitely.
+        the next one). Unconditionally on for now while we're actively
+        chasing this bug - revert once root-caused. Auto-reverts a few
+        seconds later via a timer so a single transition's logs don't run
+        on indefinitely.
         """
-        if os.environ.get("KBOX_DEBUG_AUDIO_TRANSITION") != "1":
-            return
-
         Gst = _get_gst()
         Gst.debug_set_threshold_from_string(
             "audiobasesink:6,ringbuffer:6,alsasink:6,GST_STATES:5", False
