@@ -7,6 +7,7 @@ READY (idle) and PLAYING (song) states.
 """
 
 import logging
+import os
 import sys
 import threading
 from typing import Any, Optional
@@ -537,6 +538,35 @@ class StreamingController:
     # Playback Control
     # =========================================================================
 
+    def _enable_transition_debug_logging(self):
+        """
+        Temporarily raise GStreamer debug verbosity for the audio sink/ring
+        buffer categories, to investigate the reported audio bleed at song
+        transitions (a chunk of the outgoing track audible over the start of
+        the next one). Opt-in via KBOX_DEBUG_AUDIO_TRANSITION=1 so normal
+        runs aren't flooded - this is a diagnostic aid, not permanent
+        instrumentation. Auto-reverts a few seconds later via a timer so a
+        single transition's logs don't run on indefinitely.
+        """
+        if os.environ.get("KBOX_DEBUG_AUDIO_TRANSITION") != "1":
+            return
+
+        Gst = _get_gst()
+        Gst.debug_set_threshold_from_string(
+            "audiobasesink:6,ringbuffer:6,alsasink:6,GST_STATES:5", False
+        )
+        self.logger.info("Transition debug logging enabled (audio sink/ring buffer)")
+
+        timer = threading.Timer(5.0, self._disable_transition_debug_logging)
+        timer.daemon = True
+        timer.start()
+
+    def _disable_transition_debug_logging(self):
+        """Revert the verbosity raised by _enable_transition_debug_logging."""
+        Gst = _get_gst()
+        Gst.debug_set_threshold_from_string("*:2", True)
+        self.logger.info("Transition debug logging disabled")
+
     def load_file(self, filepath: str, start_position_seconds: int = 0):
         """
         Load and play a video file.
@@ -572,6 +602,8 @@ class StreamingController:
         Gst = _get_gst()
 
         self.logger.debug("load_file: entry, current_state=%s", self.state)
+
+        self._enable_transition_debug_logging()
 
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
