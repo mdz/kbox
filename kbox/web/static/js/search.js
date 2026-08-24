@@ -8,7 +8,7 @@ import {
     currentSelectionTarget, setCurrentSelectionTarget
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
-import { loadQueue } from './queue.js';
+import { loadQueue, updateReplaceTargetBanner } from './queue.js';
 import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
 
 // Note: window.fetch is patched in auth.js to retry once on a 401/403 to
@@ -211,6 +211,7 @@ export function cancelAddToQueue() {
     modal.style.display = 'none';
     setCurrentVideoToAdd(null);
     setCurrentSelectionTarget(null);
+    updateReplaceTargetBanner();
 }
 
 // Confirm and add (or replace) a song in the queue.
@@ -292,6 +293,7 @@ export async function confirmAddToQueue() {
             loadQueue();
             setCurrentVideoToAdd(null);
             setCurrentSelectionTarget(null);
+            updateReplaceTargetBanner();
         } else {
             // Try to get error detail from response
             let errorMessage = replacing ? 'Error replacing song' : 'Error adding song to queue';
