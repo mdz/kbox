@@ -15,11 +15,13 @@ from .database import Database
 from .favorites import FavoritesManager
 from .history import HistoryManager
 from .llm import LLMClient
+from .loudness import LoudnessAnalyzer
 from .overlay import generate_qr_code
 from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
 from .queue import QueueManager
 from .session import SessionManager
+from .silence_detection import TrailingSilenceAnalyzer
 from .song_metadata import SongMetadataExtractor
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
@@ -102,6 +104,14 @@ class KboxServer:
             llm_client=self.llm_client,
         )
 
+        # TrailingSilenceAnalyzer detects dead air at the end of downloaded
+        # tracks so playback can advance without waiting through it.
+        self.silence_analyzer = TrailingSilenceAnalyzer(self.database)
+
+        # LoudnessAnalyzer measures each track's loudness so volume can be
+        # normalized across songs from different karaoke sources.
+        self.loudness_analyzer = LoudnessAnalyzer(self.database)
+
         # SessionManager tracks party sessions (bookended by clear-queue).
         # Sessions are created lazily on first write — no startup-time
         # initialization is required.
@@ -112,6 +122,8 @@ class KboxServer:
             self.database,
             video_library=self.video_library,
             metadata_extractor=self.metadata_extractor,
+            silence_analyzer=self.silence_analyzer,
+            loudness_analyzer=self.loudness_analyzer,
             session_manager=self.session_manager,
         )
         self.user_manager = UserManager(self.database)
@@ -127,6 +139,8 @@ class KboxServer:
             self.streaming_controller,
             self.config_manager,
             self.history_manager,
+            silence_analyzer=self.silence_analyzer,
+            loudness_analyzer=self.loudness_analyzer,
         )
 
         # SuggestionEngine for AI-powered song recommendations

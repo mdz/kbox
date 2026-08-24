@@ -56,6 +56,22 @@ CONFIG_SCHEMA = {
         "step": 0.05,
         "display_format": "percent",
     },
+    "loudness_normalization_enabled": {
+        "group": "audio",
+        "label": "Volume Normalization",
+        "description": "Automatically even out volume differences between songs from different karaoke sources.",
+        "control": "checkbox",
+    },
+    "loudness_target_lufs": {
+        "group": "audio",
+        "label": "Target Loudness",
+        "description": "Loudness level (in LUFS) songs are normalized toward. Lower is quieter.",
+        "control": "slider",
+        "min": -24,
+        "max": -8,
+        "step": 1,
+        "display_format": "lufs",
+    },
     # Video & Display
     "video_max_resolution": {
         "group": "video",
@@ -188,6 +204,12 @@ CONFIG_SCHEMA = {
         "step": 1,
         "display_format": "minutes",
     },
+    "duplicate_singer_nudge_enabled": {
+        "group": "queue",
+        "label": "Second Song Nudge",
+        "description": "Show a soft confirmation when a guest adds a song while they already have one queued — a gentle 'give everyone a turn' reminder, not a hard block.",
+        "control": "checkbox",
+    },
 }
 
 
@@ -233,6 +255,8 @@ class ConfigManager:
         "video_max_resolution": "480",  # Max video height for downloads (480, 720, 1080, etc.)
         "operator_pin": "1234",
         "default_youtube_volume": "0.8",
+        "loudness_normalization_enabled": "true",  # Automatically even out volume between songs
+        "loudness_target_lufs": "-16",  # Target integrated loudness (LUFS) for normalization
         "reverb_plugin": None,  # Will be determined at runtime
         # Overlay settings
         "external_url": None,  # External URL for QR code (overrides auto-detect)
@@ -248,6 +272,9 @@ class ConfigManager:
         "llm_temperature": "0.9",  # AI creativity (0.0-1.5)
         # Queue
         "long_song_warning_minutes": "5",  # Warn when adding songs longer than N minutes (0 = disabled)
+        "duplicate_singer_nudge_enabled": "true",  # Soft nudge when a guest already has an unplayed song queued
+        # Internal (not in CONFIG_SCHEMA, not shown in UI)
+        "skip_trailing_silence_enabled": "true",  # Advance early when trailing silence is detected
     }
 
     # Editable keys are derived from CONFIG_SCHEMA

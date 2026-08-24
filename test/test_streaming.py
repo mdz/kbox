@@ -356,6 +356,47 @@ def test_pitch_shift_during_playback(controller, test_video_3s):
 
 
 # =========================================================================
+# Volume Gain Tests
+# =========================================================================
+
+
+def test_init_creates_volume_element(controller):
+    """Test that the volume element is created for loudness normalization."""
+    assert controller.volume_element is not None
+    assert controller.volume_gain_linear == pytest.approx(1.0)
+
+
+def test_set_volume_gain_db_updates_element(controller):
+    """Test that setting a gain updates both the tracked value and the element."""
+    controller.set_volume_gain_db(-6.0)
+
+    assert controller.volume_gain_linear == pytest.approx(0.501, abs=0.01)
+    assert controller.volume_element.get_property("volume") == pytest.approx(0.501, abs=0.01)
+
+
+def test_volume_gain_persists_across_songs(controller, test_video_1s):
+    """Test that volume gain setting persists across song changes."""
+    controller.set_volume_gain_db(-3.0)
+
+    controller.load_file(test_video_1s)
+    controller.stop_playback()
+
+    assert controller.volume_gain_linear == pytest.approx(10 ** (-3.0 / 20), abs=0.001)
+    assert controller.volume_element.get_property("volume") == pytest.approx(
+        10 ** (-3.0 / 20), abs=0.001
+    )
+
+
+def test_set_volume_gain_db_zero_is_unity(controller):
+    """Test that a 0dB gain leaves the output unadjusted."""
+    controller.set_volume_gain_db(6.0)
+    controller.set_volume_gain_db(0.0)
+
+    assert controller.volume_gain_linear == pytest.approx(1.0)
+    assert controller.volume_element.get_property("volume") == pytest.approx(1.0)
+
+
+# =========================================================================
 # Position and Seeking Tests
 # =========================================================================
 

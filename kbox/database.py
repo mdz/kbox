@@ -29,7 +29,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 7  # Incremented for name-keyed identity (normalized_name/icon/color)
+    SCHEMA_VERSION = 9  # Incremented for name-keyed identity (normalized_name/icon/color)
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -111,7 +111,21 @@ class Database:
             self._create_favorites_table(cursor)
 
         if current_version < 7:
-            # Version 7: Add normalized_name/icon/color/last_seen_at to users
+            # Version 7: Add trailing-silence detection columns to
+            # song_metadata_cache, and relax artist/song_name to nullable
+            # (a video can now get a cache row from silence analysis alone,
+            # before/without metadata extraction ever running for it).
+            self._add_silence_detection_columns(cursor)
+
+        if current_version < 8:
+            # Version 8: Add loudness-measurement columns to
+            # song_metadata_cache for volume normalization. artist/song_name
+            # are already nullable as of version 7, so this is a plain
+            # additive ALTER TABLE - no table recreation needed.
+            self._add_loudness_columns(cursor)
+
+        if current_version < 9:
+            # Version 9: Add normalized_name/icon/color/last_seen_at to users
             # for name-keyed identity lookup, and backfill existing rows.
             self._add_user_identity_columns(cursor)
 
@@ -290,6 +304,88 @@ class Database:
         """)
 
         self.logger.info("song_metadata_cache table created")
+
+    def _add_silence_detection_columns(self, cursor):
+        """Add trailing-silence columns to song_metadata_cache.
+
+        Also relaxes artist/song_name from NOT NULL to nullable: a row can
+        now be created by silence analysis alone (which runs independently
+        of, and may complete before, LLM metadata extraction for the same
+        video). SQLite can't drop a NOT NULL constraint in place, so the
+        table is recreated.
+        """
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='song_metadata_cache'"
+        )
+        if cursor.fetchone() is None:
+            # Fresh database - _create_song_metadata_cache hasn't run yet on
+            # older code paths, but on a new DB we create it directly here.
+            cursor.execute("""
+                CREATE TABLE song_metadata_cache (
+                    video_id TEXT PRIMARY KEY,
+                    artist TEXT,
+                    song_name TEXT,
+                    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    trailing_silence_start_seconds INTEGER,
+                    silence_analyzed_at TIMESTAMP
+                )
+            """)
+            self.logger.info("song_metadata_cache table created (with silence columns)")
+            return
+
+        cursor.execute("PRAGMA table_info(song_metadata_cache)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "trailing_silence_start_seconds" in columns:
+            return  # Already migrated
+
+        self.logger.info("Migrating song_metadata_cache for silence detection...")
+
+        cursor.execute("""
+            CREATE TABLE song_metadata_cache_new (
+                video_id TEXT PRIMARY KEY,
+                artist TEXT,
+                song_name TEXT,
+                extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                trailing_silence_start_seconds INTEGER,
+                silence_analyzed_at TIMESTAMP
+            )
+        """)
+
+        # extracted_at may not exist on older/hand-built schemas -- copy it
+        # only if present, and let the new column default otherwise.
+        if "extracted_at" in columns:
+            cursor.execute("""
+                INSERT INTO song_metadata_cache_new (video_id, artist, song_name, extracted_at)
+                SELECT video_id, artist, song_name, extracted_at FROM song_metadata_cache
+            """)
+        else:
+            cursor.execute("""
+                INSERT INTO song_metadata_cache_new (video_id, artist, song_name)
+                SELECT video_id, artist, song_name FROM song_metadata_cache
+            """)
+
+        cursor.execute("DROP TABLE song_metadata_cache")
+        cursor.execute("ALTER TABLE song_metadata_cache_new RENAME TO song_metadata_cache")
+
+        self.logger.info("song_metadata_cache migration complete")
+
+    def _add_loudness_columns(self, cursor):
+        """Add loudness-measurement columns to song_metadata_cache.
+
+        artist/song_name are already nullable as of the version-7 migration
+        (_add_silence_detection_columns), which also guarantees the table
+        exists by the time this runs - so this is a plain additive
+        ALTER TABLE, no recreation needed.
+        """
+        cursor.execute("PRAGMA table_info(song_metadata_cache)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "integrated_lufs" in columns:
+            return  # Already migrated
+
+        self.logger.info("Adding loudness columns to song_metadata_cache...")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN integrated_lufs REAL")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN true_peak_dbtp REAL")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN loudness_analyzed_at TIMESTAMP")
 
     def _create_user_events_table(self, cursor):
         """Create user_events table for interaction logging (search queries, etc.)."""

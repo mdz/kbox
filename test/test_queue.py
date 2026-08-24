@@ -4,7 +4,6 @@ Unit tests for QueueManager.
 
 import os
 import tempfile
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
@@ -501,30 +500,56 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
 
 
 class TestMetadataExtraction:
-    """Tests for background metadata extraction in QueueManager."""
+    """Tests for metadata extraction triggered by content becoming ready."""
 
-    def test_extract_called_for_new_song(self, temp_db, user_manager):
-        """When a song is added, metadata extraction is attempted."""
-        mock_extractor = Mock()
-        mock_extractor.extract.return_value = ("Journey", "Don't Stop Believin'")
+    def _make_qm_with_captured_callback(self, temp_db, mock_extractor):
+        """Create a QueueManager whose download callback is captured, not run."""
+        captured_callback = {}
+
+        def capture_callback(video_id, callback=None):
+            captured_callback["fn"] = callback
+            return None
 
         mock_video_library = MagicMock()
-        mock_video_library.has_provider = False  # No provider = no downloads to track
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
 
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
             metadata_extractor=mock_extractor,
         )
+        qm.stop_content_monitor()
+        return qm, captured_callback
+
+    def test_extract_not_called_at_add_time(self, temp_db, user_manager):
+        """Adding a song does not trigger metadata extraction."""
+        mock_extractor = Mock()
+        mock_extractor.extract.return_value = ("Journey", "Don't Stop Believin'")
+
+        qm, captured_callback = self._make_qm_with_captured_callback(temp_db, mock_extractor)
 
         user = user_manager.get_or_create_user("u1", "Alice")
         qm.add_song(user, "youtube:abc", "Don't Stop Believin Karaoke", duration_seconds=180)
+        qm._process_pending_content()
 
-        # Give the background thread time to process
-        time.sleep(0.5)
-        qm.stop_content_monitor()
+        assert not mock_extractor.extract.called
 
-        # Verify extract was called
+    def test_extract_called_when_content_ready(self, temp_db, user_manager):
+        """When a queue item's content becomes ready, metadata extraction runs."""
+        mock_extractor = Mock()
+        mock_extractor.extract.return_value = ("Journey", "Don't Stop Believin'")
+
+        qm, captured_callback = self._make_qm_with_captured_callback(temp_db, mock_extractor)
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        qm.add_song(user, "youtube:abc", "Don't Stop Believin Karaoke", duration_seconds=180)
+        qm._process_pending_content()
+
+        assert captured_callback["fn"] is not None
+        captured_callback["fn"]("ready", "/path/to/video.mp4", None)
+
         assert mock_extractor.extract.called
 
     def test_extracted_metadata_persisted(self, temp_db, user_manager):
@@ -532,50 +557,273 @@ class TestMetadataExtraction:
         mock_extractor = Mock()
         mock_extractor.extract.return_value = ("Queen", "Bohemian Rhapsody")
 
-        mock_video_library = MagicMock()
-        mock_video_library.has_provider = False
-
-        qm = QueueManager(
-            temp_db,
-            video_library=mock_video_library,
-            metadata_extractor=mock_extractor,
-        )
+        qm, captured_callback = self._make_qm_with_captured_callback(temp_db, mock_extractor)
 
         user = user_manager.get_or_create_user("u1", "Alice")
         item_id = qm.add_song(
             user, "youtube:xyz", "Bohemian Rhapsody Karaoke", duration_seconds=354
         )
+        qm._process_pending_content()
 
-        time.sleep(0.5)
-        qm.stop_content_monitor()
+        captured_callback["fn"]("ready", "/path/to/video.mp4", None)
 
         item = qm.get_item(item_id)
-        if mock_extractor.extract.called:
-            # If extraction ran, metadata should be updated
-            assert item.metadata.artist == "Queen"
-            assert item.metadata.song_name == "Bohemian Rhapsody"
+        assert item.metadata.artist == "Queen"
+        assert item.metadata.song_name == "Bohemian Rhapsody"
 
     def test_extraction_error_does_not_break_queue(self, temp_db, user_manager):
         """If metadata extraction fails, queue operations continue normally."""
         mock_extractor = Mock()
         mock_extractor.extract.side_effect = Exception("LLM API error")
 
+        qm, captured_callback = self._make_qm_with_captured_callback(temp_db, mock_extractor)
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:err", "Some Song", duration_seconds=200)
+        qm._process_pending_content()
+
+        captured_callback["fn"]("ready", "/path/to/video.mp4", None)
+
+        # Queue should still work fine
+        item = qm.get_item(item_id)
+        assert item is not None
+        assert item.metadata.title == "Some Song"
+        assert item.content_status == QueueManager.STATUS_READY
+
+    def test_extract_called_on_stuck_content_recovery(self, temp_db, user_manager):
+        """Recovering a stuck item that already has a downloaded file also triggers extraction."""
+        mock_extractor = Mock()
+        mock_extractor.extract.return_value = ("Queen", "Bohemian Rhapsody")
+
         mock_video_library = MagicMock()
-        mock_video_library.has_provider = False
+        mock_video_library.request.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        mock_path = MagicMock(spec=Path)
+        mock_path.exists.return_value = True
+        mock_path.__str__ = lambda self: "/recovered/path/video.mp4"
+        mock_video_library.get_path.return_value = mock_path
 
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
             metadata_extractor=mock_extractor,
         )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:stuck", "Bohemian Rhapsody Karaoke")
+
+        qm.update_content_status(item_id, QueueManager.STATUS_PREPARING)
+        qm._process_pending_content()
+
+        assert mock_extractor.extract.called
+        item = qm.get_item(item_id)
+        assert item.metadata.artist == "Queen"
+        assert item.metadata.song_name == "Bohemian Rhapsody"
+
+
+class TestSilenceAnalysis:
+    """Tests for trailing-silence analysis, triggered once content is ready."""
+
+    def test_analyze_called_when_content_ready(self, temp_db, user_manager):
+        """When a song's content becomes ready, silence analysis runs."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.return_value = 120
+
+        captured_callback = None
+
+        def capture_callback(video_id, callback=None):
+            nonlocal captured_callback
+            captured_callback = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            silence_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        qm.add_song(user, "youtube:abc", "Some Karaoke Track", duration_seconds=180)
+
+        qm._process_pending_content()
+        captured_callback("ready", "/path/to/video.mp4", None)
+
+        mock_analyzer.analyze.assert_called_once_with("youtube:abc", "/path/to/video.mp4")
+
+    def test_analysis_error_does_not_break_queue(self, temp_db, user_manager):
+        """If silence analysis fails, queue operations continue normally."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.side_effect = Exception("ffmpeg not found")
+
+        captured_callback = None
+
+        def capture_callback(video_id, callback=None):
+            nonlocal captured_callback
+            captured_callback = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            silence_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
 
         user = user_manager.get_or_create_user("u1", "Alice")
         item_id = qm.add_song(user, "youtube:err", "Some Song", duration_seconds=200)
 
-        time.sleep(0.5)
-        qm.stop_content_monitor()
+        qm._process_pending_content()
+        captured_callback("ready", "/path/to/video.mp4", None)
 
-        # Queue should still work fine
         item = qm.get_item(item_id)
         assert item is not None
-        assert item.metadata.title == "Some Song"
+        assert item.content_status == QueueManager.STATUS_READY
+
+    def test_analyze_called_on_stuck_content_recovery(self, temp_db, user_manager):
+        """Recovering a stuck item that already has a downloaded file also triggers silence analysis."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.return_value = 120
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        mock_path = MagicMock(spec=Path)
+        mock_path.exists.return_value = True
+        mock_path.__str__ = lambda self: "/recovered/path/video.mp4"
+        mock_video_library.get_path.return_value = mock_path
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            silence_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:stuck", "Some Karaoke Track")
+
+        qm.update_content_status(item_id, QueueManager.STATUS_PREPARING)
+        qm._process_pending_content()
+
+        mock_analyzer.analyze.assert_called_once_with("youtube:stuck", "/recovered/path/video.mp4")
+
+
+class TestLoudnessAnalysis:
+    """Tests for loudness analysis, triggered once content is ready."""
+
+    def test_analyze_called_when_content_ready(self, temp_db, user_manager):
+        """When a song's content becomes ready, loudness analysis runs."""
+        from kbox.loudness import LoudnessInfo
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.return_value = LoudnessInfo(
+            integrated_lufs=-14.0, true_peak_dbtp=-1.0
+        )
+
+        captured_callback = None
+
+        def capture_callback(video_id, callback=None):
+            nonlocal captured_callback
+            captured_callback = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            loudness_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        qm.add_song(user, "youtube:abc", "Some Karaoke Track", duration_seconds=180)
+
+        qm._process_pending_content()
+        captured_callback("ready", "/path/to/video.mp4", None)
+
+        mock_analyzer.analyze.assert_called_once_with("youtube:abc", "/path/to/video.mp4")
+
+    def test_analysis_error_does_not_break_queue(self, temp_db, user_manager):
+        """If loudness analysis fails, queue operations continue normally."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.side_effect = Exception("ffmpeg not found")
+
+        captured_callback = None
+
+        def capture_callback(video_id, callback=None):
+            nonlocal captured_callback
+            captured_callback = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            loudness_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:err", "Some Song", duration_seconds=200)
+
+        qm._process_pending_content()
+        captured_callback("ready", "/path/to/video.mp4", None)
+
+        item = qm.get_item(item_id)
+        assert item is not None
+        assert item.content_status == QueueManager.STATUS_READY
+
+    def test_analyze_called_on_stuck_content_recovery(self, temp_db, user_manager):
+        """Recovering a stuck item that already has a downloaded file also triggers loudness analysis."""
+        from kbox.loudness import LoudnessInfo
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.return_value = LoudnessInfo(
+            integrated_lufs=-14.0, true_peak_dbtp=-1.0
+        )
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        mock_path = MagicMock(spec=Path)
+        mock_path.exists.return_value = True
+        mock_path.__str__ = lambda self: "/recovered/path/video.mp4"
+        mock_video_library.get_path.return_value = mock_path
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            loudness_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:stuck", "Some Karaoke Track")
+
+        qm.update_content_status(item_id, QueueManager.STATUS_PREPARING)
+        qm._process_pending_content()
+
+        mock_analyzer.analyze.assert_called_once_with("youtube:stuck", "/recovered/path/video.mp4")
