@@ -112,7 +112,7 @@ Both 3rd and 4th generation Scarlett Solo units work with kbox. They have identi
 
 | 3rd Gen | 4th Gen |
 |---------|---------|
-| ![3rd Gen](Scarlett-Solo-3rd-gen.jpeg) | ![4th Gen](Scarlett-Solo-4th-gen.jpeg) |
+| ![3rd Gen](scarlett-solo-3rd-gen.jpeg) | ![4th Gen](scarlett-solo-4th-gen.jpeg) |
 
 **Inputs (same on both generations):**
 - **XLR input** - For wired microphones (has preamp + 48V phantom power)

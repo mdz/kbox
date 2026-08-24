@@ -75,7 +75,7 @@ Open `http://localhost:8000` on your phone to queue songs, and `http://localhost
 - **Linux / Raspberry Pi** — optimized for direct display output
 - **Docker** — containerized deployment
 
-See `docs/HARDWARE_SETUP.md` for audio hardware setup (microphone input, mixing, signal flow).
+See `docs/hardware/hardware-setup.md` for audio hardware setup (microphone input, mixing, signal flow).
 
 ## Development
 

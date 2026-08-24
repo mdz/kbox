@@ -13,7 +13,7 @@ down mid-show — power, storage, and heat — plus a diagnostics toolkit and a 
 run before trusting new hardware at a real party.
 
 This guide is Raspberry Pi-specific. For audio wiring and mixing setups (interfaces,
-mixers, HDMI audio injectors), see [HARDWARE_SETUP.md](HARDWARE_SETUP.md).
+mixers, HDMI audio injectors), see [hardware-setup.md](hardware-setup.md).
 
 ## Power
 
