@@ -169,7 +169,7 @@ def require_user(request: Request) -> str:
 
     Raises HTTPException 401 if user is not authenticated (no user_id in session).
     Guest identity here is self-declared and unverified, by design (see
-    ldocs/GUEST_IDENTITY_CONTINUITY.md) — this just requires *some* identity
+    docs/design/guest-identity-continuity.md) — this just requires *some* identity
     to be bound to the session before allowing a write; it's not proof of
     who that identity belongs to.
     """
@@ -1075,7 +1075,7 @@ def create_app(
         already-bound session's identity out from under it (see the
         window.fetch race backstop in auth.js); it has nothing to do with
         guest-vs-guest impersonation, which this system doesn't defend
-        against (see ldocs/GUEST_IDENTITY_CONTINUITY.md).
+        against (see docs/design/guest-identity-continuity.md).
 
         To deliberately switch a session to a different (recognized or
         brand-new) identity, use POST /api/users/claim instead.
@@ -1119,7 +1119,7 @@ def create_app(
         """
         Find existing identities matching a typed name.
 
-        This is the recognition step from ldocs/GUEST_IDENTITY_CONTINUITY.md:
+        This is the recognition step from docs/design/guest-identity-continuity.md:
         a guest types a name, the client shows any matches so they can
         recognize themselves (or say "none of these, I'm new"), then calls
         POST /api/users/claim with whichever user_id they land on.
@@ -1172,7 +1172,7 @@ def create_app(
         so it can't itself trigger an identity switch.
 
         Claiming an existing user_id requires no proof beyond typing/tapping
-        a name — a deliberate choice (see ldocs/GUEST_IDENTITY_CONTINUITY.md),
+        a name — a deliberate choice (see docs/design/guest-identity-continuity.md),
         not an oversight. UUIDs stay effectively unguessable (122 bits from
         crypto.randomUUID()), and this system has already decided
         guest-vs-guest impersonation isn't worth defending against at these

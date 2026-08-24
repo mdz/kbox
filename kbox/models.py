@@ -14,7 +14,7 @@ class User:
     """User entity with UUID-based identity.
 
     Identity is self-declared and unverified by design (see
-    ldocs/GUEST_IDENTITY_CONTINUITY.md): `id` is the durable key everything
+    docs/design/guest-identity-continuity.md): `id` is the durable key everything
     else foreign-keys against, `normalized_name` is a lookup path onto it
     (not itself unique — a name shared by two real guests is an expected,
     designed-for case), and `icon`/`color` exist purely to make same-named

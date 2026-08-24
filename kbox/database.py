@@ -776,7 +776,7 @@ class UserRepository:
 
         For coalescing identities that predate name-keyed lookup, or any
         ghost identity an operator confirms is the same person as another
-        record (see ldocs/GUEST_IDENTITY_CONTINUITY.md — this system never
+        record (see docs/design/guest-identity-continuity.md — this system never
         merges automatically). There are no SQL foreign-key constraints
         anywhere in this schema, so this is plain per-table reassignment,
         not a cascade.

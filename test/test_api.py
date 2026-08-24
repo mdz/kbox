@@ -850,8 +850,8 @@ class TestUserEndpoints:
 class TestUserLookupAndClaimEndpoints:
     """Tests for the name-keyed identity recognition flow.
 
-    See ldocs/GUEST_IDENTITY_CONTINUITY.md /
-    ldocs/GUEST_IDENTITY_TECHNICAL_DESIGN.md.
+    See docs/design/guest-identity-continuity.md /
+    docs/design/guest-identity-technical-design.md.
     """
 
     def test_lookup_unknown_name_returns_no_candidates(self, client):

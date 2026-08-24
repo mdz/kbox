@@ -76,7 +76,7 @@ window.fetch = async function (input, init) {
 
 // Claim an identity — either an existing one the guest recognized, or a
 // fresh UUID for "I'm new" — and (re)bind the session to it.
-// See ldocs/GUEST_IDENTITY_CONTINUITY.md / GUEST_IDENTITY_TECHNICAL_DESIGN.md.
+// See docs/design/guest-identity-continuity.md / guest-identity-technical-design.md.
 async function claimUser(uid, displayName) {
     try {
         const response = await fetch('/api/users/claim', {

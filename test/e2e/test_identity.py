@@ -3,8 +3,8 @@ Identity flow: first-run name capture, and name-keyed recognition on return.
 
 Covers: name modal appears on first visit, dismisses after entry, does not
 reappear on reload (name survives in localStorage + session). Also covers
-the recognition flow from ldocs/GUEST_IDENTITY_CONTINUITY.md /
-ldocs/GUEST_IDENTITY_TECHNICAL_DESIGN.md: a guest typing a name that matches
+the recognition flow from docs/design/guest-identity-continuity.md /
+docs/design/guest-identity-technical-design.md: a guest typing a name that matches
 an existing identity (e.g. after localStorage was lost) sees a recognition
 list instead of silently getting a brand-new, disconnected identity.
 """
@@ -98,7 +98,7 @@ def test_choosing_a_candidate_reuses_the_existing_identity(mobile_page, live_app
 def test_choosing_im_new_creates_a_separate_identity(mobile_page, live_app, init_user):
     """'None of these — I'm new' on a collision adds a distinct ghost
     identity rather than erroring or merging — an accepted cost, per
-    ldocs/GUEST_IDENTITY_CONTINUITY.md."""
+    docs/design/guest-identity-continuity.md."""
     init_user("Vlad")
 
     context, page = _second_visit_types_name(mobile_page, live_app, "Vlad")

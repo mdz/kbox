@@ -72,7 +72,7 @@ class UserManager:
         "matt", and "Matt " all resolve to the same candidates. An empty
         result means this is a genuinely new name — the caller should let
         the guest through with no recognition step, per
-        ldocs/GUEST_IDENTITY_CONTINUITY.md.
+        docs/design/guest-identity-continuity.md.
 
         Args:
             name: Raw name as typed by the guest
@@ -98,7 +98,7 @@ class UserManager:
 
         For an operator confirming two identities belong to the same real
         person — never done automatically. See
-        ldocs/GUEST_IDENTITY_CONTINUITY.md.
+        docs/design/guest-identity-continuity.md.
 
         Args:
             keep_id: UUID of the identity to keep
