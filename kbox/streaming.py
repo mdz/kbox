@@ -547,6 +547,22 @@ class StreamingController:
 
         Raises:
             RuntimeError: If playback fails to start
+
+        Note on "GStreamer-Audio-CRITICAL ... gst_audio_ring_buffer_set_channel_positions:
+        should not be reached": this fires on essentially every song load and is a known
+        upstream quirk, not a bug in this pipeline. In gstaudioringbuffer.c, that function
+        calls gst_audio_get_channel_reorder_map(device_positions, stream_positions), which
+        returns FALSE (triggering the critical) if EITHER side's position array contains
+        GST_AUDIO_CHANNEL_POSITION_NONE. The caller only special-cases "positionless" for
+        the device side; it never checks the stream's own negotiated positions. Plain
+        2-channel audio negotiated without an explicit channel-mask (the common case for
+        our source files) is exactly this "positionless" case, so it collides with ALSA
+        sinks that report explicit FRONT_LEFT/FRONT_RIGHT device positions - on every
+        renegotiation, regardless of pipeline state-change timing. Confirmed via GStreamer
+        1.26.2 source; do not treat this log line as evidence of an app-level bug without
+        new data - an earlier fix here (waiting on the NULL state transition before
+        reconfiguring) was reverted after it had zero effect on the warning or on a real,
+        separately-reported audio bleed at song transitions, which remains uninvestigated.
         """
         self.logger.info("Loading file: %s (start_position=%s)", filepath, start_position_seconds)
 
