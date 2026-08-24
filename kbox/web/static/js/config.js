@@ -249,6 +249,8 @@ export function formatSliderValue(value, format) {
             return value + 's';
         case 'minutes':
             return value == 0 ? 'Off' : value + ' min';
+        case 'lufs':
+            return value + ' LUFS';
         default:
             return String(value);
     }

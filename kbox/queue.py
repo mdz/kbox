@@ -13,6 +13,7 @@ from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
+    from .loudness import LoudnessAnalyzer
     from .session import SessionManager
     from .silence_detection import TrailingSilenceAnalyzer
     from .song_metadata import SongMetadataExtractor
@@ -33,6 +34,7 @@ class QueueManager:
         video_library: "VideoLibrary",
         metadata_extractor: Optional["SongMetadataExtractor"] = None,
         silence_analyzer: Optional["TrailingSilenceAnalyzer"] = None,
+        loudness_analyzer: Optional["LoudnessAnalyzer"] = None,
         session_manager: Optional["SessionManager"] = None,
     ):
         """
@@ -43,6 +45,7 @@ class QueueManager:
             video_library: VideoLibrary for video search/download
             metadata_extractor: Optional SongMetadataExtractor for LLM-based extraction
             silence_analyzer: Optional TrailingSilenceAnalyzer for trailing-silence detection
+            loudness_analyzer: Optional LoudnessAnalyzer for volume normalization
             session_manager: Optional SessionManager; when provided, new queue
                 items are tagged with the current session and clear_queue
                 rotates the session.
@@ -53,6 +56,7 @@ class QueueManager:
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
         self.silence_analyzer = silence_analyzer
+        self.loudness_analyzer = loudness_analyzer
         self.session_manager = session_manager
         self.logger = logging.getLogger(__name__)
 
@@ -191,6 +195,12 @@ class QueueManager:
                 self.silence_analyzer.analyze(item.video_id, path)
             except Exception as e:
                 self.logger.warning("Silence analysis failed for item %s: %s", item_id, e)
+
+        if self.loudness_analyzer:
+            try:
+                self.loudness_analyzer.analyze(item.video_id, path)
+            except Exception as e:
+                self.logger.warning("Loudness analysis failed for item %s: %s", item_id, e)
 
     def stop_content_monitor(self):
         """Stop the content monitor thread."""

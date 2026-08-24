@@ -56,6 +56,22 @@ CONFIG_SCHEMA = {
         "step": 0.05,
         "display_format": "percent",
     },
+    "loudness_normalization_enabled": {
+        "group": "audio",
+        "label": "Volume Normalization",
+        "description": "Automatically even out volume differences between songs from different karaoke sources.",
+        "control": "checkbox",
+    },
+    "loudness_target_lufs": {
+        "group": "audio",
+        "label": "Target Loudness",
+        "description": "Loudness level (in LUFS) songs are normalized toward. Lower is quieter.",
+        "control": "slider",
+        "min": -24,
+        "max": -8,
+        "step": 1,
+        "display_format": "lufs",
+    },
     # Video & Display
     "video_max_resolution": {
         "group": "video",
@@ -239,6 +255,8 @@ class ConfigManager:
         "video_max_resolution": "480",  # Max video height for downloads (480, 720, 1080, etc.)
         "operator_pin": "1234",
         "default_youtube_volume": "0.8",
+        "loudness_normalization_enabled": "true",  # Automatically even out volume between songs
+        "loudness_target_lufs": "-16",  # Target integrated loudness (LUFS) for normalization
         "reverb_plugin": None,  # Will be determined at runtime
         # Overlay settings
         "external_url": None,  # External URL for QR code (overrides auto-detect)

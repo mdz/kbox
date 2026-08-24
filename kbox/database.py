@@ -28,7 +28,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 7  # Incremented for silence-detection columns on song_metadata_cache
+    SCHEMA_VERSION = 8  # Incremented for loudness columns on song_metadata_cache
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -115,6 +115,13 @@ class Database:
             # (a video can now get a cache row from silence analysis alone,
             # before/without metadata extraction ever running for it).
             self._add_silence_detection_columns(cursor)
+
+        if current_version < 8:
+            # Version 8: Add loudness-measurement columns to
+            # song_metadata_cache for volume normalization. artist/song_name
+            # are already nullable as of version 7, so this is a plain
+            # additive ALTER TABLE - no table recreation needed.
+            self._add_loudness_columns(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -355,6 +362,24 @@ class Database:
         cursor.execute("ALTER TABLE song_metadata_cache_new RENAME TO song_metadata_cache")
 
         self.logger.info("song_metadata_cache migration complete")
+
+    def _add_loudness_columns(self, cursor):
+        """Add loudness-measurement columns to song_metadata_cache.
+
+        artist/song_name are already nullable as of the version-7 migration
+        (_add_silence_detection_columns), which also guarantees the table
+        exists by the time this runs - so this is a plain additive
+        ALTER TABLE, no recreation needed.
+        """
+        cursor.execute("PRAGMA table_info(song_metadata_cache)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "integrated_lufs" in columns:
+            return  # Already migrated
+
+        self.logger.info("Adding loudness columns to song_metadata_cache...")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN integrated_lufs REAL")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN true_peak_dbtp REAL")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN loudness_analyzed_at TIMESTAMP")
 
     def _create_user_events_table(self, cursor):
         """Create user_events table for interaction logging (search queries, etc.)."""
