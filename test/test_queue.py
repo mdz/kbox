@@ -4,6 +4,7 @@ Unit tests for QueueManager.
 
 import os
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
@@ -492,6 +493,80 @@ def test_stuck_download_recovery_uses_video_library(temp_db, user_manager):
     item = qm.get_item(item_id)
     assert item.content_status == QueueManager.STATUS_READY
     assert item.content_path == "/recovered/path/video.mp4"
+
+
+def test_stuck_check_after_replace_does_not_false_positive(temp_db, user_manager):
+    """A replace on a long-queued item must not look instantly 'stuck'.
+
+    The item's created_at can be arbitrarily old (it's the original queue
+    time, unaffected by replace), but the *current* content-preparation
+    attempt just started — the stuck check must key off that, not
+    created_at, or it immediately resets the item back to pending and
+    triggers a redundant re-download.
+    """
+    mock_video_library = MagicMock()
+    mock_video_library.request.return_value = None
+    mock_video_library.get_path.return_value = None
+    mock_video_library.manage_storage.return_value = 0
+
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_library=mock_video_library)
+    qm.stop_content_monitor()
+
+    item_id = qm.add_song(alice, "youtube:original", "Original Song")
+
+    # Simulate the item having been queued a long time ago (well past the
+    # stuck timeout), as would be true right after a same-item replace.
+    old_time = datetime.now() - timedelta(minutes=27)
+    conn = temp_db.get_connection()
+    conn.execute(
+        "UPDATE queue_items SET created_at = ? WHERE id = ?",
+        (old_time.isoformat(sep=" "), item_id),
+    )
+    conn.commit()
+    conn.close()
+
+    qm.replace_song(item_id, video_id="youtube:replacement", title="Replacement Song")
+
+    # Content monitor picks up the now-pending replacement and starts prep.
+    qm._process_pending_content()
+    item = qm.get_item(item_id)
+    assert item.content_status == QueueManager.STATUS_PREPARING
+
+    # Immediately checking again (as the 2s-later poll would) must not treat
+    # this fresh prep attempt as stuck just because created_at is old.
+    qm._process_pending_content()
+    item = qm.get_item(item_id)
+    assert item.content_status == QueueManager.STATUS_PREPARING
+    mock_video_library.request.assert_called_once()
+
+
+def test_no_duplicate_download_while_prep_in_flight(temp_db, user_manager):
+    """Two rapid poll cycles for the same item must not spawn two downloads.
+
+    Regression test: previously content_status only flipped to PREPARING
+    asynchronously (from the download thread's callback), so if that thread
+    hadn't started running yet, a second poll would see STATUS_PENDING and
+    call video_library.request() again for the same video.
+    """
+    mock_video_library = MagicMock()
+    mock_video_library.request.return_value = None  # download thread hasn't run yet
+    mock_video_library.get_path.return_value = None
+    mock_video_library.manage_storage.return_value = 0
+
+    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+    qm = QueueManager(temp_db, video_library=mock_video_library)
+    qm.stop_content_monitor()
+
+    item_id = qm.add_song(alice, "youtube:slow_start", "Slow Start Song")
+
+    qm._process_pending_content()
+    qm._process_pending_content()
+    qm._process_pending_content()
+
+    mock_video_library.request.assert_called_once()
+    item = qm.get_item(item_id)
+    assert item.content_status == QueueManager.STATUS_PREPARING
 
 
 # =============================================================================
