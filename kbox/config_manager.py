@@ -255,6 +255,8 @@ class ConfigManager:
         # Queue
         "long_song_warning_minutes": "5",  # Warn when adding songs longer than N minutes (0 = disabled)
         "duplicate_singer_nudge_enabled": "true",  # Soft nudge when a guest already has an unplayed song queued
+        # Internal (not in CONFIG_SCHEMA, not shown in UI)
+        "skip_trailing_silence_enabled": "true",  # Advance early when trailing silence is detected
     }
 
     # Editable keys are derived from CONFIG_SCHEMA

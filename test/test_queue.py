@@ -621,3 +621,102 @@ class TestMetadataExtraction:
         item = qm.get_item(item_id)
         assert item.metadata.artist == "Queen"
         assert item.metadata.song_name == "Bohemian Rhapsody"
+
+
+class TestSilenceAnalysis:
+    """Tests for trailing-silence analysis, triggered once content is ready."""
+
+    def test_analyze_called_when_content_ready(self, temp_db, user_manager):
+        """When a song's content becomes ready, silence analysis runs."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.return_value = 120
+
+        captured_callback = None
+
+        def capture_callback(video_id, callback=None):
+            nonlocal captured_callback
+            captured_callback = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            silence_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        qm.add_song(user, "youtube:abc", "Some Karaoke Track", duration_seconds=180)
+
+        qm._process_pending_content()
+        captured_callback("ready", "/path/to/video.mp4", None)
+
+        mock_analyzer.analyze.assert_called_once_with("youtube:abc", "/path/to/video.mp4")
+
+    def test_analysis_error_does_not_break_queue(self, temp_db, user_manager):
+        """If silence analysis fails, queue operations continue normally."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.side_effect = Exception("ffmpeg not found")
+
+        captured_callback = None
+
+        def capture_callback(video_id, callback=None):
+            nonlocal captured_callback
+            captured_callback = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture_callback
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            silence_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:err", "Some Song", duration_seconds=200)
+
+        qm._process_pending_content()
+        captured_callback("ready", "/path/to/video.mp4", None)
+
+        item = qm.get_item(item_id)
+        assert item is not None
+        assert item.content_status == QueueManager.STATUS_READY
+
+    def test_analyze_called_on_stuck_content_recovery(self, temp_db, user_manager):
+        """Recovering a stuck item that already has a downloaded file also triggers silence analysis."""
+        mock_analyzer = Mock()
+        mock_analyzer.analyze.return_value = 120
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        mock_path = MagicMock(spec=Path)
+        mock_path.exists.return_value = True
+        mock_path.__str__ = lambda self: "/recovered/path/video.mp4"
+        mock_video_library.get_path.return_value = mock_path
+
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            silence_analyzer=mock_analyzer,
+        )
+        qm.stop_content_monitor()
+
+        user = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(user, "youtube:stuck", "Some Karaoke Track")
+
+        qm.update_content_status(item_id, QueueManager.STATUS_PREPARING)
+        qm._process_pending_content()
+
+        mock_analyzer.analyze.assert_called_once_with("youtube:stuck", "/recovered/path/video.mp4")

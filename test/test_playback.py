@@ -1279,3 +1279,174 @@ class TestShutdown:
         )
         pc.shutdown()
         assert pc._monitoring is False
+
+
+class TestTrailingSilenceSkip:
+    """Tests for the trailing-silence early-skip feature."""
+
+    def _make_controller(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+    ):
+        mock_queue_manager.get_queue.return_value = []
+        mock_silence_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = enabled
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            silence_analyzer=mock_silence_analyzer,
+        )
+        pc._monitoring = False
+        return pc, mock_silence_analyzer
+
+    def test_lookup_trim_point_no_analyzer(self, playback_controller):
+        """No analyzer configured -- always None, feature is a no-op."""
+        assert playback_controller.silence_analyzer is None
+        assert playback_controller._lookup_trim_point("youtube:abc") is None
+
+    def test_lookup_trim_point_disabled_by_config(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=False
+        )
+        mock_analyzer.get_cached_trim_point.return_value = 120
+
+        assert pc._lookup_trim_point("youtube:abc") is None
+        mock_analyzer.get_cached_trim_point.assert_not_called()
+
+    def test_lookup_trim_point_returns_cached_value(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_trim_point.return_value = 120
+
+        assert pc._lookup_trim_point("youtube:abc") == 120
+        mock_analyzer.get_cached_trim_point.assert_called_once_with("youtube:abc")
+
+    def test_lookup_trim_point_swallows_analyzer_errors(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_trim_point.side_effect = Exception("db error")
+
+        assert pc._lookup_trim_point("youtube:abc") is None
+
+    def test_play_song_sets_trim_point(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_trim_point.return_value = 150
+
+        song = create_mock_queue_item(id=1, video_id="youtube:abc", content_status="ready")
+        mock_queue_manager.get_song_at_offset.return_value = song
+
+        pc.play()
+
+        assert pc._current_trim_point == 150
+
+    def test_check_trailing_silence_skip_before_trim_point_noop(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = 100
+
+        pc._check_trailing_silence_skip(50)
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+        assert pc.current_song_id == 1
+
+    def test_check_trailing_silence_skip_no_trim_point_noop(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = None
+
+        pc._check_trailing_silence_skip(999)
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+
+    def test_check_trailing_silence_skip_triggers_completion(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        current_song = create_mock_queue_item(id=1, video_id="youtube:abc123", duration_seconds=180)
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = 170
+        mock_queue_manager.get_item.return_value = current_song
+        mock_queue_manager.get_song_at_offset.return_value = None  # no next song
+
+        pc._check_trailing_silence_skip(170)
+
+        # Should stop playback itself (GStreamer won't reach EOS on its own)
+        mock_streaming_controller.stop_playback.assert_called_once()
+        # Should finish the song and go idle (no next song)
+        assert pc.current_song_id is None
+        assert pc.state == PlaybackState.IDLE
+        # Trim point cleared along with the finished song
+        assert pc._current_trim_point is None
+
+    def test_check_trailing_silence_skip_records_full_duration_for_history(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """History/completion stats should use the real song duration, not
+        the truncated stop position, so trimmed songs count as fully played."""
+        mock_history = Mock()
+        mock_queue_manager.get_queue.return_value = []
+        mock_silence_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = True
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            history_manager=mock_history,
+            silence_analyzer=mock_silence_analyzer,
+        )
+        pc._monitoring = False
+
+        current_song = create_mock_queue_item(id=1, video_id="youtube:abc123", duration_seconds=180)
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = 170
+        mock_queue_manager.get_item.return_value = current_song
+        mock_queue_manager.get_song_at_offset.return_value = None
+
+        pc._check_trailing_silence_skip(170)
+
+        assert mock_history.record_performance.called
+        _, kwargs = mock_history.record_performance.call_args
+        assert kwargs["played_duration_seconds"] == 180
+        assert kwargs["completion_percentage"] == 100.0
+
+    def test_check_trailing_silence_skip_ignored_when_not_playing(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """Guards against a stale check firing after an operator action
+        (skip/stop) already changed state."""
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        pc.state = PlaybackState.STOPPED
+        pc.current_song_id = 1
+        pc._current_trim_point = 100
+
+        pc._check_trailing_silence_skip(150)
+
+        mock_streaming_controller.stop_playback.assert_not_called()

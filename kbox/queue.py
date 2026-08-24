@@ -14,6 +14,7 @@ from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
     from .session import SessionManager
+    from .silence_detection import TrailingSilenceAnalyzer
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
 
@@ -31,6 +32,7 @@ class QueueManager:
         database: Database,
         video_library: "VideoLibrary",
         metadata_extractor: Optional["SongMetadataExtractor"] = None,
+        silence_analyzer: Optional["TrailingSilenceAnalyzer"] = None,
         session_manager: Optional["SessionManager"] = None,
     ):
         """
@@ -40,6 +42,7 @@ class QueueManager:
             database: Database instance for persistence
             video_library: VideoLibrary for video search/download
             metadata_extractor: Optional SongMetadataExtractor for LLM-based extraction
+            silence_analyzer: Optional TrailingSilenceAnalyzer for trailing-silence detection
             session_manager: Optional SessionManager; when provided, new queue
                 items are tagged with the current session and clear_queue
                 rotates the session.
@@ -49,6 +52,7 @@ class QueueManager:
         self.user_repository = UserRepository(database)
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
+        self.silence_analyzer = silence_analyzer
         self.session_manager = session_manager
         self.logger = logging.getLogger(__name__)
 
@@ -182,6 +186,12 @@ class QueueManager:
             except Exception as e:
                 self.logger.warning("Metadata extraction failed for item %s: %s", item_id, e)
 
+        if self.silence_analyzer:
+            try:
+                self.silence_analyzer.analyze(item.video_id, path)
+            except Exception as e:
+                self.logger.warning("Silence analysis failed for item %s: %s", item_id, e)
+
     def stop_content_monitor(self):
         """Stop the content monitor thread."""
         if not self._monitoring:
@@ -280,9 +290,9 @@ class QueueManager:
         Replace the video for an existing queue item, in place.
 
         Keeps the item's position and user attribution unchanged. Resets
-        content status so the new video is downloaded; post-download
-        analysis (e.g. metadata extraction) runs once the new content
-        is ready.
+        content status so the new video is downloaded; metadata extraction
+        and silence analysis for the new video run once it's ready, same as
+        any newly-added song.
 
         Args:
             item_id: ID of the queue item to replace
