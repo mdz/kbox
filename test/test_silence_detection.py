@@ -3,8 +3,11 @@ Unit tests for trailing-silence detection.
 
 Most tests mock subprocess.run to exercise the parsing/decision logic
 deterministically. A couple of end-to-end tests generate real audio with
-ffmpeg to confirm the actual command syntax works -- skipped if ffmpeg/
-ffprobe aren't available in the test environment.
+ffmpeg to confirm the actual command syntax works. ffmpeg/ffprobe are a
+hard runtime dependency of this feature (and already assumed present
+elsewhere in the test suite, e.g. test_streaming.py's fixtures), so these
+are not skipped when they're missing -- that would silently drop coverage
+of the real command syntax instead of failing loudly.
 """
 
 import os
@@ -18,8 +21,6 @@ import pytest
 
 from kbox.database import Database
 from kbox.silence_detection import TrailingSilenceAnalyzer, detect_trailing_silence
-
-HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
 def _fake_run(returncode=0, stdout="", stderr=""):
@@ -145,11 +146,10 @@ class TestDetectTrailingSilenceMocked:
 
 
 # =============================================================================
-# detect_trailing_silence -- real ffmpeg (skipped if unavailable)
+# detect_trailing_silence -- real ffmpeg
 # =============================================================================
 
 
-@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg/ffprobe not available")
 class TestDetectTrailingSilenceReal:
     @pytest.fixture(scope="class")
     def fixtures_dir(self):
