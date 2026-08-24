@@ -15,29 +15,17 @@ See: https://github.com/mdz/kbox/issues/97
 from __future__ import annotations
 
 import logging
-import os
 import re
 import subprocess
 import time
 from typing import TYPE_CHECKING, Optional
 
+from .priority import lower_priority
+
 if TYPE_CHECKING:
     from .database import Database
 
 logger = logging.getLogger(__name__)
-
-
-def _lower_priority():
-    """Set this thread's scheduling priority to niced (absolute, not relative).
-
-    Uses setpriority rather than os.nice(): this analysis can run repeatedly
-    on a long-lived thread (e.g. ContentMonitor), and os.nice()'s increments
-    would stack indefinitely. Best-effort -- unavailable on Windows.
-    """
-    try:
-        os.setpriority(os.PRIO_PROCESS, 0, 10)
-    except (OSError, AttributeError):
-        pass
 
 
 # How far from the end of the file to look for trailing silence.
@@ -101,7 +89,7 @@ def detect_trailing_silence(filepath: str) -> Optional[int]:
 
     window_start = max(0.0, duration - _ANALYSIS_WINDOW_SECONDS)
 
-    _lower_priority()
+    lower_priority()
     try:
         result = subprocess.run(
             [

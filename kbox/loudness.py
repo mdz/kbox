@@ -12,30 +12,18 @@ clipping.
 import json
 import logging
 import math
-import os
 import re
 import subprocess
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from .priority import lower_priority
+
 if TYPE_CHECKING:
     from .database import Database
 
 logger = logging.getLogger(__name__)
-
-
-def _lower_priority():
-    """Set this thread's scheduling priority to niced (absolute, not relative).
-
-    Uses setpriority rather than os.nice(): this analysis can run repeatedly
-    on a long-lived thread (e.g. ContentMonitor), and os.nice()'s increments
-    would stack indefinitely. Best-effort -- unavailable on Windows.
-    """
-    try:
-        os.setpriority(os.PRIO_PROCESS, 0, 10)
-    except (OSError, AttributeError):
-        pass
 
 
 # Single-pass loudnorm analysis. The I/TP/LRA values here only affect
@@ -72,7 +60,7 @@ def measure_loudness(file_path: str) -> Optional[LoudnessInfo]:
         LoudnessInfo, or None if ffmpeg is unavailable or analysis fails
     """
     cmd = ["ffmpeg", "-i", file_path, "-af", _LOUDNORM_FILTER, "-f", "null", "-"]
-    _lower_priority()
+    lower_priority()
     try:
         result = subprocess.run(
             cmd,
