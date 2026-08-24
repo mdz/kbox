@@ -821,13 +821,10 @@ class PlaybackController:
 
             if is_current:
                 self.logger.info("Replacing currently playing song %s", item_id)
-                self.streaming_controller.stop_playback()
                 self._set_base_overlay("")
                 self._set_state(PlaybackState.STOPPED, "replacing current song")
                 self._awaiting_replace_item_id = item_id
-                self.show_notification(
-                    f"Fixing song for {item.user_name}...", duration_seconds=10.0
-                )
+                self._show_message_screen(f"Loading new video for {item.user_name}...")
 
             return self.queue_manager.replace_song(
                 item_id, video_id, title, duration_seconds, thumbnail_url, channel
@@ -1313,6 +1310,27 @@ class PlaybackController:
             self.streaming_controller.display_image(image_path)
         else:
             self.logger.warning("Could not generate transition screen")
+
+    def _show_message_screen(self, message: str):
+        """
+        Display a generic centered-message interstitial screen.
+
+        Used for transient system messages (e.g. "Loading new video for X...")
+        where the pipeline has no video loaded and a blank screen would
+        otherwise result.
+
+        Args:
+            message: Message to display
+        """
+        self.logger.info("Showing message screen: %s", message)
+
+        generator = self._get_interstitial_generator()
+        image_path = generator.generate_message_screen(message)
+
+        if image_path:
+            self.streaming_controller.display_image(image_path)
+        else:
+            self.logger.warning("Could not generate message screen")
 
     def _show_end_of_queue_screen(self, message: str = "That's all for now!"):
         """
