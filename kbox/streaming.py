@@ -652,6 +652,18 @@ class StreamingController:
 
         # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
+
+        # DIAGNOSTIC ONLY - NOT A FIX. Per gstaudiobasesink.c, only an actual
+        # READY_TO_NULL/NULL_TO_READY transition on the sink itself closes and
+        # reopens the ALSA device (fresh snd_pcm_open); playbin does not appear
+        # to propagate its own NULL down to this persistent custom sink bin in
+        # practice (observed only 2 distinct ring-buffer object instances across
+        # an entire session with many transitions). Forcing it here tells us
+        # whether a full device reopen changes the audio-bleed symptom, which
+        # narrows down where the bug lives - it is not a proposed solution even
+        # if it "works", since closing/reopening the device every song has its
+        # own costs (potential audible artifacts, latency, USB reinit).
+        self.audio_bin.set_state(Gst.State.NULL)
         self.logger.debug("load_file: after NULL")
 
         # Unmute audio (may have been muted for interstitial)
@@ -1196,6 +1208,9 @@ class StreamingController:
 
         # Stop any current playback
         self.playbin.set_state(Gst.State.NULL)
+
+        # DIAGNOSTIC ONLY - NOT A FIX. See matching comment in load_file.
+        self.audio_bin.set_state(Gst.State.NULL)
 
         # Set the image URI - GStreamer will use imagefreeze for static images
         self.playbin.set_property("uri", f"file://{image_path}")
