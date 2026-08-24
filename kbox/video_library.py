@@ -554,8 +554,10 @@ class VideoLibrary:
             try:
                 if callback:
                     callback("downloading", None, None)
+                start = time.monotonic()
                 provided_path = provider.provide(source_id, video_dir)
-                self.logger.info("Prepared %s at %s", video_id, provided_path)
+                elapsed = time.monotonic() - start
+                self.logger.info("Prepared %s at %s in %.1fs", video_id, provided_path, elapsed)
                 if callback:
                     callback("ready", str(provided_path), None)
             except Exception as e:

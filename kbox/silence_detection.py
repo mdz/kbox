@@ -15,14 +15,30 @@ See: https://github.com/mdz/kbox/issues/97
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
+import time
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .database import Database
 
 logger = logging.getLogger(__name__)
+
+
+def _lower_priority():
+    """Set this thread's scheduling priority to niced (absolute, not relative).
+
+    Uses setpriority rather than os.nice(): this analysis can run repeatedly
+    on a long-lived thread (e.g. ContentMonitor), and os.nice()'s increments
+    would stack indefinitely. Best-effort -- unavailable on Windows.
+    """
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, 10)
+    except (OSError, AttributeError):
+        pass
+
 
 # How far from the end of the file to look for trailing silence.
 _ANALYSIS_WINDOW_SECONDS = 25
@@ -85,6 +101,7 @@ def detect_trailing_silence(filepath: str) -> Optional[int]:
 
     window_start = max(0.0, duration - _ANALYSIS_WINDOW_SECONDS)
 
+    _lower_priority()
     try:
         result = subprocess.run(
             [
@@ -165,18 +182,27 @@ class TrailingSilenceAnalyzer:
         if self._is_analyzed(video_id):
             return self.get_cached_trim_point(video_id)
 
+        start = time.monotonic()
         try:
             trim_point = detect_trailing_silence(filepath)
         except Exception as e:
             self.logger.warning("Silence analysis failed for %s: %s", video_id, e)
             trim_point = None
+        elapsed = time.monotonic() - start
 
         self._cache_result(video_id, trim_point)
 
         if trim_point is not None:
-            self.logger.info("Trailing silence detected for %s: trim at %ss", video_id, trim_point)
+            self.logger.info(
+                "Trailing silence detected for %s in %.1fs: trim at %ss",
+                video_id,
+                elapsed,
+                trim_point,
+            )
         else:
-            self.logger.debug("No exploitable trailing silence for %s", video_id)
+            self.logger.info(
+                "No exploitable trailing silence for %s (analyzed in %.1fs)", video_id, elapsed
+            )
 
         return trim_point
 
