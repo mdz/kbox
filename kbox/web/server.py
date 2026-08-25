@@ -5,6 +5,7 @@ Provides REST API and web UI for queue management and playback control.
 """
 
 import logging
+import secrets
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -350,23 +351,31 @@ def create_app(
     # Templates
     templates = Jinja2Templates(directory="kbox/web/templates")
 
-    # Static files (CSS, JS). Force revalidation on every request instead of
-    # letting browsers guess a freshness lifetime — with no Cache-Control at
-    # all, mobile Chrome in particular can hold onto a stale JS bundle across
-    # deploys (even surviving a plain page reload), silently calling
-    # window.* functions that no longer match the current server-rendered
-    # HTML/other JS files. no-cache still lets the browser use its cached
-    # copy once the server confirms via ETag/Last-Modified it's unchanged,
-    # so this costs a conditional request, not a full re-download.
+    # Static files (CSS, JS), mounted under a per-process version so browsers
+    # can cache them forever instead of guessing a freshness lifetime. With
+    # no versioning, mobile Chrome in particular could hold onto a stale
+    # app.js/queue.js across deploys — even surviving a plain page reload —
+    # silently calling window.* functions that no longer matched the current
+    # server-rendered HTML/other JS files. A fresh version segment on every
+    # restart (i.e. every real deploy) gives stale-vs-current assets distinct
+    # URLs, so guests never pay a revalidation round trip for assets that
+    # haven't changed, and never see stale ones after a restart either.
     from fastapi.staticfiles import StaticFiles
 
-    class RevalidateStaticFiles(StaticFiles):
+    static_version = secrets.token_hex(4)
+    templates.env.globals["static_version"] = static_version
+
+    class ImmutableStaticFiles(StaticFiles):
         async def get_response(self, path, scope):
             response = await super().get_response(path, scope)
-            response.headers["Cache-Control"] = "no-cache"
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
             return response
 
-    app.mount("/static", RevalidateStaticFiles(directory="kbox/web/static"), name="static")
+    app.mount(
+        f"/static/{static_version}",
+        ImmutableStaticFiles(directory="kbox/web/static"),
+        name="static",
+    )
 
     # Browsers (notably iOS Safari) probe these paths at the site root
     # regardless of <link> tags, so serve them directly to avoid log noise.
