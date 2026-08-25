@@ -561,17 +561,6 @@ class StreamingController:
         """Create pitch shift element or identity passthrough if unavailable."""
         Gst = _get_gst()
 
-        # DIAGNOSTIC ONLY - REVERT BEFORE MERGE. Bypasses the rubberband pitch
-        # shifter to isolate whether it is the source of the audio bleed at song
-        # transitions. Rubberband is a stateful third-party LADSPA DSP element
-        # that buffers audio internally; a FLUSH event crossing its pads does not
-        # prove it actually clears that internal state. With identity here, the
-        # chain becomes a pure passthrough, so if the bleed persists the entire
-        # custom audio bin is exonerated. Pitch shift controls are inert while
-        # this is in place.
-        self.logger.warning("[DIAGNOSTIC] Forcing identity in place of pitch shift")
-        return Gst.ElementFactory.make("identity", "pitch_shift")
-
         rubberband_plugin = self.config_manager.get("rubberband_plugin")
         if not rubberband_plugin:
             self.logger.warning("No rubberband plugin configured, using identity")
