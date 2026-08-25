@@ -655,32 +655,26 @@ class StreamingController:
         # Set new URI
         self.playbin.set_property("uri", f"file://{filepath}")
 
-        # Always go to PAUSED first and do a flushing seek, even for position 0.
-        # The custom audio chain (audioconvert -> pitch shift -> audioconvert ->
-        # volume -> sink) is persistent across songs - same element instances
-        # reused every load, never destroyed. The pitch-shift element buffers
-        # audio internally and only clears that buffer on a FLUSH_START/STOP
-        # event. Without this seek, a position-0 load sends no flush at all,
-        # so leftover buffered audio from the previous song can still be
-        # sitting in the pitch shifter when the new song's audio starts
-        # flowing through it.
-        self.logger.debug("load_file: going to PAUSED for pre-seek/flush")
-        ret = self.playbin.set_state(Gst.State.PAUSED)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError("Failed to pause for seek")
+        # If we need to start at a non-zero position, go to PAUSED first,
+        # seek, then go to PLAYING. This prevents audio from position 0
+        # playing briefly before the seek completes.
+        if start_position_seconds > 0:
+            self.logger.debug("load_file: going to PAUSED for pre-seek")
+            ret = self.playbin.set_state(Gst.State.PAUSED)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to pause for seek")
 
-        # Wait for PAUSED state
-        ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError("Pipeline failed to reach PAUSED state")
+            # Wait for PAUSED state
+            ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Pipeline failed to reach PAUSED state")
 
-        # Flushing seek while paused - flushes the persistent audio chain
-        # even when start_position_seconds is 0.
-        position_ns = start_position_seconds * Gst.SECOND
-        self.logger.debug("load_file: seeking to %s while paused", start_position_seconds)
-        self.playbin.seek_simple(
-            Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
-        )
+            # Seek while paused
+            position_ns = start_position_seconds * Gst.SECOND
+            self.logger.debug("load_file: seeking to %s while paused", start_position_seconds)
+            self.playbin.seek_simple(
+                Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
+            )
 
         # Start playing
         ret = self.playbin.set_state(Gst.State.PLAYING)
