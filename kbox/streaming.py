@@ -526,6 +526,53 @@ class StreamingController:
         self.logger.info("Using native signalsmithpitch element for pitch shift")
         return elem
 
+    def _create_rubberband_pitch_shift(self):
+        """Try to create the rubberband LADSPA pitch-shift element.
+
+        Returns the element, or None if unavailable (caller falls back to
+        identity).
+        """
+        Gst = _get_gst()
+
+        rubberband_plugin = self.config_manager.get("rubberband_plugin")
+        if not rubberband_plugin:
+            self.logger.warning("No rubberband plugin configured, using identity")
+            return None
+
+        try:
+            elem = Gst.ElementFactory.make(rubberband_plugin, "pitch_shift")
+            if elem is None:
+                import os
+
+                self.logger.warning(
+                    'Rubberband plugin "%s" not found (LADSPA_PATH=%s), using identity',
+                    rubberband_plugin,
+                    os.environ.get("LADSPA_PATH", "not set"),
+                )
+                return None
+
+            # Check if element supports semitones property
+            element_type = type(elem).__name__
+            if element_type == "GstIdentity":
+                self.logger.warning("Got identity element, pitch shift not available")
+                return elem
+
+            if hasattr(elem, "set_property"):
+                try:
+                    elem.set_property("semitones", self.pitch_shift_semitones)
+                    self.logger.info("Pitch shift element created successfully")
+                    return elem
+                except Exception as e:
+                    self.logger.warning("Pitch shift element lacks semitones property: %s", e)
+                    return None
+            else:
+                self.logger.warning("Pitch shift element lacks set_property")
+                return None
+
+        except Exception as e:
+            self.logger.warning("Error creating pitch shift: %s, using identity", e)
+            return None
+
     def _create_pitch_shift_or_identity(self):
         """Create pitch shift element or identity passthrough if unavailable.
 
@@ -542,44 +589,11 @@ class StreamingController:
             "signalsmithpitch element not available, falling back to rubberband LADSPA plugin"
         )
 
-        rubberband_plugin = self.config_manager.get("rubberband_plugin")
-        if not rubberband_plugin:
-            self.logger.warning("No rubberband plugin configured, using identity")
-            return Gst.ElementFactory.make("identity", "pitch_shift")
+        rubberband_elem = self._create_rubberband_pitch_shift()
+        if rubberband_elem is not None:
+            return rubberband_elem
 
-        try:
-            elem = Gst.ElementFactory.make(rubberband_plugin, "pitch_shift")
-            if elem is None:
-                import os
-
-                self.logger.warning(
-                    'Rubberband plugin "%s" not found (LADSPA_PATH=%s), using identity',
-                    rubberband_plugin,
-                    os.environ.get("LADSPA_PATH", "not set"),
-                )
-                return Gst.ElementFactory.make("identity", "pitch_shift")
-
-            # Check if element supports semitones property
-            element_type = type(elem).__name__
-            if element_type == "GstIdentity":
-                self.logger.warning("Got identity element, pitch shift not available")
-                return elem
-
-            if hasattr(elem, "set_property"):
-                try:
-                    elem.set_property("semitones", self.pitch_shift_semitones)
-                    self.logger.info("Pitch shift element created successfully")
-                    return elem
-                except Exception as e:
-                    self.logger.warning("Pitch shift element lacks semitones property: %s", e)
-                    return Gst.ElementFactory.make("identity", "pitch_shift")
-            else:
-                self.logger.warning("Pitch shift element lacks set_property")
-                return Gst.ElementFactory.make("identity", "pitch_shift")
-
-        except Exception as e:
-            self.logger.warning("Error creating pitch shift: %s, using identity", e)
-            return Gst.ElementFactory.make("identity", "pitch_shift")
+        return Gst.ElementFactory.make("identity", "pitch_shift")
 
     # =========================================================================
     # Playback Control
