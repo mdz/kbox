@@ -490,9 +490,57 @@ class StreamingController:
         except Exception as e:
             self.logger.warning("Failed to update QR size for resolution: %s", e)
 
-    def _create_pitch_shift_or_identity(self):
-        """Create pitch shift element or identity passthrough if unavailable."""
+    def _create_signalsmith_pitch_shift(self):
+        """Try to create the native signalsmithpitch element, registering its
+        plugin .so from disk first if it isn't already known to GStreamer.
+
+        Returns the element, or None if unavailable (caller falls back to
+        rubberband/identity).
+        """
+        import os
+
         Gst = _get_gst()
+
+        if Gst.ElementFactory.find("signalsmithpitch") is None:
+            plugin_path = self.config_manager.get("signalsmith_pitch_plugin_path") or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "native",
+                "gst-signalsmith-pitch",
+                "build",
+                "libgstsignalsmithpitch.so",
+            )
+            if not os.path.exists(plugin_path):
+                return None
+            try:
+                if Gst.Plugin.load_file(plugin_path) is None:
+                    return None
+            except Exception as e:
+                self.logger.warning("Failed to load signalsmithpitch plugin: %s", e)
+                return None
+
+        elem = Gst.ElementFactory.make("signalsmithpitch", "pitch_shift")
+        if elem is None:
+            return None
+
+        elem.set_property("semitones", self.pitch_shift_semitones)
+        self.logger.info("Using native signalsmithpitch element for pitch shift")
+        return elem
+
+    def _create_pitch_shift_or_identity(self):
+        """Create pitch shift element or identity passthrough if unavailable.
+
+        Prefers the native signalsmithpitch element (correct FLUSH_STOP
+        handling, MIT licensed) when its plugin is present; falls back to
+        the rubberband LADSPA element, then identity.
+        """
+        Gst = _get_gst()
+
+        signalsmith_elem = self._create_signalsmith_pitch_shift()
+        if signalsmith_elem is not None:
+            return signalsmith_elem
+        self.logger.warning(
+            "signalsmithpitch element not available, falling back to rubberband LADSPA plugin"
+        )
 
         rubberband_plugin = self.config_manager.get("rubberband_plugin")
         if not rubberband_plugin:
