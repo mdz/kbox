@@ -356,6 +356,79 @@ def test_pitch_shift_during_playback(controller, test_video_3s):
 
 
 # =========================================================================
+# Pitch Shift Element Selection Tests
+# =========================================================================
+
+
+def test_create_pitch_shift_prefers_signalsmith_when_available(controller, monkeypatch):
+    """Dispatcher should use signalsmith and not even try rubberband."""
+    sentinel = MagicMock(name="signalsmith_element")
+    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: sentinel)
+
+    rubberband_called = []
+    monkeypatch.setattr(
+        controller,
+        "_create_rubberband_pitch_shift",
+        lambda: rubberband_called.append(True) or None,
+    )
+
+    result = controller._create_pitch_shift_or_identity()
+
+    assert result is sentinel
+    assert not rubberband_called, "rubberband should not be tried when signalsmith succeeds"
+
+
+def test_create_pitch_shift_falls_back_to_rubberband(controller, monkeypatch, caplog):
+    """When signalsmith is unavailable, dispatcher should fall back to rubberband and warn."""
+    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
+    sentinel = MagicMock(name="rubberband_element")
+    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: sentinel)
+
+    with caplog.at_level(logging.WARNING):
+        result = controller._create_pitch_shift_or_identity()
+
+    assert result is sentinel
+    assert "falling back to rubberband" in caplog.text
+
+
+def test_create_pitch_shift_falls_back_to_identity_when_both_unavailable(controller, monkeypatch):
+    """When neither element is available, dispatcher should return identity."""
+    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
+    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: None)
+
+    result = controller._create_pitch_shift_or_identity()
+
+    assert type(result).__name__ == "GstIdentity"
+
+
+def test_create_signalsmith_pitch_shift_returns_none_when_plugin_missing(controller):
+    """Should fail gracefully (not raise) when the plugin .so isn't found on disk."""
+    controller.config_manager.set("signalsmith_pitch_plugin_path", "/nonexistent/path.so")
+
+    result = controller._create_signalsmith_pitch_shift()
+
+    assert result is None
+
+
+def test_create_rubberband_pitch_shift_returns_none_when_not_configured(controller):
+    """Should fail gracefully (not raise) when no rubberband plugin is configured."""
+    controller.config_manager.set("rubberband_plugin", None)
+
+    result = controller._create_rubberband_pitch_shift()
+
+    assert result is None
+
+
+def test_create_rubberband_pitch_shift_returns_none_for_unknown_plugin_name(controller):
+    """Should fail gracefully (not raise) when the configured plugin name doesn't exist."""
+    controller.config_manager.set("rubberband_plugin", "not-a-real-element-name")
+
+    result = controller._create_rubberband_pitch_shift()
+
+    assert result is None
+
+
+# =========================================================================
 # Volume Gain Tests
 # =========================================================================
 
