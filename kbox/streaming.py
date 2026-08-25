@@ -9,7 +9,6 @@ READY (idle) and PLAYING (song) states.
 import logging
 import sys
 import threading
-import time
 from typing import Any, Optional
 
 # Defer GStreamer imports until actually needed to avoid crashes on import
@@ -85,12 +84,6 @@ class StreamingController:
 
         # Interstitial state
         self._is_interstitial = False  # True when displaying interstitial (not a song)
-
-        # Diagnostic pad-probe state for the audio-bleed-at-transition investigation.
-        # See _trace_pad_probe / _create_audio_sink_bin. Temporary - remove once the
-        # root cause of leftover audio at song transitions is confirmed.
-        self._load_generation = 0
-        self._trace_active_until = 0.0
 
         # GStreamer initialization state
         self._gst_initialized = False
@@ -194,50 +187,6 @@ class StreamingController:
 
         self.logger.info("Persistent pipeline created successfully")
 
-    def _make_trace_probe(self, label: str):
-        """
-        Diagnostic pad probe for the audio-bleed-at-transition investigation.
-        Tags every buffer/flush/segment/EOS crossing the pad with the current
-        "load generation" (bumped at the top of load_file, before any state
-        change) and the buffer's own PTS. This directly answers, with real
-        data instead of guesses: does data belonging to an OLD generation
-        (i.e. queued before the current load_file call) still cross this
-        point in the pipeline AFTER the new generation has started? And does
-        the FLUSH_START/FLUSH_STOP pair from the pre-seek in load_file
-        actually reach this pad at all?
-        Only logs for a bounded window after each load_file call (see
-        _trace_active_until) to keep volume manageable - buffers arrive
-        every ~23ms during normal playback.
-        Temporary - remove once the root cause of leftover audio at song
-        transitions is confirmed.
-        """
-        Gst = _get_gst()
-
-        def probe(pad, info):
-            if time.time() > self._trace_active_until:
-                return Gst.PadProbeReturn.OK
-
-            gen = self._load_generation
-            buf = info.get_buffer()
-            if buf is not None:
-                pts = buf.pts
-                pts_s = "none" if pts == Gst.CLOCK_TIME_NONE else f"{pts / Gst.SECOND:.3f}s"
-                self.logger.info("[trace][%s] gen=%d buffer pts=%s", label, gen, pts_s)
-                return Gst.PadProbeReturn.OK
-
-            event = info.get_event()
-            event_names = {
-                Gst.EventType.FLUSH_START: "flush-start",
-                Gst.EventType.FLUSH_STOP: "flush-stop",
-                Gst.EventType.SEGMENT: "segment",
-                Gst.EventType.EOS: "eos",
-            }
-            if event is not None and event.type in event_names:
-                self.logger.info("[trace][%s] gen=%d event=%s", label, gen, event_names[event.type])
-            return Gst.PadProbeReturn.OK
-
-        return probe
-
     def _create_audio_sink_bin(self):
         """Create audio sink bin with pitch shift element and channel upmixing."""
         Gst = _get_gst()
@@ -298,22 +247,6 @@ class StreamingController:
         sink_pad = ac1.get_static_pad("sink")
         ghost_pad = Gst.GhostPad.new("sink", sink_pad)
         audio_bin.add_pad(ghost_pad)
-
-        # Diagnostic trace probes (temporary - see _make_trace_probe). Placed at the
-        # entry to the persistent chain, immediately after the pitch-shift element
-        # (the suspected buffering point), and right before the hardware sink - so
-        # we can localize exactly where in the chain any stale-generation audio
-        # is coming from, rather than guessing.
-        probe_mask = (
-            Gst.PadProbeType.BUFFER
-            | Gst.PadProbeType.EVENT_DOWNSTREAM
-            | Gst.PadProbeType.EVENT_FLUSH
-        )
-        sink_pad.add_probe(probe_mask, self._make_trace_probe("entry"))
-        self.pitch_shift_element.get_static_pad("src").add_probe(
-            probe_mask, self._make_trace_probe("post-pitch-shift")
-        )
-        sink.get_static_pad("sink").add_probe(probe_mask, self._make_trace_probe("pre-hw"))
 
         self.logger.info("Audio sink bin created with pitch shift")
         return audio_bin
@@ -703,15 +636,6 @@ class StreamingController:
         Gst = _get_gst()
 
         self.logger.debug("load_file: entry, current_state=%s", self.state)
-
-        # Bump the trace generation before touching pipeline state, so the probes
-        # can tell apart data belonging to this load from anything still in flight
-        # from the previous one. See _make_trace_probe. Temporary diagnostic.
-        self._load_generation += 1
-        self._trace_active_until = time.time() + 10.0
-        self.logger.info(
-            "[trace] load_file: starting gen=%d for %s", self._load_generation, filepath
-        )
 
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
@@ -1251,16 +1175,6 @@ class StreamingController:
             return
 
         Gst = _get_gst()
-
-        # Bump the trace generation here too, so the probes cover the skip -> interstitial
-        # handoff as well as the interstitial -> next-song handoff in load_file. Temporary
-        # diagnostic, see _make_trace_probe. Window is long enough to bridge the whole
-        # interstitial hold plus into the following load_file call.
-        self._load_generation += 1
-        self._trace_active_until = time.time() + 15.0
-        self.logger.info(
-            "[trace] display_image: starting gen=%d for %s", self._load_generation, image_path
-        )
 
         # Mark that we're showing an interstitial
         self._is_interstitial = True
