@@ -761,6 +761,34 @@ def test_show_notification(controller):
     assert silent is True
 
 
+def test_show_notification_escapes_pango_markup(controller):
+    """Titles/artists with &, <, > must be escaped before hitting the
+    textoverlay element, or GStreamer emits a Pango markup parse warning
+    (e.g. "Shallow ... (Lady Gaga & Bradley Cooper)")."""
+    if controller.text_overlay is None:
+        pytest.skip("Text overlay not available")
+
+    raw = "Lady Gaga & Bradley Cooper <3 <live>"
+    controller.show_notification(raw, duration_seconds=60.0)
+
+    text = controller.text_overlay.get_property("text")
+    assert text == "Lady Gaga &amp; Bradley Cooper &lt;3 &lt;live&gt;"
+    assert controller.text_overlay.get_property("silent") is False
+
+
+def test_set_overlay_text_escapes_pango_markup(controller):
+    """set_overlay_text() (persistent overlay) must also escape markup."""
+    if controller.text_overlay is None:
+        pytest.skip("Text overlay not available")
+
+    raw = "Now singing: Ben & Jerry's <Encore>"
+    controller.set_overlay_text(raw)
+
+    text = controller.text_overlay.get_property("text")
+    assert text == "Now singing: Ben &amp; Jerry&apos;s &lt;Encore&gt;"
+    assert controller.text_overlay.get_property("silent") is False
+
+
 # =========================================================================
 # Resume from Position Tests
 # =========================================================================
