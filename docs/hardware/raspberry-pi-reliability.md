@@ -106,6 +106,18 @@ vcgencmd measure_temp
 vcgencmd get_throttled   # bits 0x8 / 0x80000 indicate the temp limit specifically
 ```
 
+**If your board has a PWM fan (e.g. the official Active Cooler), check it's actually
+spinning** rather than assuming from sound alone — it can run quietly at a low duty
+cycle in a way that's easy to mistake for "off":
+```bash
+grep -l pwmfan /sys/class/hwmon/hwmon*/name | xargs dirname | while read -r d; do
+  echo "RPM: $(cat "$d"/fan1_input)   PWM duty (0-255): $(cat "$d"/pwm1)"
+done
+grep -l pwm-fan /sys/class/thermal/cooling_device*/type | xargs dirname | while read -r d; do
+  echo "speed tier: $(cat "$d"/cur_state) / $(cat "$d"/max_state)"   # 0 = off, rises with heat
+done
+```
+
 See the [official Pi 5 thermal documentation](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html)
 for the specific throttle/shutdown temperatures for your board revision.
 
@@ -169,6 +181,10 @@ Before trusting new or changed hardware at a real event:
 
 - [ ] Run a burn-in session of at least several hours under realistic load (actual video
       playback, not idle) — thermal soak failures don't show up in short tests
+- [ ] Separately, do several full power-off/power-on cycles (not just `reboot`) with the
+      real cabling and peripherals attached — a boot-sequence failure (hang, slow boot,
+      never reaching a usable state) is a different failure mode than a load-induced one
+      and won't be caught by a single long-running session
 - [ ] Confirm persistent journal logging is enabled, so a failure during burn-in is
       actually diagnosable
 - [ ] Check `vcgencmd get_throttled` after the burn-in — `0x0` means clean

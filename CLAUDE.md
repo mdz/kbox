@@ -33,6 +33,15 @@ Guiding question: "Would someone cloning this repo to USE the software need this
 2. Return to the last known good state before trying a new approach
 3. One change at a time, so we know exactly what worked or didn't
 
+## Known Benign Log Warnings
+
+These show up periodically and are not indicative of a kbox bug — don't chase them:
+
+- **yt-dlp: "GVS PO Token which was not provided" / android client formats skipped** —
+  ongoing YouTube-vs-yt-dlp arms race over bot-detection tokens. yt-dlp falls back to
+  another client automatically; only worth investigating if extraction actually fails
+  outright (no playable format found), not just this warning appearing.
+
 # Testing
 
 This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.
@@ -65,6 +74,13 @@ uv run ruff check .          # lint
 uv run mypy kbox/            # type-check
 ```
 
+## Driving kbox via Browser Automation
+
+Before using a browser-automation tool against a live kbox instance (e.g. for burn-in
+testing), see [docs/development/BROWSER_AUTOMATION_NOTES.md](docs/development/BROWSER_AUTOMATION_NOTES.md) —
+covers native `confirm()` dialogs being silently auto-declined, search form quirks, and
+the operator-auth vs. controls-unlock distinction.
+
 # Product Context
 
 This software runs karaoke parties. Primary focus is home karaoke; bar/KJ environments are a secondary consideration (keep flexibility, don't hardcode one mode).
@@ -85,9 +101,9 @@ This software runs karaoke parties. Primary focus is home karaoke; bar/KJ enviro
 
 - Songs auto-advance when one ends.
 - Display the next singer's name subtly as the current song wraps (not distracting).
-- **Configurable fairness rules** — e.g., "one song queued per person" is a common house rule, but first-come-first-served must also be supported. Don't hardcode.
-- **No-shows**: bump the singer down the queue (not to the end), advance to the next.
-- **Duets**: count as one person's turn; the other joins without "using their turn."
+- **Fairness**: a non-blocking "soft nudge" (never a hard block) warns a guest when they add a second unplayed song, since there are legitimate reasons for it (adding for someone else, duets, fixing a mistake). Toggle: `duplicate_singer_nudge_enabled` config (group "queue", default on) — operators running strict FCFS can turn it off.
+- **No-shows**: handled via the general-purpose "Play Next" / reorder controls (no dedicated bump-down feature — removed in favor of this simpler, more general mechanism).
+- **Duets**: idea, not currently implemented — see [issue #130](https://github.com/mdz/kbox/issues/130). No code exists for treating a duet as a single turn today.
 - Show queue position, estimated wait time, and song download status on mobile — reduces anxiety and helps people be ready.
 
 ## Operator Controls
