@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
+from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
@@ -66,9 +67,16 @@ def _mock_playback():
 
 def _mock_video_library():
     video_library = Mock(spec=VideoLibrary)
-    video_library.search.return_value = [
-        {"id": "youtube:test123", "title": "Test Song", "duration_seconds": 180}
-    ]
+
+    def _search(query, max_results=10):
+        # Queries containing "second" return a distinct video, so e2e tests
+        # can add two different songs without tripping the duplicate-song
+        # warning instead of the one under test.
+        if "second" in query.lower():
+            return [{"id": "youtube:test456", "title": "Second Song", "duration_seconds": 180}]
+        return [{"id": "youtube:test123", "title": "Test Song", "duration_seconds": 180}]
+
+    video_library.search.side_effect = _search
     video_library.get_info.return_value = {
         "id": "youtube:test123",
         "title": "Test Song",
@@ -136,6 +144,7 @@ def build_test_app(
         config_manager=config,
         user_manager=UserManager(db),
         history_manager=HistoryManager(db),
+        favorites_manager=FavoritesManager(db),
         suggestion_engine=suggestion_engine,
         streaming_controller=streaming,
         access_token=access_token,

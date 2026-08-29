@@ -6,7 +6,8 @@ import {
     isOperator, userId,
     currentQueue, setCurrentQueue,
     currentQueueItemToEdit, setCurrentQueueItemToEdit,
-    setQueueDepthSeconds, setQueueDepthCount
+    setQueueDepthSeconds, setQueueDepthCount,
+    currentSelectionTarget, setCurrentSelectionTarget
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
@@ -194,6 +195,44 @@ export async function moveToEndQueueItem() {
     }
 }
 
+// Replace song (works for song owner or operator) - sends the operator/user
+// to the search box to pick a replacement; the next result they select
+// replaces this item instead of adding a new one.
+export function replaceQueueItem() {
+    if (!currentQueueItemToEdit) return;
+
+    const item = currentQueueItemToEdit;
+    const label = (item.artist && item.song_name)
+        ? `${item.song_name} by ${item.artist}`
+        : item.title;
+
+    setCurrentSelectionTarget({ itemId: item.id, label, userName: item.user_name });
+    updateReplaceTargetBanner();
+    cancelEditQueueItem();
+
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        searchInput.focus();
+    }
+}
+
+// Keep the "Replacing: X" banner above the search box in sync with
+// currentSelectionTarget. Called whenever that state changes (set on
+// replaceQueueItem, cleared on confirm/cancel of the add-song modal) so the
+// gap between tapping "Replace Song" and picking a result is never silent.
+export function updateReplaceTargetBanner() {
+    const banner = document.getElementById('replace-target-banner');
+    if (!banner) return;
+
+    if (currentSelectionTarget) {
+        banner.textContent = `Replacing "${currentSelectionTarget.label}" — search for a new song`;
+        banner.classList.remove('hidden');
+    } else {
+        banner.classList.add('hidden');
+    }
+}
+
 // Remove from queue (works for song owner or operator)
 export async function removeQueueItem() {
     if (!currentQueueItemToEdit) return;
@@ -277,14 +316,36 @@ export async function clearQueue() {
     }
 }
 
+// Set once a 401 is seen, so loadQueue stops making requests instead of
+// retrying forever on every 1-second poll tick.
+let authExpired = false;
+
+function handleAuthExpired() {
+    authExpired = true;
+    const queueDiv = document.getElementById('queue-list');
+    if (queueDiv) {
+        queueDiv.innerHTML = `
+            <div style="text-align: center; color: #e74c3c; padding: 20px;">
+                <p>⚠️ Not authenticated.</p>
+                <p>Scan the QR code on the TV to (re)join, or <a href="/" style="color: #4a9eff;">reload the page</a>.</p>
+            </div>`;
+    }
+}
+
 // Load queue
 export async function loadQueue() {
+    if (authExpired) return;
     try {
         // Get queue and current playback status
         const [queueResponse, statusResponse] = await Promise.all([
             fetch('/api/queue'),
             fetch('/api/playback/status')
         ]);
+
+        if (queueResponse.status === 401 || statusResponse.status === 401) {
+            handleAuthExpired();
+            return;
+        }
 
         const queueData = await queueResponse.json();
         const statusData = await statusResponse.json();

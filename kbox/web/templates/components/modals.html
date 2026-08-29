@@ -8,15 +8,28 @@
     </div>
 </div>
 
+<!-- Name Recognition Modal: shown when a typed name matches one or more
+     existing identities. Guest either recognizes themselves or says
+     they're new — see ldocs/GUEST_IDENTITY_CONTINUITY.md. The candidate
+     list itself is built in JS (auth.js) via DOM APIs, not innerHTML,
+     since display names and song titles are free text. -->
+<div class="modal-overlay hidden" id="recognition-modal" style="display: none;">
+    <div class="modal">
+        <h2 id="recognition-modal-title">Is this you?</h2>
+        <div id="recognition-candidate-list"></div>
+        <button id="recognition-new-button" onclick="chooseNewIdentity()">None of these — I'm new</button>
+    </div>
+</div>
+
 <!-- Add Song Confirmation Modal -->
 <div class="modal-overlay hidden" id="add-song-modal" style="display: none;" onclick="if(event.target === this) cancelAddToQueue();">
     <div class="modal" style="max-width: 500px;" onclick="event.stopPropagation();">
-        <h2>Add to Queue</h2>
+        <h2 id="add-song-modal-title">Add to Queue</h2>
         <div id="add-song-modal-content">
             <!-- Song settings will be rendered here by JavaScript -->
         </div>
         <div style="display: flex; gap: 10px; margin-top: 20px;">
-            <button onclick="confirmAddToQueue()" style="flex: 1;">Add to Queue</button>
+            <button onclick="confirmAddToQueue()" id="add-song-modal-confirm" style="flex: 1;">Add to Queue</button>
             <button onclick="cancelAddToQueue()" style="flex: 1; background: #444;">Cancel</button>
         </div>
     </div>
@@ -32,6 +45,7 @@
         <!-- Owner options (visible to song owner OR operator) -->
         <div id="edit-queue-item-owner-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
             <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="replaceQueueItem()" style="width: 100%;">🔁 Replace Song</button>
                 <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
             </div>
         </div>
@@ -101,5 +115,16 @@
             <!-- History will be rendered here by JavaScript -->
         </div>
         <button onclick="hideHistoryModal()" style="margin-top: 20px;">Close</button>
+    </div>
+</div>
+
+<!-- Favorites Modal -->
+<div class="modal-overlay hidden" id="favorites-modal" style="display: none;" onclick="if(event.target === this) hideFavoritesModal();">
+    <div class="modal" style="max-width: 600px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation();">
+        <h2>My Favorites</h2>
+        <div id="favorites-content" style="margin-top: 20px;">
+            <!-- Favorites will be rendered here by JavaScript -->
+        </div>
+        <button onclick="hideFavoritesModal()" style="margin-top: 20px;">Close</button>
     </div>
 </div>

@@ -2,9 +2,50 @@
  * Search and add song functions for kbox web UI.
  */
 
-import { userName, userId, currentVideoToAdd, setCurrentVideoToAdd, queueDepthSeconds, queueDepthCount, currentQueue } from './state.js';
+import {
+    userName, userId, currentVideoToAdd, setCurrentVideoToAdd,
+    queueDepthSeconds, queueDepthCount, currentQueue,
+    currentSelectionTarget, setCurrentSelectionTarget
+} from './state.js';
 import { renderSongSettings } from './song-settings.js';
-import { loadQueue } from './queue.js';
+import { loadQueue, updateReplaceTargetBanner } from './queue.js';
+import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
+
+// Note: window.fetch is patched in auth.js to retry once on a 401/403 to
+// /api/* if the session's identity got clobbered — no special handling
+// needed here.
+
+// Render a list of tappable search-result rows into a container.
+// Used for search results and suggestions - selecting a row always goes
+// through showAddSongModal, which adds or replaces depending on whether
+// a replace target is currently set (see state.js: currentSelectionTarget).
+function renderResultsList(container, videos) {
+    container.innerHTML = '';
+    videos.forEach(video => {
+        const div = document.createElement('div');
+        div.className = 'search-result';
+        div.tabIndex = 0;
+        div.setAttribute('role', 'button');
+        div.setAttribute('aria-label', `Select ${video.title} by ${video.channel}`);
+        div.innerHTML = `
+            <img src="${video.thumbnail}" alt="${video.title}" />
+            <div class="search-result-info">
+                <div class="search-result-title">${video.title}</div>
+                <div class="search-result-channel">${video.channel}</div>
+            </div>
+            ${renderFavoriteStar(video)}
+        `;
+        div.onclick = () => showAddSongModal(video);
+        div.onkeydown = (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                showAddSongModal(video);
+            }
+        };
+        bindFavoriteStar(div.querySelector('.favorite-star'), video);
+        container.appendChild(div);
+    });
+}
 
 // Get AI-powered song suggestions
 export async function getSuggestions() {
@@ -40,28 +81,9 @@ export async function getSuggestions() {
 
         // Display results (same format as search results)
         resultsDiv.innerHTML = '<div class="suggestions-header">✨ Suggested for you</div>';
-        data.results.forEach(video => {
-            const div = document.createElement('div');
-            div.className = 'search-result';
-            div.tabIndex = 0;
-            div.setAttribute('role', 'button');
-            div.setAttribute('aria-label', `Add ${video.title} by ${video.channel} to queue`);
-            div.innerHTML = `
-                <img src="${video.thumbnail}" alt="${video.title}" />
-                <div class="search-result-info">
-                    <div class="search-result-title">${video.title}</div>
-                    <div class="search-result-channel">${video.channel}</div>
-                </div>
-            `;
-            div.onclick = () => showAddSongModal(video);
-            div.onkeydown = (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    showAddSongModal(video);
-                }
-            };
-            resultsDiv.appendChild(div);
-        });
+        const listDiv = document.createElement('div');
+        resultsDiv.appendChild(listDiv);
+        renderResultsList(listDiv, data.results);
     } catch (e) {
         console.error('Error getting suggestions:', e);
         resultsDiv.innerHTML = '<div class="suggestions-error">Error getting suggestions. Try again later.</div>';
@@ -99,29 +121,7 @@ export async function search() {
         const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
 
-        resultsDiv.innerHTML = '';
-        data.results.forEach(video => {
-            const div = document.createElement('div');
-            div.className = 'search-result';
-            div.tabIndex = 0;
-            div.setAttribute('role', 'button');
-            div.setAttribute('aria-label', `Add ${video.title} by ${video.channel} to queue`);
-            div.innerHTML = `
-                <img src="${video.thumbnail}" alt="${video.title}" />
-                <div class="search-result-info">
-                    <div class="search-result-title">${video.title}</div>
-                    <div class="search-result-channel">${video.channel}</div>
-                </div>
-            `;
-            div.onclick = () => showAddSongModal(video);
-            div.onkeydown = (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    showAddSongModal(video);
-                }
-            };
-            resultsDiv.appendChild(div);
-        });
+        renderResultsList(resultsDiv, data.results);
     } catch (e) {
         resultsDiv.innerHTML = '<div class="error">Error searching</div>';
     } finally {
@@ -139,31 +139,49 @@ export async function showAddSongModal(video) {
 
     setCurrentVideoToAdd(video);
 
-    // Fetch saved settings for this video and user (pitch preset, etc.)
+    const titleEl = document.getElementById('add-song-modal-title');
+    const confirmBtn = document.getElementById('add-song-modal-confirm');
+
+    let additionalControls;
     let savedPitch = 0;
-    try {
-        const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}?user_id=${encodeURIComponent(userId)}`);
-        if (settingsResponse.ok) {
-            const settingsData = await settingsResponse.json();
-            savedPitch = settingsData.settings?.pitch_semitones || 0;
-        }
-    } catch (e) {
-        // If fetch fails, just use default 0
-        console.debug('Could not fetch saved settings:', e);
-    }
 
-    // Build queue depth display from backend-computed values
-    let queueDepthHTML;
-    if (queueDepthCount === 0) {
-        queueDepthHTML = '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">Queue is empty — your song will play first!</div>';
+    if (currentSelectionTarget) {
+        // Replacing an existing queue item - no pitch preset lookup or queue
+        // depth needed, just make it unmistakable what's being replaced.
+        titleEl.textContent = 'Replace Song';
+        confirmBtn.textContent = 'Replace';
+        additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">Replacing “${currentSelectionTarget.label}” for ${currentSelectionTarget.userName}</div>`;
     } else {
-        const minutes = Math.round(queueDepthSeconds / 60);
-        const timeStr = minutes < 1 ? 'less than a minute' : minutes === 1 ? '~1 minute' : `~${minutes} minutes`;
-        const songStr = queueDepthCount === 1 ? '1 song' : `${queueDepthCount} songs`;
-        queueDepthHTML = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">&#x23F3; ${songStr} ahead (${timeStr})</div>`;
+        titleEl.textContent = 'Add to Queue';
+        confirmBtn.textContent = 'Add to Queue';
+
+        // Fetch saved settings for this video (pitch preset, etc.) - identity
+        // comes from the session, not a query param.
+        try {
+            const settingsResponse = await fetch(`/api/queue/settings/${encodeURIComponent(video.id)}`);
+            if (settingsResponse.ok) {
+                const settingsData = await settingsResponse.json();
+                savedPitch = settingsData.settings?.pitch_semitones || 0;
+            }
+        } catch (e) {
+            // If fetch fails, just use default 0
+            console.debug('Could not fetch saved settings:', e);
+        }
+
+        // Build queue depth display from backend-computed values
+        if (queueDepthCount === 0) {
+            additionalControls = '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">Queue is empty — your song will play next!</div>';
+        } else {
+            const minutes = Math.round(queueDepthSeconds / 60);
+            const timeStr = minutes < 1 ? 'less than a minute' : minutes === 1 ? '~1 minute' : `~${minutes} minutes`;
+            const songStr = queueDepthCount === 1 ? '1 song' : `${queueDepthCount} songs`;
+            additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">&#x23F3; ${songStr} ahead (${timeStr})</div>`;
+        }
     }
 
-    // Use reusable song settings component with saved pitch
+    // Use reusable song settings component with saved pitch.
+    // Pitch is left as-is when replacing (it isn't part of what's being
+    // swapped), so the pitch control is hidden in that case.
     renderSongSettings('add-song-modal-content', {
         title: video.title,
         thumbnail_url: video.thumbnail,
@@ -176,7 +194,8 @@ export async function showAddSongModal(video) {
         showStatus: false,
         showThumbnail: true,
         showUser: true,
-        additionalControls: queueDepthHTML
+        showPitchControls: !currentSelectionTarget,
+        additionalControls: additionalControls
     });
 
     // Show modal
@@ -185,17 +204,22 @@ export async function showAddSongModal(video) {
     modal.style.display = 'flex';
 }
 
-// Cancel adding song
+// Cancel adding/replacing song
 export function cancelAddToQueue() {
     const modal = document.getElementById('add-song-modal');
     modal.classList.add('hidden');
     modal.style.display = 'none';
     setCurrentVideoToAdd(null);
+    setCurrentSelectionTarget(null);
+    updateReplaceTargetBanner();
 }
 
-// Confirm and add song to queue
+// Confirm and add (or replace) a song in the queue.
+// Same guardrails and submit path either way - only the endpoint/payload differ.
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
+
+    const replacing = currentSelectionTarget;
 
     // Warn if song was already added tonight (queued or already played)
     const duplicate = currentQueue?.find(item => item.video_id === currentVideoToAdd.id);
@@ -217,25 +241,47 @@ export async function confirmAddToQueue() {
         }
     }
 
-    const pitchInput = document.getElementById('add-song-pitch-input');
-    if (!pitchInput) {
-        alert('Pitch control not initialized');
-        return;
+    // Soft etiquette nudge: give everyone a turn. Doesn't apply when
+    // replacing an existing entry in place (see #88) — that's correcting
+    // a mistake, not queueing a second turn.
+    if (!replacing && window.kboxConfig?.duplicateSingerNudgeEnabled) {
+        const alreadyQueued = currentQueue?.some(item => item.user_id === userId && !item.is_played);
+        if (alreadyQueued && !confirm('You already have a song queued. Add another anyway?')) {
+            return;
+        }
     }
-    const pitchSemitones = parseInt(pitchInput.value) || 0;
+
+    let url, body;
+    if (replacing) {
+        url = `/api/queue/${replacing.itemId}/replace`;
+        body = {
+            video_id: currentVideoToAdd.id,
+            title: currentVideoToAdd.title,
+            duration_seconds: currentVideoToAdd.duration_seconds,
+            thumbnail_url: currentVideoToAdd.thumbnail
+        };
+    } else {
+        const pitchInput = document.getElementById('add-song-pitch-input');
+        if (!pitchInput) {
+            alert('Pitch control not initialized');
+            return;
+        }
+        url = '/api/queue';
+        body = {
+            user_id: userId,
+            video_id: currentVideoToAdd.id,
+            title: currentVideoToAdd.title,
+            duration_seconds: currentVideoToAdd.duration_seconds,
+            thumbnail_url: currentVideoToAdd.thumbnail,
+            pitch_semitones: parseInt(pitchInput.value) || 0
+        };
+    }
 
     try {
-        const response = await fetch('/api/queue', {
+        const response = await fetch(url, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                user_id: userId,
-                video_id: currentVideoToAdd.id,
-                title: currentVideoToAdd.title,
-                duration_seconds: currentVideoToAdd.duration_seconds,
-                thumbnail_url: currentVideoToAdd.thumbnail,
-                pitch_semitones: pitchSemitones
-            })
+            body: JSON.stringify(body)
         });
 
         if (response.ok) {
@@ -246,9 +292,11 @@ export async function confirmAddToQueue() {
             document.getElementById('search-results').innerHTML = '';
             loadQueue();
             setCurrentVideoToAdd(null);
+            setCurrentSelectionTarget(null);
+            updateReplaceTargetBanner();
         } else {
             // Try to get error detail from response
-            let errorMessage = 'Error adding song to queue';
+            let errorMessage = replacing ? 'Error replacing song' : 'Error adding song to queue';
             try {
                 const errorData = await response.json();
                 if (errorData.detail) {
@@ -260,7 +308,7 @@ export async function confirmAddToQueue() {
             alert(errorMessage);
         }
     } catch (e) {
-        alert('Error adding song to queue');
+        alert(replacing ? 'Error replacing song' : 'Error adding song to queue');
     }
 }
 

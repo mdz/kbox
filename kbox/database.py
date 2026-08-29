@@ -12,14 +12,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .models import ConfigEntry, HistoryRecord, QueueItem, SongMetadata, SongSettings, User
+from .identity import normalize_name, pick_avatar
+from .models import (
+    ConfigEntry,
+    Favorite,
+    HistoryRecord,
+    QueueItem,
+    Session,
+    SongMetadata,
+    SongSettings,
+    User,
+)
 
 
 class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 4  # Incremented for user_events table
+    SCHEMA_VERSION = 9  # Incremented for name-keyed identity (normalized_name/icon/color)
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -88,6 +98,36 @@ class Database:
             # and theme column to playback_history
             self._create_user_events_table(cursor)
             self._add_history_theme_column(cursor)
+
+        if current_version < 5:
+            # Version 5: Add sessions table and session_id columns on
+            # queue_items and playback_history. Backfill existing rows to
+            # a single retroactive session.
+            self._create_sessions_table(cursor)
+            self._add_session_id_columns(cursor)
+
+        if current_version < 6:
+            # Version 6: Add favorites table
+            self._create_favorites_table(cursor)
+
+        if current_version < 7:
+            # Version 7: Add trailing-silence detection columns to
+            # song_metadata_cache, and relax artist/song_name to nullable
+            # (a video can now get a cache row from silence analysis alone,
+            # before/without metadata extraction ever running for it).
+            self._add_silence_detection_columns(cursor)
+
+        if current_version < 8:
+            # Version 8: Add loudness-measurement columns to
+            # song_metadata_cache for volume normalization. artist/song_name
+            # are already nullable as of version 7, so this is a plain
+            # additive ALTER TABLE - no table recreation needed.
+            self._add_loudness_columns(cursor)
+
+        if current_version < 9:
+            # Version 9: Add normalized_name/icon/color/last_seen_at to users
+            # for name-keyed identity lookup, and backfill existing rows.
+            self._add_user_identity_columns(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -265,6 +305,88 @@ class Database:
 
         self.logger.info("song_metadata_cache table created")
 
+    def _add_silence_detection_columns(self, cursor):
+        """Add trailing-silence columns to song_metadata_cache.
+
+        Also relaxes artist/song_name from NOT NULL to nullable: a row can
+        now be created by silence analysis alone (which runs independently
+        of, and may complete before, LLM metadata extraction for the same
+        video). SQLite can't drop a NOT NULL constraint in place, so the
+        table is recreated.
+        """
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='song_metadata_cache'"
+        )
+        if cursor.fetchone() is None:
+            # Fresh database - _create_song_metadata_cache hasn't run yet on
+            # older code paths, but on a new DB we create it directly here.
+            cursor.execute("""
+                CREATE TABLE song_metadata_cache (
+                    video_id TEXT PRIMARY KEY,
+                    artist TEXT,
+                    song_name TEXT,
+                    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    trailing_silence_start_seconds INTEGER,
+                    silence_analyzed_at TIMESTAMP
+                )
+            """)
+            self.logger.info("song_metadata_cache table created (with silence columns)")
+            return
+
+        cursor.execute("PRAGMA table_info(song_metadata_cache)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "trailing_silence_start_seconds" in columns:
+            return  # Already migrated
+
+        self.logger.info("Migrating song_metadata_cache for silence detection...")
+
+        cursor.execute("""
+            CREATE TABLE song_metadata_cache_new (
+                video_id TEXT PRIMARY KEY,
+                artist TEXT,
+                song_name TEXT,
+                extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                trailing_silence_start_seconds INTEGER,
+                silence_analyzed_at TIMESTAMP
+            )
+        """)
+
+        # extracted_at may not exist on older/hand-built schemas -- copy it
+        # only if present, and let the new column default otherwise.
+        if "extracted_at" in columns:
+            cursor.execute("""
+                INSERT INTO song_metadata_cache_new (video_id, artist, song_name, extracted_at)
+                SELECT video_id, artist, song_name, extracted_at FROM song_metadata_cache
+            """)
+        else:
+            cursor.execute("""
+                INSERT INTO song_metadata_cache_new (video_id, artist, song_name)
+                SELECT video_id, artist, song_name FROM song_metadata_cache
+            """)
+
+        cursor.execute("DROP TABLE song_metadata_cache")
+        cursor.execute("ALTER TABLE song_metadata_cache_new RENAME TO song_metadata_cache")
+
+        self.logger.info("song_metadata_cache migration complete")
+
+    def _add_loudness_columns(self, cursor):
+        """Add loudness-measurement columns to song_metadata_cache.
+
+        artist/song_name are already nullable as of the version-7 migration
+        (_add_silence_detection_columns), which also guarantees the table
+        exists by the time this runs - so this is a plain additive
+        ALTER TABLE, no recreation needed.
+        """
+        cursor.execute("PRAGMA table_info(song_metadata_cache)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "integrated_lufs" in columns:
+            return  # Already migrated
+
+        self.logger.info("Adding loudness columns to song_metadata_cache...")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN integrated_lufs REAL")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN true_peak_dbtp REAL")
+        cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN loudness_analyzed_at TIMESTAMP")
+
     def _create_user_events_table(self, cursor):
         """Create user_events table for interaction logging (search queries, etc.)."""
         self.logger.info("Creating user_events table...")
@@ -291,6 +413,75 @@ class Database:
 
         self.logger.info("user_events table created")
 
+    def _create_favorites_table(self, cursor):
+        """Create favorites table for user-starred songs."""
+        self.logger.info("Creating favorites table...")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                user_id TEXT NOT NULL,
+                video_id TEXT NOT NULL,
+                song_metadata_json TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, video_id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_favorites_user_id
+            ON favorites (user_id, created_at DESC)
+        """)
+
+        self.logger.info("favorites table created")
+
+    def _add_user_identity_columns(self, cursor):
+        """Add normalized_name/icon/color/last_seen_at to users, and backfill
+        existing rows so name-keyed lookup works for pre-existing guests too.
+
+        normalized_name isn't declared NOT NULL at the SQLite level (adding a
+        NOT NULL column requires a full table rebuild in SQLite) — it's kept
+        non-null in practice by UserRepository.create()/update_display_name()
+        always setting it, same as the denormalized user_name columns
+        elsewhere in this schema.
+        """
+        cursor.execute("PRAGMA table_info(users)")
+        columns = {row["name"] for row in cursor.fetchall()}
+
+        if "normalized_name" not in columns:
+            self.logger.info("Adding normalized_name column to users...")
+            cursor.execute("ALTER TABLE users ADD COLUMN normalized_name TEXT")
+        if "icon" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN icon TEXT")
+        if "color" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN color TEXT")
+        if "last_seen_at" not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_seen_at TIMESTAMP")
+
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_normalized_name ON users(normalized_name)"
+        )
+
+        # Backfill any row missing the new fields (fresh ALTER columns above,
+        # or a row that predates this migration). Safe to re-run: only rows
+        # still missing normalized_name are touched.
+        cursor.execute(
+            "SELECT id, display_name, created_at FROM users WHERE normalized_name IS NULL"
+        )
+        rows = cursor.fetchall()
+        for row in rows:
+            icon, color = pick_avatar(row["id"])
+            cursor.execute(
+                """
+                UPDATE users
+                SET normalized_name = ?, icon = ?, color = ?,
+                    last_seen_at = COALESCE(last_seen_at, created_at, CURRENT_TIMESTAMP)
+                WHERE id = ?
+                """,
+                (normalize_name(row["display_name"]), icon, color, row["id"]),
+            )
+        if rows:
+            self.logger.info("Backfilled identity columns for %d existing user(s)", len(rows))
+
     def _add_history_theme_column(self, cursor):
         """Add theme column to playback_history for existing databases."""
         cursor.execute("PRAGMA table_info(playback_history)")
@@ -298,6 +489,95 @@ class Database:
         if "theme" not in columns:
             self.logger.info("Adding theme column to playback_history...")
             cursor.execute("ALTER TABLE playback_history ADD COLUMN theme TEXT")
+
+    def _create_sessions_table(self, cursor):
+        """Create sessions table."""
+        self.logger.info("Creating sessions table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP,
+                theme TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_current
+            ON sessions (ended_at, created_at DESC)
+        """)
+
+    def _add_session_id_columns(self, cursor):
+        """Add session_id columns to queue_items and playback_history and
+        backfill existing rows to a single retroactive session."""
+        # Check which tables need the column
+        cursor.execute("PRAGMA table_info(queue_items)")
+        queue_cols = {row["name"] for row in cursor.fetchall()}
+        cursor.execute("PRAGMA table_info(playback_history)")
+        history_cols = {row["name"] for row in cursor.fetchall()}
+
+        need_queue = "session_id" not in queue_cols
+        need_history = "session_id" not in history_cols
+
+        if not (need_queue or need_history):
+            return
+
+        # Find earliest created_at / performed_at across existing rows to
+        # use as the retroactive session's created_at.
+        earliest = None
+        if need_queue:
+            cursor.execute("SELECT MIN(created_at) AS m FROM queue_items")
+            row = cursor.fetchone()
+            if row and row["m"]:
+                earliest = row["m"]
+        if need_history:
+            cursor.execute("SELECT MIN(performed_at) AS m FROM playback_history")
+            row = cursor.fetchone()
+            if row and row["m"]:
+                if earliest is None or row["m"] < earliest:
+                    earliest = row["m"]
+
+        # Check whether there's any existing row that needs backfilling.
+        has_existing = False
+        if need_queue:
+            cursor.execute("SELECT COUNT(*) AS c FROM queue_items")
+            if cursor.fetchone()["c"] > 0:
+                has_existing = True
+        if not has_existing and need_history:
+            cursor.execute("SELECT COUNT(*) AS c FROM playback_history")
+            if cursor.fetchone()["c"] > 0:
+                has_existing = True
+
+        retro_session_id = None
+        if has_existing:
+            # Create a single closed session for all pre-existing rows.
+            if earliest is not None:
+                cursor.execute(
+                    "INSERT INTO sessions (created_at, ended_at) VALUES (?, CURRENT_TIMESTAMP)",
+                    (earliest,),
+                )
+            else:
+                cursor.execute("INSERT INTO sessions (ended_at) VALUES (CURRENT_TIMESTAMP)")
+            retro_session_id = cursor.lastrowid
+            self.logger.info(
+                "Created retroactive session %s for pre-existing queue/history rows",
+                retro_session_id,
+            )
+
+        if need_queue:
+            cursor.execute("ALTER TABLE queue_items ADD COLUMN session_id INTEGER")
+            if retro_session_id is not None:
+                cursor.execute(
+                    "UPDATE queue_items SET session_id = ? WHERE session_id IS NULL",
+                    (retro_session_id,),
+                )
+
+        if need_history:
+            cursor.execute("ALTER TABLE playback_history ADD COLUMN session_id INTEGER")
+            if retro_session_id is not None:
+                cursor.execute(
+                    "UPDATE playback_history SET session_id = ? WHERE session_id IS NULL",
+                    (retro_session_id,),
+                )
 
     def get_connection(self):
         """
@@ -385,69 +665,161 @@ def _decode_settings(settings_json: str) -> SongSettings:
 class UserRepository:
     """Repository for user operations."""
 
+    _COLUMNS = "id, display_name, created_at, normalized_name, icon, color, last_seen_at"
+
     def __init__(self, database: Database):
         self.database = database
         self.logger = logging.getLogger(__name__)
+
+    @staticmethod
+    def _row_to_user(row) -> User:
+        return User(
+            id=row["id"],
+            display_name=row["display_name"],
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            normalized_name=row["normalized_name"],
+            icon=row["icon"],
+            color=row["color"],
+            last_seen_at=datetime.fromisoformat(row["last_seen_at"])
+            if row["last_seen_at"]
+            else None,
+        )
 
     def get_by_id(self, user_id: str) -> Optional[User]:
         """Get a user by ID."""
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, display_name, created_at FROM users WHERE id = ?", (user_id,)
-            )
+            cursor.execute(f"SELECT {self._COLUMNS} FROM users WHERE id = ?", (user_id,))
             row = cursor.fetchone()
-            if row:
-                return User(
-                    id=row["id"],
-                    display_name=row["display_name"],
-                    created_at=datetime.fromisoformat(row["created_at"])
-                    if row["created_at"]
-                    else None,
-                )
-            return None
+            return self._row_to_user(row) if row else None
+        finally:
+            conn.close()
+
+    def find_by_normalized_name(self, normalized: str) -> List[User]:
+        """Find all users whose name normalizes to `normalized`.
+
+        Returns the recognition-list candidates for a typed name — most
+        recently seen first, since that's the guest most likely to be typing
+        again right now. Not unique by design: a shared name is an expected
+        collision this list exists to help a guest resolve, not an error.
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT {self._COLUMNS} FROM users
+                WHERE normalized_name = ?
+                ORDER BY last_seen_at DESC
+                """,
+                (normalized,),
+            )
+            return [self._row_to_user(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 
     def create(self, user_id: str, display_name: str) -> User:
         """Create a new user."""
+        icon, color = pick_avatar(user_id)
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (id, display_name) VALUES (?, ?)", (user_id, display_name)
+                """
+                INSERT INTO users
+                    (id, display_name, normalized_name, icon, color, last_seen_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, display_name, normalize_name(display_name), icon, color),
             )
             conn.commit()
 
-            # Fetch the created record
-            cursor.execute(
-                "SELECT id, display_name, created_at FROM users WHERE id = ?", (user_id,)
-            )
+            cursor.execute(f"SELECT {self._COLUMNS} FROM users WHERE id = ?", (user_id,))
             row = cursor.fetchone()
             self.logger.info("Created new user: %s (%s)", display_name, user_id)
-
-            return User(
-                id=row["id"],
-                display_name=row["display_name"],
-                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
-            )
+            return self._row_to_user(row)
         finally:
             conn.close()
 
     def update_display_name(self, user_id: str, display_name: str) -> bool:
-        """Update a user's display name."""
+        """Update a user's display name (and the normalized_name derived from it)."""
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE users SET display_name = ? WHERE id = ?", (display_name, user_id)
+                "UPDATE users SET display_name = ?, normalized_name = ? WHERE id = ?",
+                (display_name, normalize_name(display_name), user_id),
             )
             updated = cursor.rowcount > 0
             conn.commit()
             if updated:
                 self.logger.info("Updated display name for user %s: %s", user_id, display_name)
             return updated
+        finally:
+            conn.close()
+
+    def touch_last_seen(self, user_id: str) -> None:
+        """Update last_seen_at to now — called whenever a session (re)binds to this user."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?", (user_id,)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def merge_users(self, keep_id: str, merge_id: str) -> None:
+        """Fold merge_id's history into keep_id, then delete merge_id.
+
+        For coalescing identities that predate name-keyed lookup, or any
+        ghost identity an operator confirms is the same person as another
+        record (see ldocs/GUEST_IDENTITY_CONTINUITY.md — this system never
+        merges automatically). There are no SQL foreign-key constraints
+        anywhere in this schema, so this is plain per-table reassignment,
+        not a cascade.
+        """
+        if keep_id == merge_id:
+            raise ValueError("keep_id and merge_id must be different users")
+
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT 1 FROM users WHERE id = ?", (keep_id,))
+            if cursor.fetchone() is None:
+                raise ValueError(f"keep_id {keep_id!r} is not a known user")
+            cursor.execute("SELECT 1 FROM users WHERE id = ?", (merge_id,))
+            if cursor.fetchone() is None:
+                raise ValueError(f"merge_id {merge_id!r} is not a known user")
+
+            # favorites has a (user_id, video_id) PRIMARY KEY — a song
+            # favorited under both identities would collide on reassignment,
+            # so drop merge_id's duplicate rather than fail the whole merge
+            # over one already-favorited song.
+            cursor.execute(
+                """
+                DELETE FROM favorites
+                WHERE user_id = ? AND video_id IN (
+                    SELECT video_id FROM favorites WHERE user_id = ?
+                )
+                """,
+                (merge_id, keep_id),
+            )
+            cursor.execute(
+                "UPDATE favorites SET user_id = ? WHERE user_id = ?", (keep_id, merge_id)
+            )
+
+            for table in ("queue_items", "playback_history", "user_events"):
+                cursor.execute(
+                    f"UPDATE {table} SET user_id = ? WHERE user_id = ?", (keep_id, merge_id)
+                )
+
+            cursor.execute("DELETE FROM users WHERE id = ?", (merge_id,))
+            conn.commit()
+            self.logger.info("Merged user %s into %s", merge_id, keep_id)
         finally:
             conn.close()
 
@@ -566,6 +938,7 @@ class HistoryRepository:
         settings: SongSettings,
         performance: Dict[str, Any],
         theme: Optional[str] = None,
+        session_id: Optional[int] = None,
     ) -> int:
         """Record a performance in history."""
         conn = self.database.get_connection()
@@ -580,8 +953,9 @@ class HistoryRepository:
                     song_metadata_json,
                     settings_json,
                     performance_json,
-                    theme
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    theme,
+                    session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     user_id,
@@ -591,6 +965,7 @@ class HistoryRepository:
                     _encode_settings(settings),
                     self._encode_performance(performance),
                     theme or None,
+                    session_id,
                 ),
             )
             conn.commit()
@@ -643,7 +1018,8 @@ class HistoryRepository:
                     song_metadata_json,
                     settings_json,
                     performance_json,
-                    theme
+                    theme,
+                    session_id
                 FROM playback_history
                 WHERE user_id = ?
                 ORDER BY performed_at DESC, id DESC
@@ -667,9 +1043,85 @@ class HistoryRepository:
                         if row["performed_at"]
                         else None,
                         theme=row["theme"],
+                        session_id=row["session_id"],
                     )
                 )
             return records
+        finally:
+            conn.close()
+
+
+class FavoriteRepository:
+    """Repository for favorite (starred) song operations."""
+
+    def __init__(self, database: Database):
+        self.database = database
+        self.logger = logging.getLogger(__name__)
+
+    def add(self, user_id: str, video_id: str, metadata: SongMetadata) -> None:
+        """Star a song for a user (idempotent - re-starring refreshes metadata)."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO favorites (user_id, video_id, song_metadata_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, video_id) DO UPDATE SET
+                    song_metadata_json = excluded.song_metadata_json
+            """,
+                (user_id, video_id, _encode_metadata(metadata)),
+            )
+            conn.commit()
+            self.logger.info("Favorited video_id=%s for user %s", video_id, user_id)
+        finally:
+            conn.close()
+
+    def remove(self, user_id: str, video_id: str) -> bool:
+        """Unstar a song for a user."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM favorites WHERE user_id = ? AND video_id = ?",
+                (user_id, video_id),
+            )
+            removed = cursor.rowcount > 0
+            conn.commit()
+            if removed:
+                self.logger.info("Unfavorited video_id=%s for user %s", video_id, user_id)
+            return removed
+        finally:
+            conn.close()
+
+    def get_user_favorites(self, user_id: str) -> List[Favorite]:
+        """Get all favorites for a user, newest first."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT user_id, video_id, song_metadata_json, created_at
+                FROM favorites
+                WHERE user_id = ?
+                ORDER BY created_at DESC, rowid DESC
+            """,
+                (user_id,),
+            )
+
+            favorites = []
+            for row in cursor.fetchall():
+                favorites.append(
+                    Favorite(
+                        user_id=row["user_id"],
+                        video_id=row["video_id"],
+                        metadata=_decode_metadata(row["song_metadata_json"]),
+                        created_at=datetime.fromisoformat(row["created_at"])
+                        if row["created_at"]
+                        else None,
+                    )
+                )
+            return favorites
         finally:
             conn.close()
 
@@ -726,6 +1178,7 @@ class QueueRepository:
             content_path=content_info.get("download_path"),
             error_message=content_info.get("error_message"),
             created_at=datetime.fromisoformat(created_at) if created_at else None,
+            session_id=self._row_get(row, "session_id"),
         )
 
     def add(
@@ -734,6 +1187,7 @@ class QueueRepository:
         video_id: str,
         metadata: SongMetadata,
         settings: SongSettings,
+        session_id: Optional[int] = None,
     ) -> int:
         """Add a song to the end of the queue."""
         conn = self.database.get_connection()
@@ -750,8 +1204,8 @@ class QueueRepository:
                 """
                 INSERT INTO queue_items
                 (position, user_id, user_name, video_id, song_metadata_json,
-                 settings_json, download_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 settings_json, download_status, session_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     next_position,
@@ -761,6 +1215,7 @@ class QueueRepository:
                     _encode_metadata(metadata),
                     _encode_settings(settings),
                     self.STATUS_PENDING,
+                    session_id,
                 ),
             )
 
@@ -774,6 +1229,36 @@ class QueueRepository:
                 video_id,
             )
             return item_id
+        finally:
+            conn.close()
+
+    def replace(self, item_id: int, video_id: str, metadata: SongMetadata) -> bool:
+        """
+        Replace the video/metadata of an existing queue item, in place.
+
+        Keeps position, user attribution, and settings unchanged. Resets
+        download status so the new video is (re)downloaded, and clears any
+        previous content path/error and extracted artist/song metadata.
+        """
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE queue_items
+                SET video_id = ?, song_metadata_json = ?, download_status = ?, download_json = NULL
+                WHERE id = ?
+            """,
+                (video_id, _encode_metadata(metadata), self.STATUS_PENDING, item_id),
+            )
+
+            if cursor.rowcount == 0:
+                self.logger.warning("Queue item %s not found for replace", item_id)
+                return False
+
+            conn.commit()
+            self.logger.info("Replaced queue item %s with video_id: %s", item_id, video_id)
+            return True
         finally:
             conn.close()
 
@@ -820,7 +1305,7 @@ class QueueRepository:
             cursor.execute("""
                 SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
-                       download_status, created_at
+                       download_status, created_at, session_id
                 FROM queue_items
                 ORDER BY position
             """)
@@ -1049,7 +1534,7 @@ class QueueRepository:
                 """
                 SELECT id, position, user_id, user_name, video_id,
                        song_metadata_json, settings_json, download_json,
-                       download_status, created_at
+                       download_status, created_at, session_id
                 FROM queue_items
                 WHERE id = ?
             """,
@@ -1061,6 +1546,103 @@ class QueueRepository:
                 return None
 
             return self._row_to_queue_item(result)
+        finally:
+            conn.close()
+
+
+class SessionRepository:
+    """Repository for party session operations.
+
+    A session represents a bounded period of karaoke activity, bookended
+    by the clear-queue action. Queue items and playback history rows carry
+    a session_id so future features can group per-party data.
+    """
+
+    def __init__(self, database: Database):
+        self.database = database
+        self.logger = logging.getLogger(__name__)
+
+    @staticmethod
+    def _row_to_session(row: sqlite3.Row) -> Session:
+        return Session(
+            id=row["id"],
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
+            theme=row["theme"],
+        )
+
+    def create(self, theme: Optional[str] = None) -> Session:
+        """Create a new session with the given theme and return it."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO sessions (theme) VALUES (?)",
+                (theme or None,),
+            )
+            session_id = cursor.lastrowid
+            conn.commit()
+            cursor.execute(
+                "SELECT id, created_at, ended_at, theme FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            self.logger.info("Created session %s (theme=%r)", session_id, theme)
+            return self._row_to_session(row)
+        finally:
+            conn.close()
+
+    def get_current(self) -> Optional[Session]:
+        """Return the most recent still-open session, if any."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, created_at, ended_at, theme
+                FROM sessions
+                WHERE ended_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            )
+            row = cursor.fetchone()
+            return self._row_to_session(row) if row else None
+        finally:
+            conn.close()
+
+    def get_by_id(self, session_id: int) -> Optional[Session]:
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, created_at, ended_at, theme FROM sessions WHERE id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            return self._row_to_session(row) if row else None
+        finally:
+            conn.close()
+
+    def end(self, session_id: int) -> bool:
+        """Mark a session ended. No-op if already ended. Returns True if it
+        was open and is now closed, False otherwise."""
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET ended_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND ended_at IS NULL
+                """,
+                (session_id,),
+            )
+            updated = cursor.rowcount > 0
+            conn.commit()
+            if updated:
+                self.logger.info("Ended session %s", session_id)
+            return updated
         finally:
             conn.close()
 

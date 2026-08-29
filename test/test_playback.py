@@ -348,8 +348,9 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
 
     # Should call get_song_at_offset with the finished song's ID and offset +1
     mock_queue_manager.get_song_at_offset.assert_called_once_with(1, 1)
-    # Should reset pitch
+    # Should reset pitch and volume gain
     mock_streaming_controller.set_pitch_shift.assert_any_call(0)
+    mock_streaming_controller.set_volume_gain_db.assert_any_call(0.0)
     # Should display transition interstitial image
     mock_streaming_controller.display_image.assert_called_once()
     # State should be TRANSITION (waiting for timer)
@@ -540,6 +541,131 @@ def test_jump_to_song_logs_position(
     mock_streaming_controller.load_file.assert_called_once_with("/path/to/song.mp4")
 
 
+def test_replace_song_not_currently_playing(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Replacing a song that isn't playing has no playback side effects."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    target_item = create_mock_queue_item(id=2, user_name="Bob")
+    mock_queue_manager.get_item.return_value = target_item
+    mock_queue_manager.replace_song.return_value = True
+
+    result = playback_controller.replace_song(2, video_id="youtube:new", title="Correct Song")
+
+    assert result is True
+    mock_streaming_controller.stop_playback.assert_not_called()
+    assert playback_controller.state == PlaybackState.PLAYING
+    assert playback_controller.current_song_id == 1
+    mock_queue_manager.replace_song.assert_called_once_with(
+        2, "youtube:new", "Correct Song", None, None, None
+    )
+
+
+def test_replace_song_not_found(playback_controller, mock_queue_manager):
+    """Replacing a queue item that no longer exists fails cleanly."""
+    mock_queue_manager.get_item.return_value = None
+
+    result = playback_controller.replace_song(99, video_id="youtube:new", title="X")
+
+    assert result is False
+    mock_queue_manager.replace_song.assert_not_called()
+
+
+def test_replace_currently_playing_song_stops_playback(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Replacing the currently playing song stops it immediately and arms auto-resume."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    current_item = create_mock_queue_item(id=1, user_name="Alice")
+    mock_queue_manager.get_item.return_value = current_item
+    mock_queue_manager.replace_song.return_value = True
+
+    result = playback_controller.replace_song(1, video_id="youtube:fixed", title="Fixed Song")
+
+    assert result is True
+    # display_image() (interstitial) drives the pipeline back to idle itself -
+    # no separate stop_playback() call, and no blank-screen text overlay.
+    mock_streaming_controller.stop_playback.assert_not_called()
+    mock_streaming_controller.display_image.assert_called_once()
+    assert playback_controller.state == PlaybackState.STOPPED
+    # Cursor/current_song_id are untouched - same item, position is unchanged
+    assert playback_controller.current_song_id == 1
+    assert playback_controller._awaiting_replace_item_id == 1
+
+
+def test_replace_currently_playing_song_auto_resumes_when_ready(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Once the replacement finishes downloading, playback resumes without operator action."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    current_item = create_mock_queue_item(
+        id=1, user_name="Alice", content_status=QueueManager.STATUS_PENDING
+    )
+    mock_queue_manager.get_item.return_value = current_item
+    mock_queue_manager.replace_song.return_value = True
+
+    playback_controller.replace_song(1, video_id="youtube:fixed", title="Fixed Song")
+    assert playback_controller.state == PlaybackState.STOPPED
+
+    # Content isn't ready yet - the monitor's check should be a no-op
+    playback_controller._check_auto_resume_after_replace()
+    mock_streaming_controller.load_file.assert_not_called()
+    assert playback_controller._awaiting_replace_item_id == 1
+
+    # Content finishes downloading
+    ready_item = create_mock_queue_item(
+        id=1,
+        user_name="Alice",
+        content_status=QueueManager.STATUS_READY,
+        content_path="/path/to/fixed.mp4",
+    )
+    mock_queue_manager.get_item.return_value = ready_item
+
+    playback_controller._check_auto_resume_after_replace()
+
+    assert playback_controller._awaiting_replace_item_id is None
+    assert playback_controller.state == PlaybackState.PLAYING
+    mock_streaming_controller.load_file.assert_called_once_with("/path/to/fixed.mp4")
+
+
+def test_manual_stop_clears_pending_replace_auto_resume(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """An explicit operator stop overrides a pending replace auto-resume."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    playback_controller._awaiting_replace_item_id = 1
+
+    playback_controller.stop_playback()
+
+    assert playback_controller._awaiting_replace_item_id is None
+
+
+def test_navigating_away_clears_pending_replace_auto_resume(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Navigating to a different song (e.g. Previous) clears a stale pending replace auto-resume."""
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.STOPPED
+    playback_controller._awaiting_replace_item_id = 1
+
+    prev_song = create_mock_queue_item(
+        id=2, title="Prev", content_status=QueueManager.STATUS_READY, content_path="/prev.mp4"
+    )
+    mock_queue_manager.get_song_at_offset.return_value = prev_song
+
+    playback_controller.previous()
+
+    assert playback_controller._awaiting_replace_item_id is None
+    assert playback_controller.current_song_id == 2
+
+
 def test_move_to_next_with_stale_position_cache(
     playback_controller, mock_queue_manager, mock_streaming_controller
 ):
@@ -589,6 +715,46 @@ def test_move_to_next_with_stale_position_cache(
     # CORRECT: Should query fresh position: 5 + 1 = 6
     # This assertion will FAIL, demonstrating the bug
     mock_queue_manager.reorder_song.assert_called_once_with(20, 6)
+
+
+def test_move_to_next_when_current_song_is_last_in_queue(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that move_to_next clamps to the queue's max position instead of failing.
+
+    Regression test for https://github.com/mdz/kbox/issues/89: when the
+    currently playing song is last in the queue, current_song.position + 1
+    exceeds the max position, so reorder() would reject it as an "invalid
+    position" - which the API layer misreports as "Queue item not found".
+    "Next" after the last song should simply mean the end of the queue.
+    """
+    playback_controller.current_song_id = 10
+    playback_controller.state = PlaybackState.PLAYING
+
+    # Current song is last in the queue, at position 2
+    current_song = create_mock_queue_item(
+        id=10, position=2, title="Currently Playing", content_status=QueueManager.STATUS_READY
+    )
+    song_to_move = create_mock_queue_item(
+        id=20, position=1, title="Move This Next", content_status=QueueManager.STATUS_READY
+    )
+
+    def get_item_side_effect(item_id):
+        if item_id == 10:
+            return current_song
+        elif item_id == 20:
+            return song_to_move
+        return None
+
+    mock_queue_manager.get_item.side_effect = get_item_side_effect
+    mock_queue_manager.get_queue.return_value = [song_to_move, current_song]
+    mock_queue_manager.reorder_song.return_value = True
+
+    result = playback_controller.move_to_next(20)
+
+    assert result is True
+    # Clamped to max position (2), not 3 (which would be rejected as invalid)
+    mock_queue_manager.reorder_song.assert_called_once_with(20, 2)
 
 
 def test_on_song_end_plays_next_in_queue_order(
@@ -1116,3 +1282,275 @@ class TestShutdown:
         )
         pc.shutdown()
         assert pc._monitoring is False
+
+
+class TestTrailingSilenceSkip:
+    """Tests for the trailing-silence early-skip feature."""
+
+    def _make_controller(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+    ):
+        mock_queue_manager.get_queue.return_value = []
+        mock_silence_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = enabled
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            silence_analyzer=mock_silence_analyzer,
+        )
+        pc._monitoring = False
+        return pc, mock_silence_analyzer
+
+    def test_lookup_trim_point_no_analyzer(self, playback_controller):
+        """No analyzer configured -- always None, feature is a no-op."""
+        assert playback_controller.silence_analyzer is None
+        assert playback_controller._lookup_trim_point("youtube:abc") is None
+
+    def test_lookup_trim_point_disabled_by_config(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=False
+        )
+        mock_analyzer.get_cached_trim_point.return_value = 120
+
+        assert pc._lookup_trim_point("youtube:abc") is None
+        mock_analyzer.get_cached_trim_point.assert_not_called()
+
+    def test_lookup_trim_point_returns_cached_value(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_trim_point.return_value = 120
+
+        assert pc._lookup_trim_point("youtube:abc") == 120
+        mock_analyzer.get_cached_trim_point.assert_called_once_with("youtube:abc")
+
+    def test_lookup_trim_point_swallows_analyzer_errors(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_trim_point.side_effect = Exception("db error")
+
+        assert pc._lookup_trim_point("youtube:abc") is None
+
+    def test_play_song_sets_trim_point(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_trim_point.return_value = 150
+
+        song = create_mock_queue_item(id=1, video_id="youtube:abc", content_status="ready")
+        mock_queue_manager.get_song_at_offset.return_value = song
+
+        pc.play()
+
+        assert pc._current_trim_point == 150
+
+    def test_check_trailing_silence_skip_before_trim_point_noop(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = 100
+
+        pc._check_trailing_silence_skip(50)
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+        assert pc.current_song_id == 1
+
+    def test_check_trailing_silence_skip_no_trim_point_noop(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = None
+
+        pc._check_trailing_silence_skip(999)
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+
+    def test_check_trailing_silence_skip_triggers_completion(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        current_song = create_mock_queue_item(id=1, video_id="youtube:abc123", duration_seconds=180)
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = 170
+        mock_queue_manager.get_item.return_value = current_song
+        mock_queue_manager.get_song_at_offset.return_value = None  # no next song
+
+        pc._check_trailing_silence_skip(170)
+
+        # Should stop playback itself (GStreamer won't reach EOS on its own)
+        mock_streaming_controller.stop_playback.assert_called_once()
+        # Should finish the song and go idle (no next song)
+        assert pc.current_song_id is None
+        assert pc.state == PlaybackState.IDLE
+        # Trim point cleared along with the finished song
+        assert pc._current_trim_point is None
+
+    def test_check_trailing_silence_skip_records_full_duration_for_history(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """History/completion stats should use the real song duration, not
+        the truncated stop position, so trimmed songs count as fully played."""
+        mock_history = Mock()
+        mock_queue_manager.get_queue.return_value = []
+        mock_silence_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = True
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            history_manager=mock_history,
+            silence_analyzer=mock_silence_analyzer,
+        )
+        pc._monitoring = False
+
+        current_song = create_mock_queue_item(id=1, video_id="youtube:abc123", duration_seconds=180)
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        pc._current_trim_point = 170
+        mock_queue_manager.get_item.return_value = current_song
+        mock_queue_manager.get_song_at_offset.return_value = None
+
+        pc._check_trailing_silence_skip(170)
+
+        assert mock_history.record_performance.called
+        _, kwargs = mock_history.record_performance.call_args
+        assert kwargs["played_duration_seconds"] == 180
+        assert kwargs["completion_percentage"] == 100.0
+
+    def test_check_trailing_silence_skip_ignored_when_not_playing(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """Guards against a stale check firing after an operator action
+        (skip/stop) already changed state."""
+        pc, _ = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        pc.state = PlaybackState.STOPPED
+        pc.current_song_id = 1
+        pc._current_trim_point = 100
+
+        pc._check_trailing_silence_skip(150)
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+
+
+class TestVolumeNormalization:
+    """Tests for the loudness-normalization feature."""
+
+    def _make_controller(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+    ):
+        from kbox.loudness import DEFAULT_TARGET_LUFS
+
+        mock_queue_manager.get_queue.return_value = []
+        mock_loudness_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = enabled
+        mock_config_manager.get_float.return_value = DEFAULT_TARGET_LUFS
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            loudness_analyzer=mock_loudness_analyzer,
+        )
+        pc._monitoring = False
+        return pc, mock_loudness_analyzer
+
+    def test_lookup_volume_gain_no_analyzer(self, playback_controller):
+        """No analyzer configured -- always 0.0, feature is a no-op."""
+        assert playback_controller.loudness_analyzer is None
+        assert playback_controller._lookup_volume_gain_db("youtube:abc") == 0.0
+
+    def test_lookup_volume_gain_disabled_by_config(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        from kbox.loudness import LoudnessInfo
+
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=False
+        )
+        mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
+            integrated_lufs=-10.0, true_peak_dbtp=-3.0
+        )
+
+        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+        mock_analyzer.get_cached_loudness.assert_not_called()
+
+    def test_lookup_volume_gain_unmeasured_video(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """A freshly-downloaded video without a measurement yet plays unadjusted."""
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.return_value = None
+
+        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+
+    def test_lookup_volume_gain_computes_gain_from_measurement(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        from kbox.loudness import LoudnessInfo
+
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
+            integrated_lufs=-10.0, true_peak_dbtp=-3.0
+        )
+
+        gain = pc._lookup_volume_gain_db("youtube:abc")
+
+        assert gain == pytest.approx(-6.0, abs=0.01)
+        mock_analyzer.get_cached_loudness.assert_called_once_with("youtube:abc")
+
+    def test_lookup_volume_gain_swallows_analyzer_errors(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.side_effect = Exception("db error")
+
+        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+
+    def test_play_song_applies_volume_gain(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        from kbox.loudness import LoudnessInfo
+
+        pc, mock_analyzer = self._make_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
+        )
+        mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
+            integrated_lufs=-10.0, true_peak_dbtp=-3.0
+        )
+
+        song = create_mock_queue_item(id=1, video_id="youtube:abc", content_status="ready")
+        mock_queue_manager.get_song_at_offset.return_value = song
+
+        pc.play()
+
+        mock_streaming_controller.set_volume_gain_db.assert_called_once()
+        (gain_db,), _ = mock_streaming_controller.set_volume_gain_db.call_args
+        assert gain_db == pytest.approx(-6.0, abs=0.01)

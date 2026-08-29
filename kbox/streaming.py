@@ -65,6 +65,7 @@ class StreamingController:
         self.state = "idle"  # 'idle', 'playing', 'paused'
         self.current_file: Optional[str] = None
         self.pitch_shift_semitones = 0
+        self.volume_gain_linear = 1.0
         self.eos_callback = None
 
         # Pipeline components (set by _create_persistent_pipeline)
@@ -72,6 +73,7 @@ class StreamingController:
         self.audio_bin: Any = None
         self.video_bin: Any = None
         self.pitch_shift_element: Any = None
+        self.volume_element: Any = None
 
         # Overlay elements (set by _create_video_sink_bin)
         self.qr_overlay = None
@@ -202,8 +204,14 @@ class StreamingController:
         if ac2 is None:
             raise RuntimeError("Failed to create audioconvert element")
 
+        # Volume element for per-song loudness normalization
+        self.volume_element = Gst.ElementFactory.make("volume", "volume")
+        if self.volume_element is None:
+            raise RuntimeError("Failed to create volume element")
+        self.volume_element.set_property("volume", self.volume_gain_linear)
+
         # Build element chain
-        elements = [ac1, self.pitch_shift_element, ac2]
+        elements = [ac1, self.pitch_shift_element, ac2, self.volume_element]
 
         # Add capsfilter for channel upmixing if configured for more than 2 channels
         num_channels = self.config_manager.get_int("audio_output_channels", 2)
@@ -525,6 +533,72 @@ class StreamingController:
             self.logger.warning("Error creating pitch shift: %s, using identity", e)
             return Gst.ElementFactory.make("identity", "pitch_shift")
 
+    def _reset_pitch_shift_element(self):
+        """
+        Replace the pitch shift element with a freshly instantiated one.
+
+        This exists because the LADSPA wrapper never resets plugin state between
+        songs, so the rubberband pitch shifter carries its internal audio buffer
+        across a track change and emits the tail of the previous song over the
+        start of the next one. Walking the wrapper source (gst-plugins-bad
+        ext/ladspa):
+
+          - gst_ladspa_filter_type_setup() is the only path that touches plugin
+            state during playback, and it delegates to gst_ladspa_setup().
+          - gst_ladspa_setup() deactivates/closes ONLY if the sample rate
+            changed, and activates ONLY if there is no handle yet. Same rate and
+            an existing handle (our case - persistent bin, both tracks 44100 Hz)
+            means it does nothing at all.
+          - LADSPA's activate() is the spec's "reset internal state" hook, so
+            skipping it leaves rubberband's buffers intact.
+          - gst_ladspa_cleanup() (deactivate + close) is only reachable from
+            dispose(), i.e. when the element is destroyed. It is not wired to
+            GstBaseTransform's stop vfunc, so no state change resets the plugin.
+          - The wrapper has no flush handling whatsoever, which is why sending a
+            flushing seek did not help either.
+
+        Destroying and recreating the element is therefore the only reliable way
+        to get a clean plugin instance: dropping the last reference runs
+        dispose() -> cleanup() -> deactivate + close, and the replacement gets a
+        fresh instantiate() + activate().
+
+        Must be called while the pipeline is not running (load_file does this
+        immediately after setting playbin to NULL). Cheap enough at once per
+        song load, and a no-op in practice when pitch shift is unavailable and
+        the element is a plain identity passthrough.
+        """
+        Gst = _get_gst()
+
+        if self.audio_bin is None or self.pitch_shift_element is None:
+            return
+
+        ac1 = self.audio_bin.get_by_name("ac1")
+        ac2 = self.audio_bin.get_by_name("ac2")
+        if ac1 is None or ac2 is None:
+            self.logger.warning("Cannot reset pitch shift: audioconvert elements not found")
+            return
+
+        old_element = self.pitch_shift_element
+
+        # Detach the stale instance. Removing it from the bin drops the bin's
+        # reference; the last Python reference goes away when this returns,
+        # triggering dispose() and the LADSPA cleanup described above.
+        ac1.unlink(old_element)
+        old_element.unlink(ac2)
+        old_element.set_state(Gst.State.NULL)
+        self.audio_bin.remove(old_element)
+
+        new_element = self._create_pitch_shift_or_identity()
+        self.audio_bin.add(new_element)
+
+        if not ac1.link(new_element) or not new_element.link(ac2):
+            raise RuntimeError("Failed to relink pitch shift element after reset")
+
+        new_element.sync_state_with_parent()
+        self.pitch_shift_element = new_element
+
+        self.logger.debug("Pitch shift element reset (fresh LADSPA instance)")
+
     # =========================================================================
     # Playback Control
     # =========================================================================
@@ -539,6 +613,20 @@ class StreamingController:
 
         Raises:
             RuntimeError: If playback fails to start
+
+        Note on "GStreamer-Audio-CRITICAL ... gst_audio_ring_buffer_set_channel_positions:
+        should not be reached": this fires on essentially every song load and is a known
+        upstream quirk, not a bug in this pipeline. In gstaudioringbuffer.c, that function
+        calls gst_audio_get_channel_reorder_map(device_positions, stream_positions), which
+        returns FALSE (triggering the critical) if EITHER side's position array contains
+        GST_AUDIO_CHANNEL_POSITION_NONE. The caller only special-cases "positionless" for
+        the device side; it never checks the stream's own negotiated positions. Plain
+        2-channel audio negotiated without an explicit channel-mask (the common case for
+        our source files) is exactly this "positionless" case, so it collides with ALSA
+        sinks that report explicit FRONT_LEFT/FRONT_RIGHT device positions - on every
+        renegotiation, regardless of pipeline state-change timing. Confirmed via GStreamer
+        1.26.2 source; do not treat this log line as evidence of an app-level bug without
+        new data.
         """
         self.logger.info("Loading file: %s (start_position=%s)", filepath, start_position_seconds)
 
@@ -555,6 +643,11 @@ class StreamingController:
         # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
         self.logger.debug("load_file: after NULL")
+
+        # Give the pitch shifter a fresh LADSPA instance. Nothing else clears
+        # its internal buffer, so without this the tail of the previous song
+        # bleeds over the start of this one. See _reset_pitch_shift_element.
+        self._reset_pitch_shift_element()
 
         # Unmute audio (may have been muted for interstitial)
         self.playbin.set_property("mute", False)
@@ -713,6 +806,7 @@ class StreamingController:
             self.audio_bin = None
             self.video_bin = None
             self.pitch_shift_element = None
+            self.volume_element = None
             self.qr_overlay = None
             self.text_overlay = None
 
@@ -771,6 +865,40 @@ class StreamingController:
                     self.logger.warning("Pitch shift element is identity, no effect")
             except Exception as e:
                 self.logger.warning("Could not update pitch shift: %s", e)
+
+    # =========================================================================
+    # Volume Control
+    # =========================================================================
+
+    def set_volume_gain_db(self, gain_db: float):
+        """
+        Set the loudness-normalization gain, in dB, applied on top of the
+        main output level.
+
+        Updates the volume element if available. The setting persists across
+        song changes since the element is in a persistent bin, so callers
+        should reset it to 0.0 when there's no measurement for a song.
+
+        Args:
+            gain_db: Gain adjustment in decibels (positive boosts, negative cuts)
+        """
+        from .loudness import db_to_linear
+
+        linear = db_to_linear(gain_db)
+        if linear == self.volume_gain_linear:
+            return
+
+        self.logger.info("Setting volume gain to %.1f dB (%.3fx)", gain_db, linear)
+        self.volume_gain_linear = linear
+
+        if not self._requires_gst():
+            return
+
+        if self.volume_element:
+            try:
+                self.volume_element.set_property("volume", linear)
+            except Exception as e:
+                self.logger.warning("Could not update volume gain: %s", e)
 
     # =========================================================================
     # Position and Seeking

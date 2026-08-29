@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Optional, Tuple
 
 if TYPE_CHECKING:
@@ -71,17 +72,29 @@ class SongMetadataExtractor:
             return (None, None)
 
         # Extract via LLM
+        start = time.monotonic()
         try:
             artist, song_name = self._extract_via_llm(title, description, channel)
+            elapsed = time.monotonic() - start
             if artist and song_name:
                 # Cache the result
                 self._cache_result(video_id, artist, song_name)
                 self.logger.info(
-                    "Extracted metadata for %s: '%s' by '%s'", video_id, song_name, artist
+                    "Extracted metadata for %s in %.1fs: '%s' by '%s'",
+                    video_id,
+                    elapsed,
+                    song_name,
+                    artist,
                 )
                 return (artist, song_name)
+            self.logger.info(
+                "LLM extraction returned no metadata for %s (%.1fs)", video_id, elapsed
+            )
         except Exception as e:
-            self.logger.warning("LLM extraction failed for %s: %s", video_id, e)
+            elapsed = time.monotonic() - start
+            self.logger.warning(
+                "LLM extraction failed for %s after %.1fs: %s", video_id, elapsed, e
+            )
 
         return (None, None)
 
@@ -203,21 +216,34 @@ class SongMetadataExtractor:
                 (video_id,),
             )
             row = cursor.fetchone()
-            if row:
+            # A row can exist with artist/song_name still NULL if silence
+            # analysis (a separate pipeline, keyed on the same video_id)
+            # cached its own result first -- that's not an extraction cache
+            # hit, so fall through to running the LLM.
+            if row and row["artist"] is not None and row["song_name"] is not None:
                 return (row["artist"], row["song_name"])
             return None
         finally:
             conn.close()
 
     def _cache_result(self, video_id: str, artist: str, song_name: str) -> None:
-        """Cache extraction result in database."""
+        """Cache extraction result in database.
+
+        Uses an upsert that only touches its own columns, since silence
+        analysis may independently write trailing-silence columns to the
+        same row (before or after this call).
+        """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO song_metadata_cache (video_id, artist, song_name)
-                VALUES (?, ?, ?)
+                INSERT INTO song_metadata_cache (video_id, artist, song_name, extracted_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(video_id) DO UPDATE SET
+                    artist = excluded.artist,
+                    song_name = excluded.song_name,
+                    extracted_at = excluded.extracted_at
                 """,
                 (video_id, artist, song_name),
             )

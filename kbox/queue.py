@@ -7,12 +7,15 @@ Handles song queue operations with persistence and content preparation.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 
 if TYPE_CHECKING:
+    from .loudness import LoudnessAnalyzer
+    from .session import SessionManager
+    from .silence_detection import TrailingSilenceAnalyzer
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
 
@@ -30,6 +33,9 @@ class QueueManager:
         database: Database,
         video_library: "VideoLibrary",
         metadata_extractor: Optional["SongMetadataExtractor"] = None,
+        silence_analyzer: Optional["TrailingSilenceAnalyzer"] = None,
+        loudness_analyzer: Optional["LoudnessAnalyzer"] = None,
+        session_manager: Optional["SessionManager"] = None,
     ):
         """
         Initialize QueueManager.
@@ -38,18 +44,34 @@ class QueueManager:
             database: Database instance for persistence
             video_library: VideoLibrary for video search/download
             metadata_extractor: Optional SongMetadataExtractor for LLM-based extraction
+            silence_analyzer: Optional TrailingSilenceAnalyzer for trailing-silence detection
+            loudness_analyzer: Optional LoudnessAnalyzer for volume normalization
+            session_manager: Optional SessionManager; when provided, new queue
+                items are tagged with the current session and clear_queue
+                rotates the session.
         """
         self.database = database
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
         self.video_library = video_library
         self.metadata_extractor = metadata_extractor
+        self.silence_analyzer = silence_analyzer
+        self.loudness_analyzer = loudness_analyzer
+        self.session_manager = session_manager
         self.logger = logging.getLogger(__name__)
 
         self._content_timeout = timedelta(minutes=10)
         self._content_monitor_thread = None
         self._monitoring = False
         self._stop_event = threading.Event()
+
+        # When the current content-preparation attempt for an item started,
+        # keyed by item id. Tracks the active attempt (reset on every restart,
+        # including after a replace), unlike the item's created_at, which
+        # never changes. Falls back to created_at in _check_stuck_content for
+        # items that reach STATUS_PREPARING without going through
+        # _start_content_preparation (e.g. restored from a prior process).
+        self._prep_started_at: Dict[int, datetime] = {}
 
         self._start_content_monitor()
 
@@ -101,6 +123,17 @@ class QueueManager:
 
         item_id = item.id
 
+        # Mark PREPARING synchronously, before handing off to video_library,
+        # so the next poll (as little as ~2s away) sees this item as already
+        # in flight rather than still PENDING. video_library.request() only
+        # flips the status via the "downloading" callback once its background
+        # thread actually starts running, which can lag behind a poll cycle
+        # when the download-concurrency semaphore or the provider itself is
+        # slow — without this, each lagging poll spawns another competing
+        # download thread for the same video.
+        self._prep_started_at[item_id] = datetime.now()
+        self.update_content_status(item_id, self.STATUS_PREPARING)
+
         def on_status(status: str, path: Optional[str], error: Optional[str]):
             self._on_content_status(item_id, status, path, error)
 
@@ -119,10 +152,17 @@ class QueueManager:
                 item.id,
             )
             self.update_content_status(item.id, self.STATUS_READY, content_path=str(cached_path))
+            self._run_post_download_analysis(item.id, str(cached_path))
+            self._prep_started_at.pop(item.id, None)
             return
 
-        if item.created_at:
-            if datetime.now(item.created_at.tzinfo) - item.created_at > self._content_timeout:
+        # Prefer the current prep attempt's start time over created_at: a
+        # replace (or any other restart of preparation) doesn't change
+        # created_at, so comparing against it would flag a long-queued item
+        # as instantly "stuck" the moment its (fresh) replacement prep begins.
+        started_at = self._prep_started_at.get(item.id, item.created_at)
+        if started_at:
+            if datetime.now(started_at.tzinfo) - started_at > self._content_timeout:
                 self.logger.warning(
                     "Content preparation stuck for %s (ID: %s) for more than %s, resetting to pending",
                     item.metadata.title,
@@ -130,6 +170,7 @@ class QueueManager:
                     self._content_timeout,
                 )
                 self.update_content_status(item.id, self.STATUS_PENDING)
+                self._prep_started_at.pop(item.id, None)
 
     def _on_content_status(
         self, item_id: int, status: str, path: Optional[str], error: Optional[str]
@@ -140,10 +181,54 @@ class QueueManager:
         elif status == "ready" and path:
             self.update_content_status(item_id, self.STATUS_READY, content_path=path)
             self.logger.info("Content ready for queue item %s: %s", item_id, path)
+            self._prep_started_at.pop(item_id, None)
+            self._run_post_download_analysis(item_id, path)
             self._cleanup_storage()
         elif status == "error" and error:
             self.update_content_status(item_id, self.STATUS_ERROR, error_message=error)
+            self._prep_started_at.pop(item_id, None)
             self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
+
+    def _run_post_download_analysis(self, item_id: int, path: str) -> None:
+        """Run per-video analysis steps once a queue item's content is ready.
+
+        Runs synchronously on the caller's thread. Each step is independent
+        and failures are logged, never allowed to break queue operations.
+        """
+        item = self.get_item(item_id)
+        if item is None:
+            return
+
+        if self.metadata_extractor:
+            try:
+                artist, song_name = self.metadata_extractor.extract(
+                    video_id=item.video_id,
+                    title=item.metadata.title,
+                    description=None,
+                    channel=item.metadata.channel,
+                )
+                if artist and song_name:
+                    self.update_extracted_metadata(item_id, artist, song_name)
+                    self.logger.info(
+                        "Extracted metadata for item %s: '%s' by '%s'",
+                        item_id,
+                        song_name,
+                        artist,
+                    )
+            except Exception as e:
+                self.logger.warning("Metadata extraction failed for item %s: %s", item_id, e)
+
+        if self.silence_analyzer:
+            try:
+                self.silence_analyzer.analyze(item.video_id, path)
+            except Exception as e:
+                self.logger.warning("Silence analysis failed for item %s: %s", item_id, e)
+
+        if self.loudness_analyzer:
+            try:
+                self.loudness_analyzer.analyze(item.video_id, path)
+            except Exception as e:
+                self.logger.warning("Loudness analysis failed for item %s: %s", item_id, e)
 
     def stop_content_monitor(self):
         """Stop the content monitor thread."""
@@ -207,8 +292,16 @@ class QueueManager:
         )
         settings = SongSettings(pitch_semitones=pitch_semitones)
 
+        session_id = None
+        if self.session_manager is not None:
+            session_id = self.session_manager.get_or_create_current().id
+
         item_id = self.repository.add(
-            user=user, video_id=video_id, metadata=metadata, settings=settings
+            user=user,
+            video_id=video_id,
+            metadata=metadata,
+            settings=settings,
+            session_id=session_id,
         )
 
         self.logger.info(
@@ -220,44 +313,49 @@ class QueueManager:
             pitch_semitones,
         )
 
-        # Trigger async metadata extraction (if extractor configured)
-        if self.metadata_extractor:
-            self._start_metadata_extraction(item_id, video_id, title, channel)
-
         return item_id
 
-    def _start_metadata_extraction(
+    def replace_song(
         self,
         item_id: int,
         video_id: str,
         title: str,
-        channel: Optional[str],
-    ) -> None:
-        """Start background thread to extract metadata for a queue item."""
+        duration_seconds: Optional[int] = None,
+        thumbnail_url: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> bool:
+        """
+        Replace the video for an existing queue item, in place.
 
-        def extract_thread():
-            try:
-                artist, song_name = self.metadata_extractor.extract(
-                    video_id=video_id,
-                    title=title,
-                    description=None,
-                    channel=channel,
-                )
-                if artist and song_name:
-                    self.update_extracted_metadata(item_id, artist, song_name)
-                    self.logger.info(
-                        "Extracted metadata for item %s: '%s' by '%s'",
-                        item_id,
-                        song_name,
-                        artist,
-                    )
-            except Exception as e:
-                self.logger.warning("Metadata extraction failed for item %s: %s", item_id, e)
+        Keeps the item's position and user attribution unchanged. Resets
+        content status so the new video is downloaded; metadata extraction
+        and silence analysis for the new video run once it's ready, same as
+        any newly-added song.
 
-        thread = threading.Thread(
-            target=extract_thread, daemon=True, name=f"MetadataExtract-{item_id}"
+        Args:
+            item_id: ID of the queue item to replace
+            video_id: Opaque video ID of the replacement video
+            title: Replacement song title (original video title)
+            duration_seconds: Duration in seconds (optional)
+            thumbnail_url: Thumbnail URL (optional)
+            channel: Channel/artist name (optional)
+
+        Returns:
+            True if the item was replaced, False if it wasn't found
+        """
+        metadata = SongMetadata(
+            title=title,
+            duration_seconds=duration_seconds,
+            thumbnail_url=thumbnail_url,
+            channel=channel,
         )
-        thread.start()
+
+        if not self.repository.replace(item_id, video_id, metadata):
+            return False
+
+        self.logger.info("Replaced queue item %s with: %s (video_id: %s)", item_id, title, video_id)
+
+        return True
 
     def remove_song(self, item_id: int) -> bool:
         """Remove a song from the queue."""
@@ -309,8 +407,16 @@ class QueueManager:
         return None
 
     def clear_queue(self) -> int:
-        """Clear all items from the queue."""
-        return self.repository.clear()
+        """Clear all items from the queue and rotate the party session.
+
+        Clearing the queue is the ritual that bookends a party: the current
+        session is marked ended and a fresh session is started (snapshotting
+        the currently-configured party theme, if any).
+        """
+        count = self.repository.clear()
+        if self.session_manager is not None:
+            self.session_manager.end_and_rotate()
+        return count
 
     def update_content_status(
         self,

@@ -11,11 +11,23 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class User:
-    """User entity with UUID-based identity."""
+    """User entity with UUID-based identity.
+
+    Identity is self-declared and unverified by design (see
+    ldocs/GUEST_IDENTITY_CONTINUITY.md): `id` is the durable key everything
+    else foreign-keys against, `normalized_name` is a lookup path onto it
+    (not itself unique — a name shared by two real guests is an expected,
+    designed-for case), and `icon`/`color` exist purely to make same-named
+    guests visually distinguishable in a recognition list.
+    """
 
     id: str
     display_name: str
     created_at: Optional[datetime] = None
+    normalized_name: Optional[str] = None
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
 
 
 @dataclass
@@ -54,6 +66,7 @@ class QueueItem:
     content_path: Optional[str] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
+    session_id: Optional[int] = None
 
 
 @dataclass
@@ -69,6 +82,31 @@ class HistoryRecord:
     performance: Dict[str, Any]  # Performance metrics
     performed_at: Optional[datetime] = None
     theme: Optional[str] = None
+    session_id: Optional[int] = None
+
+
+@dataclass
+class Session:
+    """A party session — a bounded period of queueing/singing activity.
+
+    Sessions are bookended by the clear-queue action: the current session
+    ends (ended_at set) and a fresh session begins.
+    """
+
+    id: int
+    created_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    theme: Optional[str] = None
+
+
+@dataclass
+class Favorite:
+    """A song a user has starred to remember for later, independent of the queue."""
+
+    user_id: str
+    video_id: str  # Opaque video ID like "youtube:abc123"
+    metadata: SongMetadata
+    created_at: Optional[datetime] = None
 
 
 @dataclass

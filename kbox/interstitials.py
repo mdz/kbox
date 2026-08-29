@@ -7,6 +7,7 @@ Generates images for display between songs, during idle, and at end of queue.
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -21,11 +22,14 @@ except ImportError:
     logger.warning("PIL/Pillow not installed, interstitials will be text-only")
 
 
-# Default colors (dark theme to match karaoke aesthetic)
-BACKGROUND_COLOR = (20, 20, 30)  # Dark blue-gray
+# kbox brand colors (see docs/branding/)
+BACKGROUND_COLOR = (24, 15, 38)  # Stage - dark violet-black
 PRIMARY_TEXT_COLOR = (255, 255, 255)  # White
-ACCENT_COLOR = (74, 158, 255)  # Blue accent (matches UI)
+ACCENT_COLOR = (176, 107, 255)  # Marquee violet
+WORDMARK_PINK = (255, 63, 164)  # Hot mic pink, "box" in the kbox wordmark
 SECONDARY_TEXT_COLOR = (150, 150, 160)  # Muted gray
+
+WORDMARK_FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "Baloo2-Variable.ttf"
 
 
 class InterstitialGenerator:
@@ -50,6 +54,7 @@ class InterstitialGenerator:
 
         # Font paths (will try system fonts)
         self._font_cache: dict[tuple[int, bool], Any] = {}
+        self._wordmark_font_cache: dict[int, Any] = {}
 
     def _get_font(
         self, size: int, bold: bool = False
@@ -96,6 +101,27 @@ class InterstitialGenerator:
         self._font_cache[cache_key] = font
         return font
 
+    def _get_wordmark_font(self, size: int) -> Any:
+        """Get the bold Baloo 2 font used for the kbox wordmark, with caching."""
+        if size in self._wordmark_font_cache:
+            return self._wordmark_font_cache[size]
+
+        font: Any = None
+        if WORDMARK_FONT_PATH.exists():
+            try:
+                font = ImageFont.truetype(str(WORDMARK_FONT_PATH), size)
+                if hasattr(font, "set_variation_by_name"):
+                    font.set_variation_by_name("Bold")
+            except Exception:
+                self.logger.warning("Could not load wordmark font, falling back", exc_info=True)
+                font = None
+
+        if font is None:
+            font = self._get_font(size, bold=True)
+
+        self._wordmark_font_cache[size] = font
+        return font
+
     def _create_base_image(self) -> Tuple[Any, Any]:  # Returns (Image, ImageDraw)
         """Create a base image with background color."""
         img = Image.new("RGB", (self.width, self.height), BACKGROUND_COLOR)
@@ -116,6 +142,17 @@ class InterstitialGenerator:
         x = (self.width - text_width) // 2
         draw.text((x, y), text, font=font, fill=color)
 
+    def _center_wordmark(self, draw: Any, y: int, font: Any) -> None:
+        """Draw the kbox wordmark centered, 'k' in violet and 'box' in pink."""
+        k_bbox = draw.textbbox((0, 0), "k", font=font)
+        box_bbox = draw.textbbox((0, 0), "box", font=font)
+        k_width = k_bbox[2] - k_bbox[0]
+        box_width = box_bbox[2] - box_bbox[0]
+
+        start_x = (self.width - (k_width + box_width)) // 2
+        draw.text((start_x, y), "k", font=font, fill=ACCENT_COLOR)
+        draw.text((start_x + k_width, y), "box", font=font, fill=WORDMARK_PINK)
+
     def generate_idle_screen(self, party_theme: Optional[str] = None) -> str:
         """
         Generate the idle screen (before playback starts).
@@ -133,9 +170,9 @@ class InterstitialGenerator:
 
         img, draw = self._create_base_image()
 
-        # Title
-        title_font = self._get_font(120, bold=True)
-        self._center_text(draw, "kbox", self.height // 4, title_font, ACCENT_COLOR)
+        # Title (kbox wordmark: k in violet, box in pink)
+        title_font = self._get_wordmark_font(120)
+        self._center_wordmark(draw, self.height // 4, title_font)
 
         # Subtitle
         subtitle_font = self._get_font(48)
@@ -263,6 +300,34 @@ class InterstitialGenerator:
         output_path = os.path.join(self.cache_dir, "interstitial_end.png")
         img.save(output_path, "PNG")
         self.logger.info("Generated end-of-queue interstitial: %s", output_path)
+        return output_path
+
+    def generate_message_screen(self, message: str) -> str:
+        """
+        Generate a generic centered-message screen (e.g. "Loading new video for X...").
+
+        Used for transient operator/system messages where a blank pipeline
+        state would otherwise leave the screen empty - e.g. while replacing
+        the currently-playing song's content.
+
+        Args:
+            message: Message to display
+
+        Returns:
+            Path to the generated image file
+        """
+        if not PIL_AVAILABLE:
+            return self._generate_fallback_image("message")
+
+        img, draw = self._create_base_image()
+
+        message_font = self._get_font(64, bold=True)
+        self._center_text(draw, message, self.height // 2 - 40, message_font, PRIMARY_TEXT_COLOR)
+
+        # Save and return path
+        output_path = os.path.join(self.cache_dir, "interstitial_message.png")
+        img.save(output_path, "PNG")
+        self.logger.info("Generated message interstitial: %s", message)
         return output_path
 
     def _generate_fallback_image(self, screen_type: str) -> str:

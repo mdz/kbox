@@ -33,6 +33,10 @@ notes.txt
 .pytest_cache/
 .coverage
 htmlcov/
+test/fixtures/test_loud_tone.wav
+test/fixtures/test_quiet_tone.wav
+test/fixtures/test_1s.mp4
+test/fixtures/test_3s.mp4
 
 .ruff_cache
 .mypy_cache

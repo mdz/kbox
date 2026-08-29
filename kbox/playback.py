@@ -37,6 +37,8 @@ class PlaybackController:
         streaming_controller,  # StreamingController - avoid circular import
         config_manager,
         history_manager=None,  # HistoryManager - avoid circular import, optional for tests
+        silence_analyzer=None,  # TrailingSilenceAnalyzer - avoid circular import, optional
+        loudness_analyzer=None,  # LoudnessAnalyzer - avoid circular import, optional
     ):
         """
         Initialize PlaybackController.
@@ -46,15 +48,29 @@ class PlaybackController:
             streaming_controller: StreamingController instance
             config_manager: ConfigManager instance
             history_manager: HistoryManager instance (optional, for tests)
+            silence_analyzer: TrailingSilenceAnalyzer instance (optional). When
+                provided (and skip_trailing_silence_enabled is on), playback
+                advances early once a song reaches its cached trailing-silence
+                trim point instead of waiting for literal end-of-file.
+            loudness_analyzer: LoudnessAnalyzer instance (optional). When
+                provided (and loudness_normalization_enabled is on), a
+                compensating gain is applied so songs from different
+                sources play back at a consistent volume.
         """
         self.queue_manager = queue_manager
         self.streaming_controller = streaming_controller
         self.config_manager = config_manager
         self.history_manager = history_manager
+        self.silence_analyzer = silence_analyzer
+        self.loudness_analyzer = loudness_analyzer
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
         self.lock = threading.Lock()
+
+        # Cached trailing-silence trim point (seconds) for the current song,
+        # looked up once in _play_song(). None if unavailable/disabled.
+        self._current_trim_point: Optional[int] = None
 
         # Queue cursor: the ID of the song currently playing (or last played).
         # Songs before the cursor's position are "played", songs after are "upcoming".
@@ -76,6 +92,10 @@ class PlaybackController:
         self._current_singer_shown = (
             False  # Track if "current singer" notification was shown for current song
         )
+
+        # Set when replace_song() stops the currently-playing song to swap its
+        # content; the monitor auto-resumes once that item's content is ready.
+        self._awaiting_replace_item_id: Optional[int] = None
 
         # Overlay management - PlaybackController owns overlay state
         self._base_overlay_text = ""  # Persistent overlay (current singer, up next, etc.)
@@ -221,10 +241,16 @@ class PlaybackController:
                             self._check_current_singer_notification(position)
                             # Check if we should show "up next" notification near end
                             self._check_up_next_notification(position)
+                            # Check if we've reached trailing silence and can advance early
+                            self._check_trailing_silence_skip(position)
                     elif self.state == PlaybackState.IDLE:
                         # Auto-start playback if we're idle and there are ready songs
                         # This handles the "that's all" screen -> someone adds a song case
                         self._check_auto_start_when_idle()
+                    elif self.state == PlaybackState.STOPPED and self._awaiting_replace_item_id:
+                        # Auto-resume a song that was stopped to replace its content,
+                        # once the replacement has finished downloading
+                        self._check_auto_resume_after_replace()
                     time.sleep(2)  # Check every 2 seconds
                 except Exception as e:
                     self.logger.error("Error in monitor: %s", e, exc_info=True)
@@ -257,6 +283,26 @@ class PlaybackController:
             next_song = self.queue_manager.get_song_at_offset(None, 0)
         if next_song and next_song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
+            self.play()
+
+    def _check_auto_resume_after_replace(self):
+        """
+        Check if a song we stopped to replace has finished downloading, and
+        resume it automatically without requiring operator intervention.
+
+        Only acts while self._awaiting_replace_item_id is set (by
+        replace_song()) and still matches the current song - any other
+        control action (play/skip/previous/jump/manual stop) clears it,
+        so this never overrides an operator's explicit choice.
+        """
+        item_id = self._awaiting_replace_item_id
+        if item_id is None or item_id != self.current_song_id:
+            return
+
+        song = self.queue_manager.get_item(item_id)
+        if song and song.content_status == QueueManager.STATUS_READY:
+            self.logger.info("Replacement ready for song %s, auto-resuming", item_id)
+            self._awaiting_replace_item_id = None
             self.play()
 
     def _check_current_singer_notification(self, current_position: int):
@@ -335,6 +381,90 @@ class PlaybackController:
                 self._set_base_overlay(overlay_text)
                 self._up_next_shown = True
                 self.logger.debug("Updated overlay to up next for: %s", next_song.user_name)
+
+    def _lookup_trim_point(self, video_id: str) -> Optional[int]:
+        """
+        Look up the cached trailing-silence trim point for a video.
+
+        Returns None (no early skip) if the feature is disabled, no analyzer
+        is configured, or analysis hasn't found any exploitable silence.
+        Never raises -- a lookup failure just means normal end-of-file
+        playback, same as before this feature existed.
+        """
+        if not self.silence_analyzer:
+            return None
+        if not self.config_manager.get_bool("skip_trailing_silence_enabled", True):
+            return None
+        try:
+            return self.silence_analyzer.get_cached_trim_point(video_id)
+        except Exception as e:
+            self.logger.warning("Error looking up trim point for %s: %s", video_id, e)
+            return None
+
+    def _lookup_volume_gain_db(self, video_id: str) -> float:
+        """
+        Look up the loudness-normalization gain for a video, in dB.
+
+        Returns 0.0 (no adjustment) if normalization is disabled, no
+        analyzer is configured, or the video hasn't been measured yet - a
+        freshly-added song plays at its native level until analysis catches
+        up, rather than blocking playback. Never raises.
+        """
+        if not self.loudness_analyzer:
+            return 0.0
+        if not self.config_manager.get_bool("loudness_normalization_enabled", True):
+            return 0.0
+        try:
+            loudness = self.loudness_analyzer.get_cached_loudness(video_id)
+            if loudness is None:
+                return 0.0
+
+            from .loudness import DEFAULT_TARGET_LUFS, compute_gain_db
+
+            target_lufs = self.config_manager.get_float("loudness_target_lufs", DEFAULT_TARGET_LUFS)
+            return compute_gain_db(loudness, target_lufs=target_lufs)
+        except Exception as e:
+            self.logger.warning("Error looking up volume gain for %s: %s", video_id, e)
+            return 0.0
+
+    def _check_trailing_silence_skip(self, current_position: int):
+        """
+        Check if playback has reached the cached trailing-silence trim point
+        and, if so, advance to the next song without waiting for literal EOS.
+
+        Args:
+            current_position: Current playback position in seconds
+        """
+        if self._current_trim_point is None:
+            return
+
+        if current_position < self._current_trim_point:
+            return
+
+        with self.lock:
+            # Re-check under lock: state may have changed (operator skip/
+            # stop, or another path already advanced the song) since the
+            # unlocked check above.
+            if self.state != PlaybackState.PLAYING or self._current_trim_point is None:
+                return
+
+            self.logger.info(
+                "Reached trailing silence at %ss (trim point %ss), advancing early",
+                current_position,
+                self._current_trim_point,
+            )
+
+            song = (
+                self.queue_manager.get_item(self.current_song_id) if self.current_song_id else None
+            )
+            duration = song.metadata.duration_seconds if song else None
+            # Record the full song duration (not the truncated stop position)
+            # for history/completion stats, so trimmed songs still count as
+            # fully played.
+            final_position = duration if duration else self._current_trim_point
+
+            self.streaming_controller.stop_playback()
+            self._complete_current_song(final_position=final_position)
 
     def play(self) -> bool:
         """
@@ -422,6 +552,9 @@ class PlaybackController:
             self._set_state(PlaybackState.IDLE, "no content path")
             return False
 
+        # Any pending "waiting for replacement" is moot once a song starts playing
+        self._awaiting_replace_item_id = None
+
         # Reset notification flags for new song
         self._up_next_shown = False
         self._current_singer_shown = False
@@ -439,6 +572,14 @@ class PlaybackController:
             except Exception as e:
                 self.logger.warning("Could not set pitch shift: %s", e)
 
+            # Apply loudness-normalization gain for this song, if measured
+            try:
+                self.streaming_controller.set_volume_gain_db(
+                    self._lookup_volume_gain_db(song.video_id)
+                )
+            except Exception as e:
+                self.logger.warning("Could not set volume gain: %s", e)
+
             # Load file into streaming controller (always start from beginning)
             self.logger.debug("_play_song: before load_file")
             try:
@@ -455,6 +596,9 @@ class PlaybackController:
             #   2. on_song_end() - clears it when song finishes naturally
             # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
+
+            # Look up trailing-silence trim point for the monitor loop to act on
+            self._current_trim_point = self._lookup_trim_point(song.video_id)
 
             # Advance the queue cursor - this is the single place the cursor moves.
             # All navigation (skip, previous, jump_to_song) goes through _play_song(),
@@ -525,6 +669,8 @@ class PlaybackController:
 
             self.logger.info("Stopping playback")
             try:
+                # An explicit operator stop overrides any pending auto-resume
+                self._awaiting_replace_item_id = None
                 self._stop_internal()
                 return True
             except Exception as e:
@@ -636,6 +782,53 @@ class PlaybackController:
 
             # Load and play the song (always from beginning)
             return self._play_song(song)
+
+    def replace_song(
+        self,
+        item_id: int,
+        video_id: str,
+        title: str,
+        duration_seconds: Optional[int] = None,
+        thumbnail_url: Optional[str] = None,
+        channel: Optional[str] = None,
+    ) -> bool:
+        """
+        Replace the video for a queue item in place (e.g. wrong version added).
+
+        Position and attribution are untouched. If the item is currently
+        playing, playback stops immediately (the wrong content shouldn't
+        keep playing) and auto-resumes the same item once the replacement
+        finishes downloading - the operator/singer doesn't have to babysit it.
+
+        Args:
+            item_id: ID of the queue item to replace
+            video_id: Opaque video ID of the replacement video
+            title: Replacement song title
+            duration_seconds: Duration in seconds (optional)
+            thumbnail_url: Thumbnail URL (optional)
+            channel: Channel/artist name (optional)
+
+        Returns:
+            True if successful, False if the item wasn't found
+        """
+        with self.lock:
+            item = self.queue_manager.get_item(item_id)
+            if not item:
+                self.logger.warning("Cannot replace: queue item %s not found", item_id)
+                return False
+
+            is_current = self.current_song_id == item_id
+
+            if is_current:
+                self.logger.info("Replacing currently playing song %s", item_id)
+                self._set_base_overlay("")
+                self._set_state(PlaybackState.STOPPED, "replacing current song")
+                self._awaiting_replace_item_id = item_id
+                self._show_message_screen(f"Loading new video for {item.user_name}...")
+
+            return self.queue_manager.replace_song(
+                item_id, video_id, title, duration_seconds, thumbnail_url, channel
+            )
 
     def _switch_to_song(self, song: QueueItem) -> bool:
         """
@@ -806,6 +999,13 @@ class PlaybackController:
                     self.logger.error("Current song ID %s not found", self.current_song_id)
                     return False
                 target_position = current_song.position + 1
+
+                # If the current song is last in the queue, "next" is simply
+                # the end of the queue - clamp so we don't request a
+                # position past the max (which reorder() would reject).
+                queue = self.queue_manager.get_queue()
+                max_position = max((q.position for q in queue), default=target_position)
+                target_position = min(target_position, max_position)
             else:
                 target_position = 1
 
@@ -887,51 +1087,76 @@ class PlaybackController:
     def on_song_end(self):
         """Called when current song ends (EOS)."""
         with self.lock:
-            finished_song_id = None
+            self._complete_current_song()
 
-            if self.current_song_id:
-                finished_song_id = self.current_song_id
+    def _complete_current_song(self, final_position: Optional[int] = None):
+        """
+        Finish the current song: record history, reset pitch/overlay, clear
+        current_song_id, and transition to the next song or idle.
 
-                # Get song data for history recording
-                finished_song = self.queue_manager.get_item(finished_song_id)
-                if finished_song:
-                    self.logger.info("Song ended: %s", finished_song.metadata.title)
+        Shared by the natural end-of-stream path (on_song_end) and the
+        early trailing-silence skip (_check_trailing_silence_skip), which
+        stops playback itself before calling this. Assumes lock is already
+        held.
 
-                    # Record history if threshold met
-                    final_position = self.streaming_controller.get_position() or 0
-                    if self.history_manager and self._should_record_history(
-                        finished_song.metadata.duration_seconds, final_position
-                    ):
-                        completion_pct = self._calculate_completion_percentage(
-                            final_position, finished_song.metadata.duration_seconds
-                        )
-                        self._record_performance_history(
-                            finished_song, final_position, final_position, completion_pct
-                        )
-                else:
-                    self.logger.warning("Finished song ID %s not found", finished_song_id)
+        Args:
+            final_position: Position to record for history purposes. If
+                None, queries the streaming controller's current position
+                (the natural-EOS case, where GStreamer is already stopped
+                at the real end of the file).
+        """
+        finished_song_id = None
+
+        if self.current_song_id:
+            finished_song_id = self.current_song_id
+
+            # Get song data for history recording
+            finished_song = self.queue_manager.get_item(finished_song_id)
+            if finished_song:
+                self.logger.info("Song ended: %s", finished_song.metadata.title)
+
+                record_position = (
+                    final_position
+                    if final_position is not None
+                    else (self.streaming_controller.get_position() or 0)
+                )
+
+                # Record history if threshold met
+                if self.history_manager and self._should_record_history(
+                    finished_song.metadata.duration_seconds, record_position
+                ):
+                    completion_pct = self._calculate_completion_percentage(
+                        record_position, finished_song.metadata.duration_seconds
+                    )
+                    self._record_performance_history(
+                        finished_song, record_position, record_position, completion_pct
+                    )
             else:
-                self.logger.info("Song ended: unknown")
+                self.logger.warning("Finished song ID %s not found", finished_song_id)
+        else:
+            self.logger.info("Song ended: unknown")
 
-            # Reset pitch
-            self.streaming_controller.set_pitch_shift(0)
+        # Reset pitch and volume gain
+        self.streaming_controller.set_pitch_shift(0)
+        self.streaming_controller.set_volume_gain_db(0.0)
 
-            # Clear the singer/up next overlay
-            self._set_base_overlay("")
+        # Clear the singer/up next overlay
+        self._set_base_overlay("")
 
-            # Clear current song ID (natural end of song, transitioning to next or idle)
-            # NOTE: This is one of only 2 places current_song_id is mutated:
-            #   1. _play_song() - sets it when starting playback
-            #   2. on_song_end() - clears it when song finishes naturally
-            # _stop_internal() does NOT clear it - the song is remembered for resume
-            # The queue cursor remains set to this song so _show_transition_or_end
-            # can find the next song relative to it.
-            self.current_song_id = None
+        # Clear current song ID (natural end of song, transitioning to next or idle)
+        # NOTE: This is one of only 2 places current_song_id is mutated:
+        #   1. _play_song() - sets it when starting playback
+        #   2. _complete_current_song() - clears it when song finishes
+        # _stop_internal() does NOT clear it - the song is remembered for resume
+        # The queue cursor remains set to this song so _show_transition_or_end
+        # can find the next song relative to it.
+        self.current_song_id = None
+        self._current_trim_point = None
 
-            # Check for next song and show transition.
-            # Use the cursor (which still points to the song that just finished)
-            # to find the next song by position.
-            self._show_transition_or_end(finished_song_id=finished_song_id)
+        # Check for next song and show transition.
+        # Use the cursor (which still points to the song that just finished)
+        # to find the next song by position.
+        self._show_transition_or_end(finished_song_id=finished_song_id)
 
     def _show_transition_or_end(self, finished_song_id: Optional[int] = None):
         """
@@ -1085,6 +1310,27 @@ class PlaybackController:
             self.streaming_controller.display_image(image_path)
         else:
             self.logger.warning("Could not generate transition screen")
+
+    def _show_message_screen(self, message: str):
+        """
+        Display a generic centered-message interstitial screen.
+
+        Used for transient system messages (e.g. "Loading new video for X...")
+        where the pipeline has no video loaded and a blank screen would
+        otherwise result.
+
+        Args:
+            message: Message to display
+        """
+        self.logger.info("Showing message screen: %s", message)
+
+        generator = self._get_interstitial_generator()
+        image_path = generator.generate_message_screen(message)
+
+        if image_path:
+            self.streaming_controller.display_image(image_path)
+        else:
+            self.logger.warning("Could not generate message screen")
 
     def _show_end_of_queue_screen(self, message: str = "That's all for now!"):
         """

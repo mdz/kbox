@@ -20,6 +20,7 @@ from support.app_factory import (
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
+from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackState
 from kbox.queue import QueueManager
@@ -96,6 +97,7 @@ def app_components(
     user_manager = UserManager(temp_db)
     queue_manager = QueueManager(temp_db, video_library=mock_video_library)
     history_manager = HistoryManager(temp_db)
+    favorites_manager = FavoritesManager(temp_db)
 
     yield {
         "config": config_manager,
@@ -105,6 +107,7 @@ def app_components(
         "streaming": mock_streaming,
         "playback": mock_playback,
         "history": history_manager,
+        "favorites": favorites_manager,
         "suggestion_engine": mock_suggestion_engine,
     }
 
@@ -122,6 +125,7 @@ def client(app_components):
         config_manager=app_components["config"],
         user_manager=app_components["user"],
         history_manager=app_components["history"],
+        favorites_manager=app_components["favorites"],
         suggestion_engine=app_components["suggestion_engine"],
         streaming_controller=app_components["streaming"],
     )
@@ -843,6 +847,113 @@ class TestUserEndpoints:
         assert response.json()["display_name"] == "Updated Name"
 
 
+class TestUserLookupAndClaimEndpoints:
+    """Tests for the name-keyed identity recognition flow.
+
+    See ldocs/GUEST_IDENTITY_CONTINUITY.md /
+    ldocs/GUEST_IDENTITY_TECHNICAL_DESIGN.md.
+    """
+
+    def test_lookup_unknown_name_returns_no_candidates(self, client):
+        response = client.get("/api/users/lookup", params={"name": "Nobody"})
+        assert response.status_code == 200
+        assert response.json()["candidates"] == []
+
+    def test_lookup_does_not_require_a_session(self, client):
+        """Lookup runs before any identity is established for this session."""
+        response = client.get("/api/users/lookup", params={"name": "Nobody"})
+        assert response.status_code == 200
+
+    def test_lookup_finds_existing_identity(self, client, alice):
+        response = client.get("/api/users/lookup", params={"name": "Alice"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["normalized_name"] == "alice"
+        assert len(data["candidates"]) == 1
+        candidate = data["candidates"][0]
+        assert candidate["user_id"] == ALICE_ID
+        assert candidate["display_name"] == "Alice"
+        assert candidate["icon"]
+        assert candidate["color"]
+        assert candidate["last_song_title"] is None
+
+    def test_lookup_matches_case_and_whitespace_insensitively(self, client, alice):
+        response = client.get("/api/users/lookup", params={"name": " alice  "})
+        assert len(response.json()["candidates"]) == 1
+
+    def test_lookup_returns_both_collisions(self, client, app_components):
+        app_components["user"].get_or_create_user("mike-1", "Mike")
+        app_components["user"].get_or_create_user("mike-2", "Mike")
+
+        response = client.get("/api/users/lookup", params={"name": "Mike"})
+        candidate_ids = {c["user_id"] for c in response.json()["candidates"]}
+        assert candidate_ids == {"mike-1", "mike-2"}
+
+    def test_lookup_includes_last_song(self, client, alice, app_components):
+        from kbox.models import SongMetadata, SongSettings
+
+        app_components["history"].record_performance(
+            user_id=ALICE_ID,
+            user_name="Alice",
+            video_id="youtube:abc",
+            metadata=SongMetadata(title="Take On Me"),
+            settings=SongSettings(),
+            played_duration_seconds=180,
+            playback_end_position_seconds=180,
+            completion_percentage=100.0,
+        )
+
+        response = client.get("/api/users/lookup", params={"name": "Alice"})
+        assert response.json()["candidates"][0]["last_song_title"] == "Take On Me"
+
+    def test_claim_new_identity_creates_and_binds(self, client):
+        response = client.post(
+            "/api/users/claim",
+            json={"user_id": "new-guest", "display_name": "Newbie"},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == "new-guest"
+
+        # Session is bound: can now access this user's own resources.
+        assert client.get("/api/favorites/new-guest").status_code == 200
+
+    def test_claim_can_switch_an_already_bound_session(self, client, alice, bob):
+        """Unlike POST /api/users, claim can rebind an already-bound session.
+
+        This is the deliberate difference from POST /api/users that makes
+        the recognition flow work: a guest whose localStorage was empty (so
+        they're going through name entry again) may have a stale session
+        binding from earlier, and explicitly recognizing themselves as an
+        existing identity should win over that stale binding.
+        """
+        set_user(client, ALICE_ID, "Alice")
+        assert client.get(f"/api/favorites/{ALICE_ID}").status_code == 200
+
+        response = client.post(
+            "/api/users/claim",
+            json={"user_id": BOB_ID, "display_name": "Bob"},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == BOB_ID
+
+        # Session now represents Bob, not Alice.
+        assert client.get(f"/api/favorites/{BOB_ID}").status_code == 200
+        assert client.get(f"/api/favorites/{ALICE_ID}").status_code == 403
+
+    def test_register_user_cannot_switch_an_already_bound_session(self, client, alice, bob):
+        """POST /api/users (unlike claim) never switches an already-bound session."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.post(
+            "/api/users",
+            json={"user_id": BOB_ID, "display_name": "Bob"},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == ALICE_ID  # unchanged, request ignored
+
+        assert client.get(f"/api/favorites/{ALICE_ID}").status_code == 200
+
+
 # =============================================================================
 # History Endpoints - Smoke Tests
 # =============================================================================
@@ -859,6 +970,99 @@ class TestHistoryEndpoints:
         response = client.get(f"/api/history/{ALICE_ID}")
         assert response.status_code == 200
         assert response.json()["history"] == []
+
+
+# =============================================================================
+# Favorites Endpoints
+# =============================================================================
+
+
+class TestFavoritesEndpoints:
+    """Tests for favorites (starred songs) endpoints."""
+
+    def test_add_favorite_requires_auth(self, client):
+        """POST /api/favorites - requires an authenticated session."""
+        response = client.post(
+            "/api/favorites",
+            json={"video_id": "youtube:vid1", "title": "Test Song"},
+        )
+        assert response.status_code == 401
+
+    def test_add_and_get_favorite(self, client):
+        """POST /api/favorites then GET /api/favorites/{user_id} - round trip."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.post(
+            "/api/favorites",
+            json={
+                "video_id": "youtube:vid1",
+                "title": "Test Song",
+                "duration_seconds": 180,
+                "thumbnail_url": "http://example.com/thumb.jpg",
+                "channel": "Test Channel",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "favorited"
+
+        response = client.get(f"/api/favorites/{ALICE_ID}")
+        assert response.status_code == 200
+        favorites = response.json()["favorites"]
+        assert len(favorites) == 1
+        assert favorites[0]["video_id"] == "youtube:vid1"
+        assert favorites[0]["title"] == "Test Song"
+        assert favorites[0]["duration_seconds"] == 180
+        assert favorites[0]["thumbnail_url"] == "http://example.com/thumb.jpg"
+        assert favorites[0]["channel"] == "Test Channel"
+
+    def test_get_favorites_empty(self, client):
+        """GET /api/favorites/{user_id} - empty favorites list."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.get(f"/api/favorites/{ALICE_ID}")
+        assert response.status_code == 200
+        assert response.json()["favorites"] == []
+
+    def test_get_favorites_requires_own_user(self, client):
+        """GET /api/favorites/{user_id} - cannot view another user's favorites."""
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.get(f"/api/favorites/{BOB_ID}")
+        assert response.status_code == 403
+
+    def test_remove_favorite(self, client):
+        """DELETE /api/favorites/{video_id} - unstars a song."""
+        set_user(client, ALICE_ID, "Alice")
+        client.post("/api/favorites", json={"video_id": "youtube:vid1", "title": "Test Song"})
+
+        response = client.delete("/api/favorites/youtube:vid1")
+        assert response.status_code == 200
+        assert response.json()["status"] == "unfavorited"
+
+        response = client.get(f"/api/favorites/{ALICE_ID}")
+        assert response.json()["favorites"] == []
+
+    def test_remove_favorite_requires_auth(self, client):
+        """DELETE /api/favorites/{video_id} - requires an authenticated session."""
+        response = client.delete("/api/favorites/youtube:vid1")
+        assert response.status_code == 401
+
+    def test_favorites_are_private_between_users(self, client, alice, bob):
+        """One user's favorites don't show up for another user."""
+        # Sessions are cookie-bound per client, so use separate clients per user
+        # (the same client re-registering as a different user_id is treated as
+        # impersonation and ignored - see register_user in server.py).
+        bob_client = TestClient(client.app)
+
+        set_user(client, ALICE_ID, "Alice")
+        client.post("/api/favorites", json={"video_id": "youtube:vid1", "title": "Alice's Song"})
+
+        set_user(bob_client, BOB_ID, "Bob")
+        bob_client.post("/api/favorites", json={"video_id": "youtube:vid2", "title": "Bob's Song"})
+
+        response = bob_client.get(f"/api/favorites/{BOB_ID}")
+        assert len(response.json()["favorites"]) == 1
+        assert response.json()["favorites"][0]["video_id"] == "youtube:vid2"
 
 
 # =============================================================================
@@ -894,6 +1098,7 @@ class TestGuestAuthentication:
             config_manager=app_components["config"],
             user_manager=app_components["user"],
             history_manager=app_components["history"],
+            favorites_manager=app_components["favorites"],
             streaming_controller=app_components["streaming"],
             access_token="test-secret-token-123",
             session_secret="test-session-secret",

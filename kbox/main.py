@@ -6,17 +6,22 @@ Initializes all components and starts the server.
 
 import logging
 import secrets
+import sys
 
 import uvicorn
 
 from .config_manager import ConfigManager
 from .database import Database
+from .favorites import FavoritesManager
 from .history import HistoryManager
 from .llm import LLMClient
+from .loudness import LoudnessAnalyzer
 from .overlay import generate_qr_code
 from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
 from .playback import PlaybackController
 from .queue import QueueManager
+from .session import SessionManager
+from .silence_detection import TrailingSilenceAnalyzer
 from .song_metadata import SongMetadataExtractor
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
@@ -27,8 +32,14 @@ from .web.server import create_app
 from .youtube import YouTubeAPI
 from .ytdlp import YtDlpClient
 
+# stream=sys.stdout: uvicorn's access logger and yt-dlp both write directly to
+# stdout, and log capture (e.g. `docker compose logs kbox > file`) only follows
+# each stream to its matching fd. Without this, basicConfig's stderr default
+# silently drops every app-level log line from a captured party log.
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,14 +104,31 @@ class KboxServer:
             llm_client=self.llm_client,
         )
 
+        # TrailingSilenceAnalyzer detects dead air at the end of downloaded
+        # tracks so playback can advance without waiting through it.
+        self.silence_analyzer = TrailingSilenceAnalyzer(self.database)
+
+        # LoudnessAnalyzer measures each track's loudness so volume can be
+        # normalized across songs from different karaoke sources.
+        self.loudness_analyzer = LoudnessAnalyzer(self.database)
+
+        # SessionManager tracks party sessions (bookended by clear-queue).
+        # Sessions are created lazily on first write — no startup-time
+        # initialization is required.
+        self.session_manager = SessionManager(self.database, self.config_manager)
+
         # Initialize queue manager with video library and metadata extractor
         self.queue_manager = QueueManager(
             self.database,
             video_library=self.video_library,
             metadata_extractor=self.metadata_extractor,
+            silence_analyzer=self.silence_analyzer,
+            loudness_analyzer=self.loudness_analyzer,
+            session_manager=self.session_manager,
         )
         self.user_manager = UserManager(self.database)
-        self.history_manager = HistoryManager(self.database)
+        self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
+        self.favorites_manager = FavoritesManager(self.database)
 
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(self.config_manager, self)
@@ -111,6 +139,8 @@ class KboxServer:
             self.streaming_controller,
             self.config_manager,
             self.history_manager,
+            silence_analyzer=self.silence_analyzer,
+            loudness_analyzer=self.loudness_analyzer,
         )
 
         # SuggestionEngine for AI-powered song recommendations
@@ -130,6 +160,7 @@ class KboxServer:
             self.config_manager,
             self.user_manager,
             self.history_manager,
+            self.favorites_manager,
             suggestion_engine=self.suggestion_engine,
             streaming_controller=self.streaming_controller,
             access_token=self.access_token,
@@ -194,7 +225,12 @@ class KboxServer:
         logger.info("=" * 60)
 
         # Use uvicorn Server API for better control over shutdown
-        config = uvicorn.Config(self.web_app, host="0.0.0.0", port=8000, log_level="info")
+        # access_log=False: RequestLogMiddleware already logs every request with the
+        # real user identity, which uvicorn's IP-based access log can't show behind
+        # the Cloudflare Tunnel sidecar (every guest appears to come from the same IP)
+        config = uvicorn.Config(
+            self.web_app, host="0.0.0.0", port=8000, log_level="info", access_log=False
+        )
         self.uvicorn_server = uvicorn.Server(config)
 
         # On macOS, run uvicorn in a thread so main thread can run NSRunLoop
