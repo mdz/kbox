@@ -44,6 +44,41 @@ def _get_gst():
         return None
 
 
+_GLib = None
+_glib_available: Optional[bool] = None
+
+
+def _get_glib():
+    """Lazily import GLib.  Returns None if unavailable."""
+    global _GLib, _glib_available
+    if _glib_available is True:
+        return _GLib
+    if _glib_available is False:
+        return None
+
+    try:
+        import gi
+
+        gi.require_version("GLib", "2.0")
+        from gi.repository import GLib as _GLib_module
+
+        _GLib = _GLib_module
+        _glib_available = True
+        return _GLib
+    except Exception as e:
+        logging.getLogger(__name__).error("Failed to import GLib: %s", e)
+        _glib_available = False
+        return None
+
+
+def _escape_overlay_text(text: str) -> str:
+    """Escape text for safe use in the textoverlay element's Pango markup."""
+    GLib = _get_glib()
+    if GLib is None:
+        return text
+    return GLib.markup_escape_text(text)
+
+
 class StreamingController:
     """Controls GStreamer pipeline for audio/video playback."""
 
@@ -987,7 +1022,7 @@ class StreamingController:
 
             try:
                 # Show the text
-                self.text_overlay.set_property("text", text)
+                self.text_overlay.set_property("text", _escape_overlay_text(text))
                 self.text_overlay.set_property("silent", False)
                 self.logger.info("Showing notification: %s", text)
 
@@ -1065,7 +1100,7 @@ class StreamingController:
 
             try:
                 if text:
-                    self.text_overlay.set_property("text", text)
+                    self.text_overlay.set_property("text", _escape_overlay_text(text))
                     self.text_overlay.set_property("silent", False)
                     self.logger.debug("Set persistent overlay text: %s", text)
                 else:
