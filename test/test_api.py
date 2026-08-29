@@ -1161,6 +1161,39 @@ class TestGuestAuthentication:
         response = client.get("/api/queue")
         assert response.status_code == 200
 
+    def test_rotated_token_is_read_live_from_config(self, auth_client, app_components):
+        """The middleware re-reads the token from config on each request, so a
+        token rotated after the app was created (e.g. by a new party session)
+        takes effect immediately without needing a restart."""
+        # Old token (captured at app-creation time) still works until rotated.
+        response = auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
+        assert response.status_code == 302
+
+        # Simulate SessionManager.end_and_rotate() persisting a new token.
+        app_components["config"].set("access_token", "rotated-token-456")
+
+        fresh_client = TestClient(auth_client.app)
+        response = fresh_client.get("/?key=test-secret-token-123", follow_redirects=False)
+        assert response.status_code == 401
+
+        response = fresh_client.get("/?key=rotated-token-456", follow_redirects=False)
+        assert response.status_code == 302
+
+    def test_existing_session_survives_token_rotation(self, auth_client, app_components):
+        """A guest already authenticated (session cookie) before rotation stays
+        authenticated after - rotation only affects new arrivals using the link."""
+        # Authenticate with the original token and establish a session cookie.
+        auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
+        response = auth_client.get("/")
+        assert response.status_code == 200
+
+        # Rotate the token (as end_and_rotate() would).
+        app_components["config"].set("access_token", "rotated-token-456")
+
+        # The already-authenticated session still works, no new key needed.
+        response = auth_client.get("/")
+        assert response.status_code == 200
+
 
 # =============================================================================
 # Suggestions Endpoints

@@ -348,6 +348,38 @@ class TestSessionManager:
         s = mgr.get_or_create_current()
         assert s.theme is None
 
+    def test_end_and_rotate_rotates_access_token(self, temp_db, mock_config):
+        mgr = SessionManager(temp_db, config_manager=mock_config)
+        mgr.get_or_create_current()
+        mgr.end_and_rotate()
+
+        token_calls = [c for c in mock_config.set.call_args_list if c.args[0] == "access_token"]
+        assert len(token_calls) == 1
+        new_token = token_calls[0].args[1]
+        assert isinstance(new_token, str)
+        assert len(new_token) > 10
+
+    def test_end_and_rotate_calls_token_callback_with_new_token(self, temp_db, mock_config):
+        received = []
+        mgr = SessionManager(temp_db, config_manager=mock_config, on_token_rotated=received.append)
+        mgr.end_and_rotate()
+        assert len(received) == 1
+        assert isinstance(received[0], str)
+
+    def test_end_and_rotate_without_config_manager_skips_token_rotation(self, temp_db):
+        received = []
+        mgr = SessionManager(temp_db, config_manager=None, on_token_rotated=received.append)
+        mgr.end_and_rotate()
+        assert received == []
+
+    def test_end_and_rotate_survives_callback_failure(self, temp_db, mock_config):
+        def boom(token):
+            raise RuntimeError("QR regeneration failed")
+
+        mgr = SessionManager(temp_db, config_manager=mock_config, on_token_rotated=boom)
+        s = mgr.end_and_rotate()
+        assert s.id > 0
+
 
 # ============================================================================
 # Queue/History integration
