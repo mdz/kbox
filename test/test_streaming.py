@@ -646,7 +646,7 @@ def test_set_overlay_text_escapes_pango_markup(controller):
     controller.set_overlay_text(raw)
 
     text = controller.text_overlay.get_property("text")
-    assert text == "Now singing: Ben &amp; Jerry's &lt;Encore&gt;"
+    assert text == "Now singing: Ben &amp; Jerry&apos;s &lt;Encore&gt;"
     assert controller.text_overlay.get_property("silent") is False
 
 
