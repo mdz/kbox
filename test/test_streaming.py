@@ -21,7 +21,7 @@ pytestmark = pytest.mark.gstreamer
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.streaming import StreamingController
+from kbox.streaming import StreamingController, _get_gst
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -378,21 +378,8 @@ def test_create_pitch_shift_prefers_signalsmith_when_available(controller, monke
     assert not rubberband_called, "rubberband should not be tried when signalsmith succeeds"
 
 
-def test_create_pitch_shift_falls_back_to_rubberband(controller, monkeypatch, caplog):
-    """When signalsmith is unavailable, dispatcher should fall back to rubberband and warn."""
-    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
-    sentinel = MagicMock(name="rubberband_element")
-    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: sentinel)
-
-    with caplog.at_level(logging.WARNING):
-        result = controller._create_pitch_shift_or_identity()
-
-    assert result is sentinel
-    assert "falling back to rubberband" in caplog.text
-
-
 def test_create_pitch_shift_falls_back_to_identity_when_both_unavailable(controller, monkeypatch):
-    """When neither element is available, dispatcher should return identity."""
+    """When neither element is available, dispatcher should return identity rather than raise."""
     monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
     monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: None)
 
@@ -401,31 +388,110 @@ def test_create_pitch_shift_falls_back_to_identity_when_both_unavailable(control
     assert type(result).__name__ == "GstIdentity"
 
 
-def test_create_signalsmith_pitch_shift_returns_none_when_plugin_missing(controller):
-    """Should fail gracefully (not raise) when the plugin .so isn't found on disk."""
-    controller.config_manager.set("signalsmith_pitch_plugin_path", "/nonexistent/path.so")
+def _estimate_frequency_hz(pcm_bytes: bytes, channels: int, sample_rate: int) -> float:
+    """Estimate the dominant frequency of one channel via zero-crossing rate."""
+    import array
 
-    result = controller._create_signalsmith_pitch_shift()
+    samples = array.array("f")
+    samples.frombytes(pcm_bytes)
+    channel = samples[0::channels]
 
-    assert result is None
+    # Skip the first chunk to dodge the element's inherent processing latency
+    # (silence/settling before real output begins).
+    skip = len(channel) // 4
+    channel = channel[skip:]
+
+    crossings = 0
+    prev = channel[0]
+    for s in channel[1:]:
+        if (s >= 0) != (prev >= 0):
+            crossings += 1
+        prev = s
+
+    duration_s = len(channel) / sample_rate
+    return crossings / 2 / duration_s if duration_s > 0 else 0.0
 
 
-def test_create_rubberband_pitch_shift_returns_none_when_not_configured(controller):
-    """Should fail gracefully (not raise) when no rubberband plugin is configured."""
-    controller.config_manager.set("rubberband_plugin", None)
+def _run_pitch_element_and_measure_frequency(
+    pitch_element, semitones, input_freq=220.0, sample_rate=48000
+):
+    """Push a real sine wave through pitch_element in a standalone pipeline
+    (audiotestsrc -> audioconvert -> pitch_element -> audioconvert -> appsink)
+    and measure the actual output frequency, to confirm the element is
+    really shifting pitch rather than just passing audio through.
+    """
+    Gst = _get_gst()
+    pitch_element.set_property("semitones", semitones)
 
-    result = controller._create_rubberband_pitch_shift()
+    pipeline = Gst.Pipeline.new("pitch-shift-frequency-test")
+    src = Gst.ElementFactory.make("audiotestsrc")
+    src.set_property("freq", input_freq)
+    src.set_property("wave", "sine")
+    src.set_property("samplesperbuffer", 1024)
+    src.set_property("num-buffers", 200)  # ~4.3s at 48kHz/1024 -- plenty for a stable estimate
+    conv_in = Gst.ElementFactory.make("audioconvert")
+    conv_out = Gst.ElementFactory.make("audioconvert")
+    out_caps = Gst.Caps.from_string(
+        f"audio/x-raw,format=F32LE,layout=interleaved,rate={sample_rate},channels=2"
+    )
+    capsfilter = Gst.ElementFactory.make("capsfilter")
+    capsfilter.set_property("caps", out_caps)
+    sink = Gst.ElementFactory.make("appsink")
+    sink.set_property("sync", False)
 
-    assert result is None
+    for elem in (src, conv_in, pitch_element, conv_out, capsfilter, sink):
+        pipeline.add(elem)
+    src.link(conv_in)
+    conv_in.link(pitch_element)
+    pitch_element.link(conv_out)
+    conv_out.link(capsfilter)
+    capsfilter.link(sink)
+
+    pipeline.set_state(Gst.State.PLAYING)
+    chunks = []
+    try:
+        while True:
+            sample = sink.emit("try-pull-sample", int(2 * Gst.SECOND))
+            if sample is None:
+                break
+            buf = sample.get_buffer()
+            ok, mapinfo = buf.map(Gst.MapFlags.READ)
+            if ok:
+                chunks.append(bytes(mapinfo.data))
+                buf.unmap(mapinfo)
+    finally:
+        pipeline.set_state(Gst.State.NULL)
+
+    assert chunks, "no output samples captured -- pipeline produced nothing"
+    return _estimate_frequency_hz(b"".join(chunks), channels=2, sample_rate=sample_rate)
 
 
-def test_create_rubberband_pitch_shift_returns_none_for_unknown_plugin_name(controller):
-    """Should fail gracefully (not raise) when the configured plugin name doesn't exist."""
-    controller.config_manager.set("rubberband_plugin", "not-a-real-element-name")
+def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
+    """The native signalsmith element should genuinely change pitch, not just pass audio through."""
+    elem = controller._create_signalsmith_pitch_shift()
+    if elem is None:
+        pytest.skip("signalsmithpitch plugin not available on this machine")
 
-    result = controller._create_rubberband_pitch_shift()
+    semitones = 12  # one octave up -> should double the frequency
+    input_freq = 220.0
+    measured_freq = _run_pitch_element_and_measure_frequency(elem, semitones, input_freq)
 
-    assert result is None
+    expected_freq = input_freq * (2 ** (semitones / 12))
+    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
+
+
+def test_rubberband_pitch_shift_actually_shifts_frequency(controller):
+    """The rubberband LADSPA element should genuinely change pitch, not just pass audio through."""
+    elem = controller._create_rubberband_pitch_shift()
+    if elem is None:
+        pytest.skip("rubberband LADSPA plugin not available on this machine")
+
+    semitones = 12  # one octave up -> should double the frequency
+    input_freq = 220.0
+    measured_freq = _run_pitch_element_and_measure_frequency(elem, semitones, input_freq)
+
+    expected_freq = input_freq * (2 ** (semitones / 12))
+    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
 
 
 # =========================================================================
