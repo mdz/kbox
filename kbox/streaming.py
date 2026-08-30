@@ -633,6 +633,7 @@ class StreamingController:
         if rubberband_elem is not None:
             return rubberband_elem
 
+        self.logger.warning("No pitch shift element available, falling back to identity")
         return Gst.ElementFactory.make("identity", "pitch_shift")
 
     def _reset_pitch_shift_element(self):
