@@ -525,14 +525,54 @@ class StreamingController:
         except Exception as e:
             self.logger.warning("Failed to update QR size for resolution: %s", e)
 
-    def _create_pitch_shift_or_identity(self):
-        """Create pitch shift element or identity passthrough if unavailable."""
+    def _create_signalsmith_pitch_shift(self):
+        """Try to create the native signalsmithpitch element, registering its
+        plugin .so from disk first if it isn't already known to GStreamer.
+
+        Returns the element, or None if unavailable (caller falls back to
+        rubberband/identity).
+        """
+        import os
+
+        Gst = _get_gst()
+
+        if Gst.ElementFactory.find("signalsmithpitch") is None:
+            plugin_path = self.config_manager.get("signalsmith_pitch_plugin_path") or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "native",
+                "gst-signalsmith-pitch",
+                "build",
+                "libgstsignalsmithpitch.so",
+            )
+            if not os.path.exists(plugin_path):
+                return None
+            try:
+                if Gst.Plugin.load_file(plugin_path) is None:
+                    return None
+            except Exception as e:
+                self.logger.warning("Failed to load signalsmithpitch plugin: %s", e)
+                return None
+
+        elem = Gst.ElementFactory.make("signalsmithpitch", "pitch_shift")
+        if elem is None:
+            return None
+
+        elem.set_property("semitones", self.pitch_shift_semitones)
+        self.logger.info("Using native signalsmithpitch element for pitch shift")
+        return elem
+
+    def _create_rubberband_pitch_shift(self):
+        """Try to create the rubberband LADSPA pitch-shift element.
+
+        Returns the element, or None if unavailable (caller falls back to
+        identity).
+        """
         Gst = _get_gst()
 
         rubberband_plugin = self.config_manager.get("rubberband_plugin")
         if not rubberband_plugin:
             self.logger.warning("No rubberband plugin configured, using identity")
-            return Gst.ElementFactory.make("identity", "pitch_shift")
+            return None
 
         try:
             elem = Gst.ElementFactory.make(rubberband_plugin, "pitch_shift")
@@ -544,7 +584,7 @@ class StreamingController:
                     rubberband_plugin,
                     os.environ.get("LADSPA_PATH", "not set"),
                 )
-                return Gst.ElementFactory.make("identity", "pitch_shift")
+                return None
 
             # Check if element supports semitones property
             element_type = type(elem).__name__
@@ -559,14 +599,42 @@ class StreamingController:
                     return elem
                 except Exception as e:
                     self.logger.warning("Pitch shift element lacks semitones property: %s", e)
-                    return Gst.ElementFactory.make("identity", "pitch_shift")
+                    return None
             else:
                 self.logger.warning("Pitch shift element lacks set_property")
-                return Gst.ElementFactory.make("identity", "pitch_shift")
+                return None
 
         except Exception as e:
             self.logger.warning("Error creating pitch shift: %s, using identity", e)
-            return Gst.ElementFactory.make("identity", "pitch_shift")
+            return None
+
+    def _create_pitch_shift_or_identity(self):
+        """Create pitch shift element or identity passthrough if unavailable.
+
+        Uses rubberband (LADSPA) by default -- the long-standing, burned-in
+        choice. The native signalsmithpitch element (correct FLUSH_STOP
+        handling, MIT licensed, but not yet burn-in tested) is opt-in via
+        the "pitch_shift_engine" config value ("signalsmith"); if its
+        plugin isn't present, falls back to rubberband with a warning.
+        """
+        Gst = _get_gst()
+
+        engine = self.config_manager.get("pitch_shift_engine") or "rubberband"
+
+        if engine == "signalsmith":
+            signalsmith_elem = self._create_signalsmith_pitch_shift()
+            if signalsmith_elem is not None:
+                return signalsmith_elem
+            self.logger.warning(
+                "signalsmithpitch element not available, falling back to rubberband LADSPA plugin"
+            )
+
+        rubberband_elem = self._create_rubberband_pitch_shift()
+        if rubberband_elem is not None:
+            return rubberband_elem
+
+        self.logger.warning("No pitch shift element available, falling back to identity")
+        return Gst.ElementFactory.make("identity", "pitch_shift")
 
     def _reset_pitch_shift_element(self):
         """
@@ -601,10 +669,18 @@ class StreamingController:
         immediately after setting playbin to NULL). Cheap enough at once per
         song load, and a no-op in practice when pitch shift is unavailable and
         the element is a plain identity passthrough.
+
+        Also a no-op for the native signalsmithpitch element: unlike the
+        LADSPA wrapper, it correctly resets its own internal state on the
+        NULL state transition (its stop() vfunc) and on FLUSH_STOP, so it
+        doesn't need this workaround.
         """
         Gst = _get_gst()
 
         if self.audio_bin is None or self.pitch_shift_element is None:
+            return
+
+        if type(self.pitch_shift_element).__name__ == "GstSignalsmithPitch":
             return
 
         ac1 = self.audio_bin.get_by_name("ac1")

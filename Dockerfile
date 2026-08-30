@@ -1,3 +1,19 @@
+# Build the native signalsmithpitch GStreamer plugin in its own stage, so the
+# GStreamer dev headers/compiler it needs don't end up in the final image.
+FROM debian:stable-slim AS gst-signalsmith-pitch-build
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        g++ \
+        pkg-config \
+        libgstreamer1.0-dev \
+        libgstreamer-plugins-base1.0-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY native/gst-signalsmith-pitch /build/native/gst-signalsmith-pitch
+RUN /build/native/gst-signalsmith-pitch/build.sh
+
 # Use Debian base for GStreamer system packages
 FROM debian:stable-slim
 
@@ -36,6 +52,11 @@ RUN --mount=type=bind,source=uv.lock,target=uv.lock \
 
 # Copy the project into the image
 COPY . /app
+
+# Bring in the pre-built native signalsmithpitch plugin (see build stage above)
+COPY --from=gst-signalsmith-pitch-build \
+    /build/native/gst-signalsmith-pitch/build/libgstsignalsmithpitch.so \
+    /app/native/gst-signalsmith-pitch/build/libgstsignalsmithpitch.so
 
 # Install the project itself (no cache - avoid shebang issues from host builds)
 RUN uv sync --locked

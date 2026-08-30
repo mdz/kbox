@@ -21,7 +21,7 @@ pytestmark = pytest.mark.gstreamer
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.streaming import StreamingController
+from kbox.streaming import StreamingController, _get_gst
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -353,6 +353,196 @@ def test_pitch_shift_during_playback(controller, test_video_3s):
     assert controller.pitch_shift_semitones == -2
 
     controller.stop_playback()
+
+
+# =========================================================================
+# Pitch Shift Element Selection Tests
+# =========================================================================
+
+
+def test_create_pitch_shift_defaults_to_rubberband_without_trying_signalsmith(
+    controller, monkeypatch
+):
+    """Default config (no pitch_shift_engine set) should go straight to
+    rubberband and never even try signalsmith -- this is what keeps the
+    signalsmith addition a no-op for existing deployments."""
+    signalsmith_called = []
+    monkeypatch.setattr(
+        controller,
+        "_create_signalsmith_pitch_shift",
+        lambda: signalsmith_called.append(True) or None,
+    )
+    sentinel = MagicMock(name="rubberband_element")
+    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: sentinel)
+
+    result = controller._create_pitch_shift_or_identity()
+
+    assert result is sentinel
+    assert not signalsmith_called, "signalsmith should not be tried unless opted into"
+
+
+def test_create_pitch_shift_uses_signalsmith_when_opted_in(controller, monkeypatch):
+    """With pitch_shift_engine=signalsmith, dispatcher should use it and not even try rubberband."""
+    # mock_config_manager's backing "database" is a bare autospec with no real
+    # storage, so config_manager.set()/.get() don't round-trip through it in
+    # tests -- patch .get directly instead of relying on that round-trip.
+    monkeypatch.setattr(
+        controller.config_manager,
+        "get",
+        lambda key, default=None: "signalsmith" if key == "pitch_shift_engine" else default,
+    )
+
+    sentinel = MagicMock(name="signalsmith_element")
+    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: sentinel)
+
+    rubberband_called = []
+    monkeypatch.setattr(
+        controller,
+        "_create_rubberband_pitch_shift",
+        lambda: rubberband_called.append(True) or None,
+    )
+
+    result = controller._create_pitch_shift_or_identity()
+
+    assert result is sentinel
+    assert not rubberband_called, "rubberband should not be tried when signalsmith succeeds"
+
+
+def test_create_pitch_shift_falls_back_to_identity_when_both_unavailable(controller, monkeypatch):
+    """When neither element is available, dispatcher should return identity rather than raise."""
+    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
+    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: None)
+
+    result = controller._create_pitch_shift_or_identity()
+
+    assert type(result).__name__ == "GstIdentity"
+
+
+def test_reset_pitch_shift_element_skips_signalsmith(controller, monkeypatch):
+    """The native element resets its own state via FLUSH_STOP/stop(), so the
+    destroy/recreate workaround (needed for rubberband's LADSPA wrapper)
+    should be skipped for it entirely -- not even touch the audio bin."""
+
+    class GstSignalsmithPitch:
+        pass
+
+    fake_element = GstSignalsmithPitch()
+    controller.pitch_shift_element = fake_element
+
+    def _fail_if_called():
+        raise AssertionError("should not recreate the element for signalsmith")
+
+    monkeypatch.setattr(controller, "_create_pitch_shift_or_identity", _fail_if_called)
+
+    controller._reset_pitch_shift_element()
+
+    assert controller.pitch_shift_element is fake_element
+
+
+def _estimate_frequency_hz(pcm_bytes: bytes, channels: int, sample_rate: int) -> float:
+    """Estimate the dominant frequency of one channel via zero-crossing rate."""
+    import array
+
+    samples = array.array("f")
+    samples.frombytes(pcm_bytes)
+    channel = samples[0::channels]
+
+    # Skip the first chunk to dodge the element's inherent processing latency
+    # (silence/settling before real output begins).
+    skip = len(channel) // 4
+    channel = channel[skip:]
+
+    crossings = 0
+    prev = channel[0]
+    for s in channel[1:]:
+        if (s >= 0) != (prev >= 0):
+            crossings += 1
+        prev = s
+
+    duration_s = len(channel) / sample_rate
+    return crossings / 2 / duration_s if duration_s > 0 else 0.0
+
+
+def _run_pitch_element_and_measure_frequency(
+    pitch_element, semitones, input_freq=220.0, sample_rate=48000
+):
+    """Push a real sine wave through pitch_element in a standalone pipeline
+    (audiotestsrc -> audioconvert -> pitch_element -> audioconvert -> appsink)
+    and measure the actual output frequency, to confirm the element is
+    really shifting pitch rather than just passing audio through.
+    """
+    Gst = _get_gst()
+    pitch_element.set_property("semitones", semitones)
+
+    pipeline = Gst.Pipeline.new("pitch-shift-frequency-test")
+    src = Gst.ElementFactory.make("audiotestsrc")
+    src.set_property("freq", input_freq)
+    src.set_property("wave", "sine")
+    src.set_property("samplesperbuffer", 1024)
+    src.set_property("num-buffers", 200)  # ~4.3s at 48kHz/1024 -- plenty for a stable estimate
+    conv_in = Gst.ElementFactory.make("audioconvert")
+    conv_out = Gst.ElementFactory.make("audioconvert")
+    out_caps = Gst.Caps.from_string(
+        f"audio/x-raw,format=F32LE,layout=interleaved,rate={sample_rate},channels=2"
+    )
+    capsfilter = Gst.ElementFactory.make("capsfilter")
+    capsfilter.set_property("caps", out_caps)
+    sink = Gst.ElementFactory.make("appsink")
+    sink.set_property("sync", False)
+
+    for elem in (src, conv_in, pitch_element, conv_out, capsfilter, sink):
+        pipeline.add(elem)
+    src.link(conv_in)
+    conv_in.link(pitch_element)
+    pitch_element.link(conv_out)
+    conv_out.link(capsfilter)
+    capsfilter.link(sink)
+
+    pipeline.set_state(Gst.State.PLAYING)
+    chunks = []
+    try:
+        while True:
+            sample = sink.emit("try-pull-sample", int(2 * Gst.SECOND))
+            if sample is None:
+                break
+            buf = sample.get_buffer()
+            ok, mapinfo = buf.map(Gst.MapFlags.READ)
+            if ok:
+                chunks.append(bytes(mapinfo.data))
+                buf.unmap(mapinfo)
+    finally:
+        pipeline.set_state(Gst.State.NULL)
+
+    assert chunks, "no output samples captured -- pipeline produced nothing"
+    return _estimate_frequency_hz(b"".join(chunks), channels=2, sample_rate=sample_rate)
+
+
+def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
+    """The native signalsmith element should genuinely change pitch, not just pass audio through."""
+    elem = controller._create_signalsmith_pitch_shift()
+    if elem is None:
+        pytest.skip("signalsmithpitch plugin not available on this machine")
+
+    semitones = 12  # one octave up -> should double the frequency
+    input_freq = 220.0
+    measured_freq = _run_pitch_element_and_measure_frequency(elem, semitones, input_freq)
+
+    expected_freq = input_freq * (2 ** (semitones / 12))
+    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
+
+
+def test_rubberband_pitch_shift_actually_shifts_frequency(controller):
+    """The rubberband LADSPA element should genuinely change pitch, not just pass audio through."""
+    elem = controller._create_rubberband_pitch_shift()
+    if elem is None:
+        pytest.skip("rubberband LADSPA plugin not available on this machine")
+
+    semitones = 12  # one octave up -> should double the frequency
+    input_freq = 220.0
+    measured_freq = _run_pitch_element_and_measure_frequency(elem, semitones, input_freq)
+
+    expected_freq = input_freq * (2 ** (semitones / 12))
+    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
 
 
 # =========================================================================

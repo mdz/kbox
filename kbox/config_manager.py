@@ -249,6 +249,8 @@ class ConfigManager:
         "gstreamer_source": None,  # Overridden by platform defaults
         "gstreamer_sink": None,  # Overridden by platform defaults
         "rubberband_plugin": None,  # Overridden by platform defaults
+        "pitch_shift_engine": "rubberband",  # "rubberband" (default, burned-in) or "signalsmith" (opt-in, not yet burn-in tested)
+        "signalsmith_pitch_plugin_path": None,  # Path to libgstsignalsmithpitch.so; None = auto-detect relative to repo
         "youtube_api_key": None,
         "cache_directory": None,  # Will default to ~/.kbox/library
         "cache_max_size_gb": "10",  # Max cache size in GB (oldest unused videos evicted when exceeded)
