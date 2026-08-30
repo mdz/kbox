@@ -360,8 +360,38 @@ def test_pitch_shift_during_playback(controller, test_video_3s):
 # =========================================================================
 
 
-def test_create_pitch_shift_prefers_signalsmith_when_available(controller, monkeypatch):
-    """Dispatcher should use signalsmith and not even try rubberband."""
+def test_create_pitch_shift_defaults_to_rubberband_without_trying_signalsmith(
+    controller, monkeypatch
+):
+    """Default config (no pitch_shift_engine set) should go straight to
+    rubberband and never even try signalsmith -- this is what keeps the
+    signalsmith addition a no-op for existing deployments."""
+    signalsmith_called = []
+    monkeypatch.setattr(
+        controller,
+        "_create_signalsmith_pitch_shift",
+        lambda: signalsmith_called.append(True) or None,
+    )
+    sentinel = MagicMock(name="rubberband_element")
+    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: sentinel)
+
+    result = controller._create_pitch_shift_or_identity()
+
+    assert result is sentinel
+    assert not signalsmith_called, "signalsmith should not be tried unless opted into"
+
+
+def test_create_pitch_shift_uses_signalsmith_when_opted_in(controller, monkeypatch):
+    """With pitch_shift_engine=signalsmith, dispatcher should use it and not even try rubberband."""
+    # mock_config_manager's backing "database" is a bare autospec with no real
+    # storage, so config_manager.set()/.get() don't round-trip through it in
+    # tests -- patch .get directly instead of relying on that round-trip.
+    monkeypatch.setattr(
+        controller.config_manager,
+        "get",
+        lambda key, default=None: "signalsmith" if key == "pitch_shift_engine" else default,
+    )
+
     sentinel = MagicMock(name="signalsmith_element")
     monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: sentinel)
 
@@ -386,6 +416,27 @@ def test_create_pitch_shift_falls_back_to_identity_when_both_unavailable(control
     result = controller._create_pitch_shift_or_identity()
 
     assert type(result).__name__ == "GstIdentity"
+
+
+def test_reset_pitch_shift_element_skips_signalsmith(controller, monkeypatch):
+    """The native element resets its own state via FLUSH_STOP/stop(), so the
+    destroy/recreate workaround (needed for rubberband's LADSPA wrapper)
+    should be skipped for it entirely -- not even touch the audio bin."""
+
+    class GstSignalsmithPitch:
+        pass
+
+    fake_element = GstSignalsmithPitch()
+    controller.pitch_shift_element = fake_element
+
+    def _fail_if_called():
+        raise AssertionError("should not recreate the element for signalsmith")
+
+    monkeypatch.setattr(controller, "_create_pitch_shift_or_identity", _fail_if_called)
+
+    controller._reset_pitch_shift_element()
+
+    assert controller.pitch_shift_element is fake_element
 
 
 def _estimate_frequency_hz(pcm_bytes: bytes, channels: int, sample_rate: int) -> float:

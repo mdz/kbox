@@ -611,18 +611,23 @@ class StreamingController:
     def _create_pitch_shift_or_identity(self):
         """Create pitch shift element or identity passthrough if unavailable.
 
-        Prefers the native signalsmithpitch element (correct FLUSH_STOP
-        handling, MIT licensed) when its plugin is present; falls back to
-        the rubberband LADSPA element, then identity.
+        Uses rubberband (LADSPA) by default -- the long-standing, burned-in
+        choice. The native signalsmithpitch element (correct FLUSH_STOP
+        handling, MIT licensed, but not yet burn-in tested) is opt-in via
+        the "pitch_shift_engine" config value ("signalsmith"); if its
+        plugin isn't present, falls back to rubberband with a warning.
         """
         Gst = _get_gst()
 
-        signalsmith_elem = self._create_signalsmith_pitch_shift()
-        if signalsmith_elem is not None:
-            return signalsmith_elem
-        self.logger.warning(
-            "signalsmithpitch element not available, falling back to rubberband LADSPA plugin"
-        )
+        engine = self.config_manager.get("pitch_shift_engine") or "rubberband"
+
+        if engine == "signalsmith":
+            signalsmith_elem = self._create_signalsmith_pitch_shift()
+            if signalsmith_elem is not None:
+                return signalsmith_elem
+            self.logger.warning(
+                "signalsmithpitch element not available, falling back to rubberband LADSPA plugin"
+            )
 
         rubberband_elem = self._create_rubberband_pitch_shift()
         if rubberband_elem is not None:
@@ -663,10 +668,18 @@ class StreamingController:
         immediately after setting playbin to NULL). Cheap enough at once per
         song load, and a no-op in practice when pitch shift is unavailable and
         the element is a plain identity passthrough.
+
+        Also a no-op for the native signalsmithpitch element: unlike the
+        LADSPA wrapper, it correctly resets its own internal state on the
+        NULL state transition (its stop() vfunc) and on FLUSH_STOP, so it
+        doesn't need this workaround.
         """
         Gst = _get_gst()
 
         if self.audio_bin is None or self.pitch_shift_element is None:
+            return
+
+        if type(self.pitch_shift_element).__name__ == "GstSignalsmithPitch":
             return
 
         ac1 = self.audio_bin.get_by_name("ac1")
