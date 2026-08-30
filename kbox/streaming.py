@@ -1287,8 +1287,11 @@ class StreamingController:
         # Mark that we're showing an interstitial
         self._is_interstitial = True
 
-        # Stop any current playback
-        self.playbin.set_state(Gst.State.NULL)
+        # Stop any current playback. READY (not NULL) keeps kmssink holding
+        # its DRM plane instead of releasing it -- see load_file for the
+        # same reasoning; every transition passes through here to show the
+        # interstitial, so this is the NULL call that actually caused #94.
+        self.playbin.set_state(Gst.State.READY)
 
         # Set the image URI - GStreamer will use imagefreeze for static images
         self.playbin.set_property("uri", f"file://{image_path}")
