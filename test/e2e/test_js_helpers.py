@@ -60,7 +60,8 @@ def test_interval_names(mobile_page, live_app):
 
     results = mobile_page.evaluate(
         """async (inputs) => {
-            const { getIntervalName } = await import('/static/js/pitch.js');
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { getIntervalName } = await import(new URL('./pitch.js', appSrc).href);
             return inputs.map(getIntervalName);
         }""",
         inputs,
@@ -100,7 +101,8 @@ def test_format_slider_value(mobile_page, live_app):
 
     results = mobile_page.evaluate(
         """async (cases) => {
-            const { formatSliderValue } = await import('/static/js/config.js');
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { formatSliderValue } = await import(new URL('./config.js', appSrc).href);
             return cases.map(({value, format}) => formatSliderValue(value, format));
         }""",
         cases,
@@ -125,7 +127,8 @@ def test_escape_html_inert(mobile_page, live_app):
 
     result = mobile_page.evaluate(
         """async () => {
-            const { escapeHtml } = await import('/static/js/utils.js');
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { escapeHtml } = await import(new URL('./utils.js', appSrc).href);
             const payload = '<script>window.__xss_triggered = true;<\\/script>';
             const escaped = escapeHtml(payload);
 
