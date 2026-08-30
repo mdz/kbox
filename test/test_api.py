@@ -795,6 +795,45 @@ class TestConfigEndpoints:
         # Verify reinitialize_pipeline was called on the same controller
         streaming.reinitialize_pipeline.assert_called_once()
 
+    def test_get_config_masks_password_fields(self, client):
+        """GET /api/config - password-shaped fields never return the raw value."""
+        set_operator(client)
+        client.patch("/api/config", json={"key": "llm_api_key", "value": "sk-real-secret"})
+        client.patch("/api/config", json={"key": "operator_pin", "value": "5678"})
+
+        response = client.get("/api/config")
+        assert response.status_code == 200
+        values = response.json()["values"]
+
+        assert values["llm_api_key"] == "•" * 8
+        assert values["operator_pin"] == "•" * 8
+        assert "sk-real-secret" not in values.values()
+        assert "5678" not in values.values()
+
+    def test_get_config_masks_internal_secret_keys_not_in_schema(self, client):
+        """GET /api/config - session_secret/access_token are masked even though
+        they aren't part of CONFIG_SCHEMA and so don't appear as editable fields."""
+        set_operator(client)
+        client.patch("/api/config", json={"key": "session_secret", "value": "real-session-secret"})
+        client.patch("/api/config", json={"key": "access_token", "value": "real-access-token"})
+
+        response = client.get("/api/config")
+        values = response.json()["values"]
+
+        assert values["session_secret"] == "•" * 8
+        assert values["access_token"] == "•" * 8
+
+    def test_patch_config_still_stores_real_secret_value(self, client, app_components):
+        """PATCH /api/config - the write path is unaffected by GET-side masking."""
+        set_operator(client)
+        response = client.patch(
+            "/api/config", json={"key": "llm_api_key", "value": "sk-real-secret"}
+        )
+        assert response.status_code == 200
+
+        config_manager = app_components["config"]
+        assert config_manager.get("llm_api_key") == "sk-real-secret"
+
     def test_update_video_config_restarts_streaming(self, client, mock_streaming):
         """PATCH /api/config - video overlay config changes reinitialize pipeline."""
         set_operator(client)
