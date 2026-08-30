@@ -327,9 +327,13 @@ def create_app(
                 if request.session.get("guest_authenticated"):
                     return await call_next(request)
 
-                # Check for access token in query params
+                # Check for access token in query params. Read the current
+                # value from config on each request (not the `access_token`
+                # closure variable) since it can be rotated live when a new
+                # party session starts.
                 key = request.query_params.get("key")
-                if key == access_token:
+                current_token = config_manager.get("access_token") or access_token
+                if key == current_token:
                     # Valid token - set session and redirect to clean URL
                     request.session["guest_authenticated"] = True
                     # Redirect to same path without the key param

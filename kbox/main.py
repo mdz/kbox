@@ -112,10 +112,17 @@ class KboxServer:
         # normalized across songs from different karaoke sources.
         self.loudness_analyzer = LoudnessAnalyzer(self.database)
 
+        # web_url is set once run() determines the external URL; used to
+        # regenerate the QR code when the access token rotates mid-run.
+        self.web_url = None
+
         # SessionManager tracks party sessions (bookended by clear-queue).
         # Sessions are created lazily on first write — no startup-time
-        # initialization is required.
-        self.session_manager = SessionManager(self.database, self.config_manager)
+        # initialization is required. Rotating the access token is part of
+        # that same ritual; the callback keeps the live QR overlay in sync.
+        self.session_manager = SessionManager(
+            self.database, self.config_manager, on_token_rotated=self._on_access_token_rotated
+        )
 
         # Initialize queue manager with video library and metadata extractor
         self.queue_manager = QueueManager(
@@ -173,6 +180,27 @@ class KboxServer:
 
         logger.info("kbox server initialized")
 
+    def _regenerate_qr_overlay(self, access_token: str):
+        """Generate a QR code for the given access token and push it to the
+        live display overlay. No-op if the web URL isn't known yet (i.e.
+        called before run() has determined it)."""
+        if not self.web_url:
+            return
+        qr_url = f"{self.web_url}?key={access_token}"
+        cache_dir = self.config_manager.get("cache_directory")
+        qr_path = generate_qr_code(qr_url, size=100, cache_dir=cache_dir)
+        if qr_path:
+            self.streaming_controller.update_qr_overlay(qr_path)
+            logger.info("QR code overlay configured: %s", qr_url)
+        else:
+            logger.warning("QR code generation failed, overlay disabled")
+
+    def _on_access_token_rotated(self, new_token: str):
+        """Callback for SessionManager: keep self.access_token and the live
+        QR overlay in sync when a new party session rotates the token."""
+        self.access_token = new_token
+        self._regenerate_qr_overlay(new_token)
+
     def run(self):
         """Start the server."""
         logger.info("Starting kbox server...")
@@ -206,15 +234,11 @@ class KboxServer:
                 web_url = f"http://{local_ip}:8000"
                 logger.info("Using auto-detected URL: %s", web_url)
 
+        self.web_url = web_url
+
         # Generate QR code for the web UI URL (with access token for remote access)
         qr_url = f"{web_url}?key={self.access_token}"
-        cache_dir = self.config_manager.get("cache_directory")
-        qr_path = generate_qr_code(qr_url, size=100, cache_dir=cache_dir)
-        if qr_path:
-            self.streaming_controller.update_qr_overlay(qr_path)
-            logger.info("QR code overlay configured")
-        else:
-            logger.warning("QR code generation failed, overlay disabled")
+        self._regenerate_qr_overlay(self.access_token)
 
         # Show initial idle screen
         self.playback_controller.show_idle_screen()
