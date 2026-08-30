@@ -7,6 +7,7 @@ Provides REST API and web UI for queue management and playback control.
 import logging
 from typing import Optional
 
+import itsdangerous
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -28,6 +29,43 @@ logger = logging.getLogger(__name__)
 # Root logger stays at INFO (DEBUG globally is too spammy from third-party
 # libs like httpx/litellm); opt this logger in on its own.
 logger.setLevel(logging.DEBUG)
+
+
+class _ClockTolerantTimestampSigner(itsdangerous.TimestampSigner):
+    """Accepts a session cookie whose embedded signing timestamp is later
+    than the server's current clock, instead of treating it as expired.
+
+    Hosts without a battery-backed RTC (e.g. a Raspberry Pi) boot with the
+    system clock set to a stale time until NTP catches up. Any guest
+    session cookie signed before that reboot then looks "signed in the
+    future" to itsdangerous, which raises SignatureExpired the same as a
+    tampered or genuinely-too-old cookie -- and SessionMiddleware responds
+    by deleting the cookie from the guest's browser, permanently logging
+    them out. The HMAC already proves the cookie wasn't tampered with, so
+    a clock that's merely behind isn't a reason to distrust it.
+    """
+
+    def unsign(self, signed_value, max_age=None, return_timestamp=False):
+        try:
+            return super().unsign(signed_value, max_age=max_age, return_timestamp=return_timestamp)
+        except itsdangerous.SignatureExpired as exc:
+            if exc.date_signed is not None:
+                age = self.get_timestamp() - int(exc.date_signed.timestamp())
+                if age < 0:
+                    return super().unsign(
+                        signed_value, max_age=None, return_timestamp=return_timestamp
+                    )
+            raise
+
+
+class ClockTolerantSessionMiddleware(SessionMiddleware):
+    """SessionMiddleware that won't log guests out just because the
+    server's clock is temporarily behind where it was when the cookie was
+    signed. See _ClockTolerantTimestampSigner."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.signer.__class__ = _ClockTolerantTimestampSigner
 
 
 # Request models
@@ -345,7 +383,7 @@ def create_app(
         app.add_middleware(GuestAuthMiddleware)
 
     # SessionMiddleware must be added AFTER GuestAuthMiddleware (runs first due to LIFO)
-    app.add_middleware(SessionMiddleware, secret_key=secret_key)
+    app.add_middleware(ClockTolerantSessionMiddleware, secret_key=secret_key)
 
     # Templates
     templates = Jinja2Templates(directory="kbox/web/templates")

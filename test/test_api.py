@@ -8,6 +8,7 @@ Tests all API endpoints with:
 
 import os
 import tempfile
+import unittest.mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1159,6 +1160,36 @@ class TestGuestAuthentication:
         assert response.status_code == 200
 
         response = client.get("/api/queue")
+        assert response.status_code == 200
+
+    def test_session_survives_server_clock_behind_signing_time(self, auth_client):
+        """A session stays valid if the server's clock is temporarily behind
+        where it was when the cookie was signed.
+
+        Regression test: hosts without a battery-backed RTC (e.g. a
+        Raspberry Pi) can boot with the system clock set to a stale time
+        until NTP catches up. itsdangerous treats a cookie signed "in the
+        future" relative to the server's clock as expired, and
+        SessionMiddleware responds by deleting the cookie -- permanently
+        logging out every guest on the next reboot. See ClockTolerantSessionMiddleware.
+        """
+        # Authenticate normally - cookie is signed at the current (real) time.
+        auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
+        response = auth_client.get("/api/queue")
+        assert response.status_code == 200
+
+        # Simulate the server clock jumping backwards (e.g. a reboot without
+        # an RTC, before NTP sync completes).
+        import time as time_module
+
+        real_time = time_module.time()
+        with unittest.mock.patch("time.time", return_value=real_time - 3600):
+            response = auth_client.get("/api/queue")
+            assert response.status_code == 200
+
+        # The session must still be usable once the clock is correct again -
+        # i.e. the cookie was not deleted from the client during the skew.
+        response = auth_client.get("/api/queue")
         assert response.status_code == 200
 
 
