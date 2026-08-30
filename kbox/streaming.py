@@ -751,9 +751,12 @@ class StreamingController:
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
 
-        # Set to NULL to reset pipeline
-        self.playbin.set_state(Gst.State.NULL)
-        self.logger.debug("load_file: after NULL")
+        # Drop to READY (not NULL) to reset for the new URI. READY releases
+        # streaming resources without tearing down the video sink, so kmssink
+        # keeps holding its DRM plane across the transition instead of
+        # releasing it and letting the console show through momentarily.
+        self.playbin.set_state(Gst.State.READY)
+        self.logger.debug("load_file: after READY")
 
         # Give the pitch shifter a fresh LADSPA instance. Nothing else clears
         # its internal buffer, so without this the tail of the previous song
