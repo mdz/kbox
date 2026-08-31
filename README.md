@@ -50,6 +50,7 @@ All settings are managed through the web UI with a schema-driven settings panel:
 - [YouTube IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) for the display page
 - [YouTube Data API v3](https://developers.google.com/youtube/v3) for search
 - [LiteLLM](https://github.com/BerriAI/litellm) for AI suggestions and metadata extraction
+- `signalsmithpitch` — a native GStreamer element (`native/gst-signalsmith-pitch/`) for real-time pitch shifting, built on [signalsmith-stretch](https://github.com/Signalsmith-Audio/signalsmith-stretch)
 
 ## Quick Start (Docker)
 
@@ -68,6 +69,14 @@ uv run python -m kbox.main
 ```
 
 Open `http://localhost:8000` on your phone to queue songs, and `http://localhost:8000/display` on your TV/monitor for the fullscreen karaoke display. Configure your YouTube API key in Settings (see `docs/setup/youtube-api.md` if you need help getting one).
+
+Pitch shifting requires the native `signalsmithpitch` GStreamer plugin, which the Docker image builds automatically but a native install does not — without it kbox falls back to no pitch shifting. Build it once with:
+
+```bash
+native/gst-signalsmith-pitch/build.sh
+```
+
+See `native/gst-signalsmith-pitch/README.md` for build requirements.
 
 ## Platform Support
 
