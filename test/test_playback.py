@@ -1390,7 +1390,7 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 60
 
         result = pc.seek_relative(30)
-        assert result is True
+        assert result["status"] == "seeked"
         mock_streaming_controller.seek.assert_called_with(90)
 
     def test_seek_backward(
@@ -1409,7 +1409,7 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 60
 
         result = pc.seek_relative(-30)
-        assert result is True
+        assert result["status"] == "seeked"
         mock_streaming_controller.seek.assert_called_with(30)
 
     def test_seek_backward_clamps_to_zero(
@@ -1428,7 +1428,7 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 10
 
         result = pc.seek_relative(-50)
-        assert result is True
+        assert result["status"] == "seeked"
         mock_streaming_controller.seek.assert_called_with(0)
 
     def test_seek_forward_clamps_to_duration(
@@ -1447,11 +1447,11 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 170
 
         result = pc.seek_relative(30)
-        assert result is True
+        assert result["status"] == "seeked"
         # Should clamp to duration - 1 = 179
         mock_streaming_controller.seek.assert_called_with(179)
 
-    def test_seek_when_not_playing_returns_false(
+    def test_seek_when_not_playing_is_nothing_playing(
         self, mock_queue_manager, mock_streaming_controller, mock_config_manager
     ):
         mock_history = Mock()
@@ -1459,7 +1459,7 @@ class TestSeekRelative:
             mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
         )
         # State is IDLE, no song playing
-        assert pc.seek_relative(10) is False
+        assert pc.seek_relative(10)["status"] == "nothing_playing"
 
     def test_seek_when_no_current_song(
         self, mock_queue_manager, mock_streaming_controller, mock_config_manager
@@ -1468,7 +1468,7 @@ class TestSeekRelative:
         pc = PlaybackController(
             mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
         )
-        assert pc.seek_relative(10) is False
+        assert pc.seek_relative(10)["status"] == "nothing_playing"
 
 
 class TestShutdown:

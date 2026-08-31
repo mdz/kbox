@@ -1469,26 +1469,28 @@ class PlaybackController:
             self.logger.info("Set pitch to %s semitones for current song", semitones)
             return True
 
-    def restart(self) -> bool:
+    def restart(self) -> Dict[str, Any]:
         """
         Restart the current song from the beginning.
 
         Returns:
-            True if successful, False if no current song or seek failed
+            Dictionary with status information:
+            - status: 'restarted', 'nothing_playing', or 'error'
         """
         with self.lock:
-            if not self.current_song_id:
-                self.logger.warning("No current song to restart")
-                return False
-
-            if self.state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
-                self.logger.warning("Cannot restart: not playing or paused")
-                return False
+            if not self.current_song_id or self.state not in (
+                PlaybackState.PLAYING,
+                PlaybackState.PAUSED,
+            ):
+                self.logger.debug("Nothing playing, nothing to restart")
+                return {"status": "nothing_playing"}
 
             self.logger.info("Restarting song from beginning")
-            return self.streaming_controller.seek(0)
+            if not self.streaming_controller.seek(0):
+                return {"status": "error"}
+            return {"status": "restarted"}
 
-    def seek_relative(self, delta_seconds: int) -> bool:
+    def seek_relative(self, delta_seconds: int) -> Dict[str, Any]:
         """
         Seek forward or backward by a relative amount.
 
@@ -1496,16 +1498,16 @@ class PlaybackController:
             delta_seconds: Seconds to seek (positive = forward, negative = backward)
 
         Returns:
-            True if successful, False otherwise
+            Dictionary with status information:
+            - status: 'seeked', 'nothing_playing', or 'error'
         """
         with self.lock:
-            if not self.current_song_id:
-                self.logger.warning("No current song to seek")
-                return False
-
-            if self.state not in (PlaybackState.PLAYING, PlaybackState.PAUSED):
-                self.logger.warning("Cannot seek: not playing or paused")
-                return False
+            if not self.current_song_id or self.state not in (
+                PlaybackState.PLAYING,
+                PlaybackState.PAUSED,
+            ):
+                self.logger.debug("Nothing playing, nothing to seek")
+                return {"status": "nothing_playing"}
 
             current_position = self.streaming_controller.get_position()
             if current_position is None:
@@ -1526,7 +1528,9 @@ class PlaybackController:
                 new_position,
                 delta_seconds,
             )
-            return self.streaming_controller.seek(new_position)
+            if not self.streaming_controller.seek(new_position):
+                return {"status": "error"}
+            return {"status": "seeked", "position": new_position}
 
     def _should_record_history(self, duration_seconds: Optional[int], played_seconds: int) -> bool:
         """
