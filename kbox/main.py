@@ -187,8 +187,8 @@ class KboxServer:
         if not self.web_url:
             return
         qr_url = f"{self.web_url}?key={access_token}"
-        cache_dir = self.config_manager.get("cache_directory")
-        qr_path = generate_qr_code(qr_url, size=100, cache_dir=cache_dir)
+        qr_dir = str(self.config_manager.get_app_data_dir())
+        qr_path = generate_qr_code(qr_url, output_dir=qr_dir, size=100)
         if qr_path:
             self.streaming_controller.update_qr_overlay(qr_path)
             logger.info("QR code overlay configured: %s", qr_url)

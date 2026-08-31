@@ -48,11 +48,12 @@ def mock_streaming_controller():
 
 
 @pytest.fixture
-def mock_config_manager():
+def mock_config_manager(tmp_path):
     """Create a mock ConfigManager."""
     config = Mock()
     # Configure get() to return None for unknown keys, or specific values
     config.get.return_value = None
+    config.get_cache_directory.return_value = tmp_path
     return config
 
 
@@ -262,6 +263,74 @@ def test_skip_shows_interstitial_before_playing(
     # Next song is staged but not yet started
     assert playback_controller._next_song_pending == mock_next_song
     mock_streaming_controller.load_file.assert_not_called()
+
+
+def test_skip_clears_base_overlay(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that skipping clears the "Now singing" overlay.
+
+    The overlay describes who is performing *now*, so it must not survive
+    into the transition interstitial or the start of the next song. It
+    should come back on its own once the next song's monitor loop re-sets
+    it (not exercised here since the monitor thread is disabled in tests).
+    """
+    current_song = create_mock_queue_item(
+        id=1,
+        title="Current Song",
+        user_name="Alice",
+        video_id="youtube:abc123",
+        duration_seconds=180,
+        pitch_semitones=0,
+    )
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    playback_controller._set_base_overlay("Now singing: Alice")
+    mock_streaming_controller.set_overlay_text.reset_mock()
+
+    mock_queue_manager.get_item.return_value = current_song
+
+    mock_next_song = create_mock_queue_item(
+        id=2,
+        title="Next Song",
+        user_name="Bob",
+        content_path="/path/to/next.mp4",
+        pitch_semitones=0,
+        content_status=QueueManager.STATUS_READY,
+    )
+    mock_queue_manager.get_song_at_offset.return_value = mock_next_song
+
+    playback_controller.skip()
+
+    mock_streaming_controller.set_overlay_text.assert_called_with("")
+    assert playback_controller._base_overlay_text == ""
+
+
+def test_natural_end_of_song_clears_base_overlay(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that a song finishing naturally also clears the "Now singing" overlay."""
+    current_song = create_mock_queue_item(
+        id=1,
+        title="Current Song",
+        user_name="Alice",
+        video_id="youtube:abc123",
+        duration_seconds=180,
+        pitch_semitones=0,
+    )
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    playback_controller._set_base_overlay("Now singing: Alice")
+    mock_streaming_controller.set_overlay_text.reset_mock()
+
+    mock_queue_manager.get_item.return_value = current_song
+    # No next song - queue exhausted after this one
+    mock_queue_manager.get_song_at_offset.return_value = None
+
+    playback_controller.on_song_end()
+
+    mock_streaming_controller.set_overlay_text.assert_called_with("")
+    assert playback_controller._base_overlay_text == ""
 
 
 def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streaming_controller):

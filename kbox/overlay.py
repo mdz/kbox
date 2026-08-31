@@ -6,20 +6,19 @@ Provides QR code generation and overlay text formatting.
 
 import logging
 import os
-import tempfile
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-def generate_qr_code(url: str, size: int = 100, cache_dir: Optional[str] = None) -> Optional[str]:
+def generate_qr_code(url: str, output_dir: str, size: int = 100) -> Optional[str]:
     """
     Generate a QR code PNG image for the given URL.
 
     Args:
         url: The URL to encode in the QR code
+        output_dir: Directory to store the QR code image
         size: Size of the QR code in pixels (default 100, should be small for overlay)
-        cache_dir: Directory to store the QR code image (default: temp dir)
 
     Returns:
         Path to the generated QR code PNG, or None if generation failed
@@ -49,12 +48,8 @@ def generate_qr_code(url: str, size: int = 100, cache_dir: Optional[str] = None)
         img = img.resize((size, size), Image.Resampling.LANCZOS)
 
         # Determine output path
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-            output_path = os.path.join(cache_dir, "qr_code.png")
-        else:
-            # Use temp directory
-            output_path = os.path.join(tempfile.gettempdir(), "kbox_qr_code.png")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "qr_code.png")
 
         # Save image
         img.save(output_path, "PNG")

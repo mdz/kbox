@@ -7,6 +7,7 @@ The CONFIG_SCHEMA provides rich metadata for building user-friendly configuratio
 
 import logging
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .database import ConfigRepository, Database
@@ -352,6 +353,19 @@ class ConfigManager:
         if value is None or value == "":
             return default
         return value.lower() in ("true", "1", "yes", "on")
+
+    def get_app_data_dir(self) -> Path:
+        """Get kbox's per-user application data directory (~/.kbox), creating it if needed."""
+        app_dir = Path.home() / ".kbox"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        return app_dir
+
+    def get_cache_directory(self) -> Path:
+        """Get the resolved video cache/library directory, creating it if needed."""
+        cache_dir = self.get("cache_directory")
+        path = Path(cache_dir) if cache_dir else self.get_app_data_dir() / "library"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def set(self, key: str, value: Any) -> bool:
         """
