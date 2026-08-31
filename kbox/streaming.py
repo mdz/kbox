@@ -424,7 +424,7 @@ class StreamingController:
             # Size overlays against the screen, not the source video, so they
             # stay put instead of resizing per song.
             self._update_qr_size_for_resolution(width, height)
-            self._update_text_size_for_resolution(height)
+            self._update_text_layout_for_resolution(width)
         else:
             # Unknown display size (e.g. a windowed sink on macOS). Leave the
             # capsfilter open and fall back to sizing the QR from the frames.
@@ -550,8 +550,9 @@ class StreamingController:
             text.set_property("halignment", "right")
             text.set_property("xpad", 20)
             text.set_property("ypad", 20)
-            # Placeholder; _update_text_size_for_resolution replaces this once
-            # the display size is known.
+            # Sized against textoverlay's 640-wide auto-resize basis, not the
+            # actual screen: auto-resize scales this up for us. See
+            # _update_text_layout_for_resolution.
             text.set_property("font-desc", "Sans 9")
             text.set_property("shaded-background", True)
             text.set_property("silent", True)  # No text initially
@@ -613,7 +614,7 @@ class StreamingController:
                         if width is not None and height is not None:
                             self.logger.info("Detected video resolution: %dx%d", width, height)
                             self._update_qr_size_for_resolution(width, height)
-                            self._update_text_size_for_resolution(height)
+                            self._update_text_layout_for_resolution(width)
                         else:
                             self.logger.debug(
                                 "Could not extract resolution from caps: %s",
@@ -674,34 +675,46 @@ class StreamingController:
         except Exception as e:
             self.logger.warning("Failed to update QR size for resolution: %s", e)
 
-    def _update_text_size_for_resolution(self, height):
-        """
-        Scale the notification text with the frame it is drawn on.
+    # textoverlay's auto-resize scales the font relative to a 640-pixel-wide
+    # frame. Overlay geometry below is expressed against that same basis so it
+    # scales consistently with the font.
+    TEXT_SCALE_BASIS_WIDTH = 640
+    TEXT_BASE_PADDING = 20
 
-        Same reasoning as the QR overlay: the text is composited in screen
-        space now, so a fixed point size no longer gets magnified along with
-        the video. Deriving it from the height keeps it the same physical
-        size on screen whatever the source video's resolution is.
+    def _update_text_layout_for_resolution(self, width):
+        """
+        Scale the notification text's padding to the frame it is drawn on.
+
+        The font size deliberately is NOT set here. textoverlay's auto-resize
+        property (on by default) already scales the font by
+        width / TEXT_SCALE_BASIS_WIDTH, so setting a size derived from the
+        display would scale it a second time -- on a 1080p screen that turned
+        "Sans 9" into roughly 66pt of text across most of the screen.
+
+        Leaving the font fixed lets auto-resize do the scaling: on a 1920-wide
+        screen "Sans 9" renders at the same effective size it had when the
+        overlay sat upstream of the scaler on a 640-wide frame.
+
+        xpad/ypad are raw pixels that auto-resize does not touch, so those do
+        have to be scaled here to keep the margins looking the same.
         """
         if not self.text_overlay:
             return
 
         try:
-            font_points = max(9, round(height * 0.02))
-            padding = max(10, int(height * 0.02))
+            scale = width / self.TEXT_SCALE_BASIS_WIDTH
+            padding = max(10, int(self.TEXT_BASE_PADDING * scale))
 
-            self.text_overlay.set_property("font-desc", f"Sans {font_points}")
             self.text_overlay.set_property("xpad", padding)
             self.text_overlay.set_property("ypad", padding)
 
             self.logger.info(
-                "Text overlay sized for height %d: font=Sans %d, padding=%dpx",
-                height,
-                font_points,
+                "Text overlay padding scaled for width %d: %dpx (font left to auto-resize)",
+                width,
                 padding,
             )
         except Exception as e:
-            self.logger.warning("Failed to update text size for resolution: %s", e)
+            self.logger.warning("Failed to update text layout for resolution: %s", e)
 
     def _create_signalsmith_pitch_shift(self):
         """Try to create the native signalsmithpitch element, registering its
