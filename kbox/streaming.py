@@ -86,6 +86,12 @@ class StreamingController:
     # pipeline. Any string works as long as both ends agree.
     DISPLAY_CHANNEL = "kbox-display"
 
+    # Rate the interstitial pipeline refreshes the bridge at. intervideosrc
+    # serves a received buffer only a couple of times before falling back to
+    # generating black, so a still image has to keep being pushed at roughly
+    # the rate the display pipeline pulls or black frames interleave with it.
+    INTERSTITIAL_FRAMERATE = 30
+
     def __init__(self, config_manager, server, use_fakesinks: bool = False):
         """
         Initialize StreamingController with persistent pipeline.
@@ -118,6 +124,10 @@ class StreamingController:
         # the screen for the whole process lifetime -- see that method.
         self.display_pipeline: Any = None
         self._display_size: Optional[tuple] = None  # (width, height) if known
+
+        # Feeds still images into the display bridge while an interstitial is
+        # showing. Mutually exclusive with playbin: only one may feed at once.
+        self.interstitial_pipeline: Any = None
 
         # Overlay elements (set by _create_display_pipeline)
         self.qr_overlay = None
@@ -323,9 +333,12 @@ class StreamingController:
         Frames cross from playbin over an intervideosink/intervideosrc
         channel. intervideosink keeps sync=true, so playbin still does A/V
         sync before handing buffers over and lyric timing is preserved.
-        When playbin is between songs and nothing is arriving, intervideosrc
-        holds the last frame for its timeout and then emits black -- so gaps
-        show black rather than whatever is underneath.
+        Something must keep feeding this bridge for the screen to stay up:
+        intervideosrc serves a received buffer only a couple of times and then
+        generates black, and its "timeout" property does not change that (it
+        governs waiting for a first buffer, not holding one). So playbin feeds
+        it during songs and a separate imagefreeze pipeline feeds it during
+        interstitials -- see _create_interstitial_pipeline.
 
         The videoscale + capsfilter pair forces every frame to the display's
         native resolution with black borders baked in (add-borders), so the
@@ -942,6 +955,10 @@ class StreamingController:
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
 
+        # Hand the display bridge over to playbin: the interstitial pipeline
+        # must stop feeding it before playbin starts, or both would.
+        self._stop_interstitial_pipeline()
+
         # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
         self.logger.debug("load_file: after NULL")
@@ -1069,6 +1086,8 @@ class StreamingController:
         # Stop bus polling first
         self._stop_bus_polling()
 
+        self._stop_interstitial_pipeline()
+
         if self.playbin:
             try:
                 Gst = _get_gst()
@@ -1108,6 +1127,8 @@ class StreamingController:
 
         # Stop bus polling
         self._stop_bus_polling()
+
+        self._stop_interstitial_pipeline()
 
         # Set pipeline to NULL and release resources
         if self.playbin:
@@ -1476,12 +1497,71 @@ class StreamingController:
     # Static Image Display
     # =========================================================================
 
+    def _stop_interstitial_pipeline(self):
+        """Tear down the interstitial pipeline if one is running."""
+        if not self.interstitial_pipeline:
+            return
+
+        Gst = _get_gst()
+        try:
+            self.interstitial_pipeline.set_state(Gst.State.NULL)
+            self.interstitial_pipeline.get_state(5 * Gst.SECOND)
+        except Exception as e:
+            self.logger.warning("Error stopping interstitial pipeline: %s", e)
+        finally:
+            self.interstitial_pipeline = None
+
+    def _create_interstitial_pipeline(self, image_path: str):
+        """
+        Build a pipeline that feeds a still image into the display bridge
+        continuously.
+
+        imagefreeze is the point of this. A still image decoded on its own
+        produces exactly one buffer and then end-of-stream, which starves
+        intervideosrc: it serves a buffer only a couple of times before it
+        starts generating black frames instead. That is what blanked the idle
+        screen to black (bar the QR, composited further down the display
+        pipeline) a moment after every stop. imagefreeze repeats the frame for
+        as long as the pipeline runs, so the bridge keeps being fed and the
+        screen keeps showing the interstitial.
+
+        This used to go through playbin, on the assumption that playbin would
+        insert imagefreeze itself for still images. It does not. It worked
+        anyway only because kmssink used to sit in the playbin pipeline and
+        went on scanning out its last framebuffer after EOS -- persistence
+        that disappeared once the sink moved to its own pipeline.
+
+        Frames are pushed at INTERSTITIAL_FRAMERATE, which needs to roughly
+        match the rate the display pipeline pulls at, or black frames
+        interleave with the image.
+        """
+        Gst = _get_gst()
+
+        # parse_launch handles decodebin's dynamic pads for us. The file path
+        # is set as a property afterwards rather than interpolated, so paths
+        # needing escaping in the launch syntax cannot break the parse.
+        pipeline = Gst.parse_launch(
+            "filesrc name=isrc ! decodebin ! videoconvert ! imagefreeze "
+            f"! video/x-raw,framerate={self.INTERSTITIAL_FRAMERATE}/1 "
+            "! videoconvert ! intervideosink name=isink"
+        )
+
+        pipeline.get_by_name("isrc").set_property("location", image_path)
+        sink = pipeline.get_by_name("isink")
+        sink.set_property("channel", self.DISPLAY_CHANNEL)
+        # Paced by the clock rather than pushed as fast as possible, which
+        # would spin a core for a static image.
+        sink.set_property("sync", True)
+
+        return pipeline
+
     def display_image(self, image_path: str):
         """
         Display a static image (interstitial screen).
 
-        The image will be displayed indefinitely until another file is loaded.
-        Audio is muted for image display.
+        The image is displayed indefinitely until another file is loaded.
+        Interstitials are silent, so no audio is involved at all now that they
+        no longer go through playbin.
 
         Args:
             image_path: Path to the image file to display
@@ -1496,26 +1576,28 @@ class StreamingController:
         # Mark that we're showing an interstitial
         self._is_interstitial = True
 
-        # Stop any current playback
+        # Only one thing may feed the display bridge at a time.
         self.playbin.set_state(Gst.State.NULL)
+        self._stop_interstitial_pipeline()
 
-        # Set the image URI - GStreamer will use imagefreeze for static images
-        self.playbin.set_property("uri", f"file://{image_path}")
-
-        # Mute audio for interstitials (they're silent)
-        self.playbin.set_property("mute", True)
-
-        # Start playing
-        ret = self.playbin.set_state(Gst.State.PLAYING)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            self.logger.error("Failed to start interstitial playback")
+        try:
+            self.interstitial_pipeline = self._create_interstitial_pipeline(image_path)
+        except Exception as e:
+            self.logger.error("Failed to build interstitial pipeline: %s", e, exc_info=True)
             self._is_interstitial = False
             return
 
-        # Wait for state change
-        ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
+        ret = self.interstitial_pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            self.logger.error("Failed to start interstitial playback")
+            self._stop_interstitial_pipeline()
+            self._is_interstitial = False
+            return
+
+        ret, state, pending = self.interstitial_pipeline.get_state(5 * Gst.SECOND)
         if ret == Gst.StateChangeReturn.FAILURE:
             self.logger.error("Interstitial failed to reach PLAYING state")
+            self._stop_interstitial_pipeline()
             self._is_interstitial = False
             return
 
@@ -1539,11 +1621,11 @@ class StreamingController:
         """Handle end-of-stream message."""
         self.logger.info("End of stream reached (interstitial=%s)", self._is_interstitial)
 
-        # Don't trigger callback for interstitials - they should hold/loop
+        # Guard against a stale flag only. Interstitials no longer run through
+        # playbin at all -- they have their own imagefreeze pipeline, which
+        # never reaches EOS -- so this bus should only ever see songs ending.
         if self._is_interstitial:
-            # For interstitials, we just stay at the end frame
-            # The PlaybackController will load the next content when ready
-            self.logger.debug("Interstitial ended, holding last frame")
+            self.logger.debug("Ignoring EOS while an interstitial is showing")
             return
 
         if self.eos_callback:
