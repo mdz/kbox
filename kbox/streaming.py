@@ -1074,9 +1074,11 @@ class StreamingController:
         # must stop feeding it before playbin starts, or both would.
         self._stop_interstitial_pipeline()
 
-        # Set to NULL to reset pipeline
-        self.playbin.set_state(Gst.State.NULL)
-        self.logger.debug("load_file: after NULL")
+        # Drop to READY to reset pipeline before loading the next file. See
+        # the "NULL versus READY also makes no difference to format
+        # renegotiation" trap in docs/development/gstreamer-pipeline.md.
+        self.playbin.set_state(Gst.State.READY)
+        self.logger.debug("load_file: after READY")
 
         # Give the pitch shifter a fresh LADSPA instance. Nothing else clears
         # its internal buffer, so without this the tail of the previous song

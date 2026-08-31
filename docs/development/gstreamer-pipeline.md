@@ -251,6 +251,29 @@ sink inside playbin is torn down either way, so dropping to READY instead of
 NULL to "keep the sink alive" does nothing at all. The sink's lifetime is what
 matters, which is why it lives in its own pipeline.
 
+### NULL versus READY also makes no difference to format renegotiation
+
+`load_file()` used to drop `playbin` all the way to NULL before swapping `uri`, on the
+theory that READY would leave the internal `uridecodebin` graph (demuxer, decoder)
+wired for the old file's format and risk a bad renegotiation on the next song. That
+turned out to be inherited habit from the original per-song pipeline design, predating
+the persistent-`playbin` refactor (`git log -S` traces the NULL call to the WIP commit
+that introduced the persistent pipeline) — not something chosen for a specific reason
+at the time.
+
+Tested directly: cycled one `playbin` between two on-disk files with deliberately
+mismatched containers, codecs, resolutions, framerates, sample rates and channel counts
+(h264/aac, 320x240, 30fps, in mp4 vs. vp8/vorbis mono, 640x480, 25fps, in webm),
+swapping `uri` and going back to PLAYING from both READY and NULL, several cycles each.
+Every transition succeeded, no bus errors either way — `uridecodebin` rebuilds its
+dynamic element graph on a `uri` change regardless of which state it dropped from.
+
+(Tested on macOS with `autoaudiosink`/`autovideosink`, not `alsasink`/`kmssink` on the
+Pi.) On that basis `load_file()` now drops to READY instead of NULL — cheaper, and
+matches `stop_playback()`. This is flagged for the next pre-release burn-in pass:
+watch specifically for anything on song transitions between very different source
+formats (resolution, codec, channel layout) that didn't happen before this change.
+
 ### `intervideosrc`'s `timeout` does not hold the last frame
 
 Its description — *"Timeout after which to start outputting black frames"* —
