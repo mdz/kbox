@@ -48,12 +48,6 @@ These show up periodically and are not indicative of a kbox bug — don't chase 
   gstaudioringbuffer.c, not an app-level bug — full root-cause analysis is in the
   `load_file()` docstring in [kbox/streaming.py](kbox/streaming.py).
 
-- **"Pydantic serializer warnings: ... Expected `Message`" / "Expected
-  `StreamingChoices`"** — fires from LiteLLM's own background success-handler logging
-  thread on LLM metadata-extraction calls, not from kbox code. The response object
-  itself is unaffected (extraction succeeds on the same call). Root-cause analysis is
-  in the `completion()` docstring in [kbox/llm.py](kbox/llm.py).
-
 # Testing
 
 This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.

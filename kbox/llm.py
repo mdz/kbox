@@ -8,6 +8,7 @@ handling API key configuration and provider-specific setup.
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -15,6 +16,21 @@ if TYPE_CHECKING:
 
 # Type alias for LLM completion functions (litellm.completion signature)
 CompletionFn = Callable[..., Any]
+
+# LiteLLM logs completions via a background thread (litellm.utils.py's
+# "success_handler"), which re-validates the response against a streaming-shaped
+# Union[Choices, StreamingChoices]/Message schema. A normal non-streaming ModelResponse
+# trips a Pydantic serializer mismatch there even though it round-trips fine — the
+# response object we actually use is unaffected. This filter is process-wide (Python's
+# warnings filter list is global, and the warning fires in litellm's own thread pool
+# after `completion()` has already returned, so a scoped context manager can't catch
+# it) but matches only this specific pydantic.main warning, not warnings in general.
+warnings.filterwarnings(
+    "ignore",
+    message="Pydantic serializer warnings",
+    category=UserWarning,
+    module="pydantic",
+)
 
 
 class LLMClient:
@@ -72,18 +88,6 @@ class LLMClient:
 
         Raises:
             Exception: If LLM call fails
-
-        Note on "Pydantic serializer warnings: ... Expected `Message`" / "Expected
-        `StreamingChoices`" logged around every call: this is emitted by LiteLLM's own
-        background success-handler thread (litellm.utils.py, "Wrapper: Completed Call,
-        calling success_handler"), not by our code. LiteLLM's internal logging path
-        re-validates the response against a `Union[Choices, StreamingChoices]` /
-        `Message` schema that's shaped for streaming responses, so a normal
-        non-streaming `ModelResponse` trips a serializer mismatch there even though it
-        round-trips fine. The actual response object returned to callers here (and used
-        via `response.choices[0].message.content` in song_metadata.py) is unaffected —
-        confirmed by successful extraction on the same call. Known upstream LiteLLM
-        quirk (seen on 1.80.15); do not treat this warning as evidence of an app bug.
         """
         # Get LLM config
         model = self.config.get("llm_model")
