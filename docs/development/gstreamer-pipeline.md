@@ -52,6 +52,30 @@ playbin and the interstitial pipeline are **mutually exclusive** — each stops
 the other before it starts feeding. If both fed the bridge at once, a song and
 an interstitial would interleave on screen.
 
+## Why kmssink, despite gstreamer-plugins-bad
+
+kmssink ships in gstreamer-plugins-bad, which sometimes reads as a quality
+warning. It isn't one — "bad" means the module hasn't accumulated enough
+review, tests, or wide use to get promoted, not that it's poorly maintained.
+kmssink has an active maintainer and sees regular patches, and it's the
+backend other kiosk/signage software (e.g. Kodi's GBM output) relies on too.
+
+The alternatives all give up something kbox needs:
+
+- **waylandsink** — also lives in plugins-bad, so no maturity gain, and it
+  requires a compositor process (weston/cage/labwc) running alongside kbox.
+- **glimagesink** (EGL/GBM) — in plugins-base, but does its scaling on the
+  GPU via GL rather than the display controller's overlay plane. See "kmssink
+  already scales in hardware" below for why that plane scaling is
+  load-bearing for frame rate.
+- **X11 + ximagesink/xvimagesink** — in plugins-base, but needs a full X
+  server running just to show one fullscreen video.
+
+Net: every alternative either shares kmssink's plugins-bad status or trades
+away the hardware plane scaling this pipeline's frame budget depends on.
+Revisit only if kmssink itself becomes a concrete blocker (a specific bug,
+missing feature), not because of the module it ships in.
+
 ## How it used to work, and why it changed
 
 The first generation put everything in one playbin:
