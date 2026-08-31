@@ -231,10 +231,10 @@ docstring) so it can't quietly drift from what actually runs:
 docker-compose exec kbox python3 -m pytest test/test_pipeline_benchmark.py -m benchmark -s
 
 # on a macOS dev machine
-contrib/with-gstreamer.sh uv run pytest test/test_pipeline_benchmark.py -m benchmark -s
+uv run pytest test/test_pipeline_benchmark.py -m benchmark -s
 
 # run it directly for custom sizes, framerates, or a longer audio run
-contrib/with-gstreamer.sh uv run python test/test_pipeline_benchmark.py --source 640x480 --screen 1920x1080 --fps 25
+uv run python test/test_pipeline_benchmark.py --source 640x480 --screen 1920x1080 --fps 25
 ```
 
 Its headline metric is the frame rate a configuration could sustain, not CPU
@@ -334,7 +334,7 @@ The pipeline tests are marked `gstreamer` and deselected by default (see
 
 ```bash
 # on a macOS dev machine
-contrib/with-gstreamer.sh uv run pytest -m gstreamer
+uv run pytest -m gstreamer
 
 # on the Pi, inside the container
 docker-compose exec kbox python3 -m pytest -m gstreamer
@@ -344,10 +344,15 @@ macOS needs PyGObject, which is declared as a dev dependency for
 `sys_platform == 'darwin'` only — Linux and the Docker image use the system
 `python3-gi` package instead. If `import gi` fails, run `uv sync --group dev`.
 
-`contrib/with-gstreamer.sh` pins everything to the Homebrew GStreamer. A Mac
-can easily end up with both that and the official `GStreamer.framework` from
-the binary installer, and mixing libraries from one with plugins from the other
-fails in confusing ways.
+`test/test_streaming.py` and `test/test_pipeline_benchmark.py` both call
+`configure_macos_gstreamer_env()` (in `kbox/platform.py`) before importing
+`gi`, which pins everything to the Homebrew GStreamer — the same helper
+`kbox/main.py` uses to run the app itself on macOS. A Mac can easily end up
+with both that and the official `GStreamer.framework` from the binary
+installer, and mixing libraries from one with plugins from the other fails in
+confusing ways — so the setup requires `brew --prefix glib gstreamer` to
+resolve and raises a clear error instead of silently falling through to
+whatever `import gi` happens to find.
 
 These tests cover pipeline *structure*, not hardware behaviour. macOS has no
 `kmssink`, so anything involving the console, plane scaling or mode reporting

@@ -17,7 +17,12 @@ from .history import HistoryManager
 from .llm import LLMClient
 from .loudness import LoudnessAnalyzer
 from .overlay import generate_qr_code
-from .platform import is_macos, run_uvicorn_in_thread, run_with_gst_macos_main
+from .platform import (
+    configure_macos_gstreamer_env,
+    is_macos,
+    run_uvicorn_in_thread,
+    run_with_gst_macos_main,
+)
 from .playback import PlaybackController
 from .queue import QueueManager
 from .session import SessionManager
@@ -308,6 +313,7 @@ def actual_main():
 
 def main():
     """Main entry point. Uses gst_macos_main() on macOS for proper video support."""
+    configure_macos_gstreamer_env()
     return run_with_gst_macos_main(actual_main)
 
 
