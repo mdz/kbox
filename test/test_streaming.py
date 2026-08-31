@@ -108,10 +108,6 @@ def mock_config_manager():
     db = create_autospec(Database, instance=True)
     config_manager = ConfigManager(db)
 
-    # Set test-specific config
-    config_manager.set(
-        "rubberband_plugin", "ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo"
-    )
     config_manager.set("audio_output_device", None)
 
     return config_manager
@@ -337,8 +333,8 @@ def test_pitch_shift_persists_across_songs(controller, test_video_1s):
             try:
                 actual_semitones = controller.pitch_shift_element.get_property("semitones")
                 assert actual_semitones == 5
-            except:
-                # If rubberband not available, that's okay
+            except Exception:
+                # If signalsmithpitch not available, that's okay
                 pass
 
 
@@ -360,83 +356,25 @@ def test_pitch_shift_during_playback(controller, test_video_3s):
 # =========================================================================
 
 
-def test_create_pitch_shift_defaults_to_rubberband_without_trying_signalsmith(
-    controller, monkeypatch
-):
-    """Default config (no pitch_shift_engine set) should go straight to
-    rubberband and never even try signalsmith -- this is what keeps the
-    signalsmith addition a no-op for existing deployments."""
-    signalsmith_called = []
-    monkeypatch.setattr(
-        controller,
-        "_create_signalsmith_pitch_shift",
-        lambda: signalsmith_called.append(True) or None,
-    )
-    sentinel = MagicMock(name="rubberband_element")
-    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: sentinel)
-
-    result = controller._create_pitch_shift_or_identity()
-
-    assert result is sentinel
-    assert not signalsmith_called, "signalsmith should not be tried unless opted into"
-
-
-def test_create_pitch_shift_uses_signalsmith_when_opted_in(controller, monkeypatch):
-    """With pitch_shift_engine=signalsmith, dispatcher should use it and not even try rubberband."""
-    # mock_config_manager's backing "database" is a bare autospec with no real
-    # storage, so config_manager.set()/.get() don't round-trip through it in
-    # tests -- patch .get directly instead of relying on that round-trip.
-    monkeypatch.setattr(
-        controller.config_manager,
-        "get",
-        lambda key, default=None: "signalsmith" if key == "pitch_shift_engine" else default,
-    )
-
+def test_create_pitch_shift_uses_signalsmith_when_available(controller, monkeypatch):
+    """The dispatcher should use the native signalsmithpitch element when its
+    plugin is available."""
     sentinel = MagicMock(name="signalsmith_element")
     monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: sentinel)
 
-    rubberband_called = []
-    monkeypatch.setattr(
-        controller,
-        "_create_rubberband_pitch_shift",
-        lambda: rubberband_called.append(True) or None,
-    )
-
     result = controller._create_pitch_shift_or_identity()
 
     assert result is sentinel
-    assert not rubberband_called, "rubberband should not be tried when signalsmith succeeds"
 
 
-def test_create_pitch_shift_falls_back_to_identity_when_both_unavailable(controller, monkeypatch):
-    """When neither element is available, dispatcher should return identity rather than raise."""
+def test_create_pitch_shift_falls_back_to_identity_when_unavailable(controller, monkeypatch):
+    """When the signalsmithpitch plugin isn't available, dispatcher should
+    return identity rather than raise."""
     monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
-    monkeypatch.setattr(controller, "_create_rubberband_pitch_shift", lambda: None)
 
     result = controller._create_pitch_shift_or_identity()
 
     assert type(result).__name__ == "GstIdentity"
-
-
-def test_reset_pitch_shift_element_skips_signalsmith(controller, monkeypatch):
-    """The native element resets its own state via FLUSH_STOP/stop(), so the
-    destroy/recreate workaround (needed for rubberband's LADSPA wrapper)
-    should be skipped for it entirely -- not even touch the audio bin."""
-
-    class GstSignalsmithPitch:
-        pass
-
-    fake_element = GstSignalsmithPitch()
-    controller.pitch_shift_element = fake_element
-
-    def _fail_if_called():
-        raise AssertionError("should not recreate the element for signalsmith")
-
-    monkeypatch.setattr(controller, "_create_pitch_shift_or_identity", _fail_if_called)
-
-    controller._reset_pitch_shift_element()
-
-    assert controller.pitch_shift_element is fake_element
 
 
 def _estimate_frequency_hz(pcm_bytes: bytes, channels: int, sample_rate: int) -> float:
@@ -522,20 +460,6 @@ def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
     elem = controller._create_signalsmith_pitch_shift()
     if elem is None:
         pytest.skip("signalsmithpitch plugin not available on this machine")
-
-    semitones = 12  # one octave up -> should double the frequency
-    input_freq = 220.0
-    measured_freq = _run_pitch_element_and_measure_frequency(elem, semitones, input_freq)
-
-    expected_freq = input_freq * (2 ** (semitones / 12))
-    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
-
-
-def test_rubberband_pitch_shift_actually_shifts_frequency(controller):
-    """The rubberband LADSPA element should genuinely change pitch, not just pass audio through."""
-    elem = controller._create_rubberband_pitch_shift()
-    if elem is None:
-        pytest.skip("rubberband LADSPA plugin not available on this machine")
 
     semitones = 12  # one octave up -> should double the frequency
     input_freq = 220.0
@@ -714,11 +638,6 @@ def test_streaming_controller_initialization():
     """Test basic StreamingController initialization."""
     db = create_autospec(Database, instance=True)
     config_manager = ConfigManager(db)
-
-    # Set rubberband plugin config
-    config_manager.set(
-        "rubberband_plugin", "ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo"
-    )
 
     server = create_autospec(MagicMock, instance=True)
     streaming = StreamingController(config_manager, server, use_fakesinks=True)

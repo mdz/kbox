@@ -25,7 +25,6 @@ from kbox.user import UserManager
 def mock_config_manager():
     db = create_autospec(Database, instance=True)
     config = ConfigManager(db)
-    config.set("rubberband_plugin", "")
     config.set("audio_output_device", None)
     return config
 

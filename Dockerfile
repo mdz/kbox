@@ -33,7 +33,6 @@ RUN apt-get update && \
         gstreamer1.0-x \
         gstreamer1.0-tools \
         alsa-utils \
-        rubberband-ladspa \
         ffmpeg \
         ca-certificates && \
     apt-get clean && \

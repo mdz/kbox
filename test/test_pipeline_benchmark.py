@@ -77,9 +77,6 @@ def make_controller(**config_overrides):
     are exactly what the app builds -- not a reimplementation of them."""
     db = create_autospec(Database, instance=True)
     config_manager = ConfigManager(db)
-    config_manager.set(
-        "rubberband_plugin", "ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo"
-    )
     config_manager.set("audio_output_device", None)
     for key, value in config_overrides.items():
         config_manager.set(key, value)
@@ -287,31 +284,24 @@ def benchmark_audio(seconds, repeats):
         caps.set_property("caps", Gst.Caps.from_string(f"audio/x-raw,rate={AUDIO_RATE},channels=2"))
         return [src, caps]
 
-    # Each engine gets a controller of its own -- the pitch shift element and
-    # audio sink bin are picked at controller construction time based on
-    # config, and this benchmark wants to run the real
-    # _create_audio_sink_bin() for each rather than reimplementing the
-    # element chain.
-    engines = [
-        ("rubberband LADSPA, 0 semitones", {"pitch_shift_engine": "rubberband"}),
-        ("signalsmithpitch, 0 semitones", {"pitch_shift_engine": "signalsmith"}),
-    ]
+    # The pitch shift element and audio sink bin are picked at controller
+    # construction time, and this benchmark wants to run the real
+    # _create_audio_sink_bin() rather than reimplementing the element chain.
+    name = "signalsmithpitch, 0 semitones"
+    with make_controller() as controller:
 
-    for name, overrides in engines:
-        with make_controller(**overrides) as controller:
+        def build(controller=controller):
+            src = make_source()
+            # A fresh audio sink bin per run: it already ends in a
+            # (fake)sink, so nothing else needs to be appended.
+            audio_bin = controller._create_audio_sink_bin()
+            return [*src, audio_bin]
 
-            def build(controller=controller):
-                src = make_source()
-                # A fresh audio sink bin per run: it already ends in a
-                # (fake)sink, so nothing else needs to be appended.
-                audio_bin = controller._create_audio_sink_bin()
-                return [*src, audio_bin]
-
-            cpu, error = run_pipeline(build, repeats)
-            if cpu is None:
-                print(f"  {name:<44} unavailable ({error})")
-                results[name] = None
-                continue
+        cpu, error = run_pipeline(build, repeats)
+        if cpu is None:
+            print(f"  {name:<44} unavailable ({error})")
+            results[name] = None
+        else:
             core_share = cpu / actual * 100
             print(f"  {name:<44} {core_share:6.2f}% of a core in real time")
             results[name] = core_share
@@ -349,7 +339,7 @@ def test_benchmark_audio(capsys):
     # benchmark_audio() directly for a real measurement.
     results = benchmark_audio(seconds=2.0, repeats=REPEATS)
 
-    assert results["rubberband LADSPA, 0 semitones"] is not None
+    assert results["signalsmithpitch, 0 semitones"] is not None
 
 
 if __name__ == "__main__":

@@ -46,8 +46,6 @@ export GI_TYPELIB_PATH="$GSTREAMER_PREFIX/share/gir-1.0${GI_TYPELIB_PATH:+:$GI_T
 export GST_PLUGIN_SYSTEM_PATH_1_0="$GSTREAMER_PREFIX/lib/gstreamer-1.0"
 export GST_PLUGIN_PATH="$HOME/.gstreamer-1.0:$GSTREAMER_PREFIX/lib/gstreamer-1.0${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
 
-# LADSPA plugins, for the rubberband pitch shifter.
-export LADSPA_PATH="$HOME/.ladspa${LADSPA_PATH:+:$LADSPA_PATH}"
 
 # Forking to scan the plugin registry is unreliable on macOS.
 export GST_REGISTRY_FORK="no"

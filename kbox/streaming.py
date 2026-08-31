@@ -198,10 +198,6 @@ class StreamingController:
 
                     os.environ.setdefault("GST_PLUGIN_SCANNER", "")
                     os.environ.setdefault("GST_REGISTRY_FORK", "no")
-                    if "LADSPA_PATH" not in os.environ:
-                        ladspa_path = os.path.expanduser("~/.ladspa")
-                        if os.path.exists(ladspa_path):
-                            os.environ["LADSPA_PATH"] = ladspa_path
 
                 Gst.init(argv)
                 self.logger.info("GStreamer initialized successfully")
@@ -839,7 +835,7 @@ class StreamingController:
         plugin .so from disk first if it isn't already known to GStreamer.
 
         Returns the element, or None if unavailable (caller falls back to
-        rubberband/identity).
+        identity).
         """
         import os
 
@@ -870,154 +866,18 @@ class StreamingController:
         self.logger.info("Using native signalsmithpitch element for pitch shift")
         return elem
 
-    def _create_rubberband_pitch_shift(self):
-        """Try to create the rubberband LADSPA pitch-shift element.
-
-        Returns the element, or None if unavailable (caller falls back to
-        identity).
-        """
-        Gst = _get_gst()
-
-        rubberband_plugin = self.config_manager.get("rubberband_plugin")
-        if not rubberband_plugin:
-            self.logger.warning("No rubberband plugin configured, using identity")
-            return None
-
-        try:
-            elem = Gst.ElementFactory.make(rubberband_plugin, "pitch_shift")
-            if elem is None:
-                import os
-
-                self.logger.warning(
-                    'Rubberband plugin "%s" not found (LADSPA_PATH=%s), using identity',
-                    rubberband_plugin,
-                    os.environ.get("LADSPA_PATH", "not set"),
-                )
-                return None
-
-            # Check if element supports semitones property
-            element_type = type(elem).__name__
-            if element_type == "GstIdentity":
-                self.logger.warning("Got identity element, pitch shift not available")
-                return elem
-
-            if hasattr(elem, "set_property"):
-                try:
-                    elem.set_property("semitones", self.pitch_shift_semitones)
-                    self.logger.info("Pitch shift element created successfully")
-                    return elem
-                except Exception as e:
-                    self.logger.warning("Pitch shift element lacks semitones property: %s", e)
-                    return None
-            else:
-                self.logger.warning("Pitch shift element lacks set_property")
-                return None
-
-        except Exception as e:
-            self.logger.warning("Error creating pitch shift: %s, using identity", e)
-            return None
-
     def _create_pitch_shift_or_identity(self):
-        """Create pitch shift element or identity passthrough if unavailable.
-
-        Uses rubberband (LADSPA) by default -- the long-standing, burned-in
-        choice. The native signalsmithpitch element (correct FLUSH_STOP
-        handling, MIT licensed, but not yet burn-in tested) is opt-in via
-        the "pitch_shift_engine" config value ("signalsmith"); if its
-        plugin isn't present, falls back to rubberband with a warning.
+        """Create the native signalsmithpitch element, or identity passthrough
+        if its plugin isn't available.
         """
         Gst = _get_gst()
 
-        engine = self.config_manager.get("pitch_shift_engine") or "rubberband"
-
-        if engine == "signalsmith":
-            signalsmith_elem = self._create_signalsmith_pitch_shift()
-            if signalsmith_elem is not None:
-                return signalsmith_elem
-            self.logger.warning(
-                "signalsmithpitch element not available, falling back to rubberband LADSPA plugin"
-            )
-
-        rubberband_elem = self._create_rubberband_pitch_shift()
-        if rubberband_elem is not None:
-            return rubberband_elem
+        signalsmith_elem = self._create_signalsmith_pitch_shift()
+        if signalsmith_elem is not None:
+            return signalsmith_elem
 
         self.logger.warning("No pitch shift element available, falling back to identity")
         return Gst.ElementFactory.make("identity", "pitch_shift")
-
-    def _reset_pitch_shift_element(self):
-        """
-        Replace the pitch shift element with a freshly instantiated one.
-
-        This exists because the LADSPA wrapper never resets plugin state between
-        songs, so the rubberband pitch shifter carries its internal audio buffer
-        across a track change and emits the tail of the previous song over the
-        start of the next one. Walking the wrapper source (gst-plugins-bad
-        ext/ladspa):
-
-          - gst_ladspa_filter_type_setup() is the only path that touches plugin
-            state during playback, and it delegates to gst_ladspa_setup().
-          - gst_ladspa_setup() deactivates/closes ONLY if the sample rate
-            changed, and activates ONLY if there is no handle yet. Same rate and
-            an existing handle (our case - persistent bin, both tracks 44100 Hz)
-            means it does nothing at all.
-          - LADSPA's activate() is the spec's "reset internal state" hook, so
-            skipping it leaves rubberband's buffers intact.
-          - gst_ladspa_cleanup() (deactivate + close) is only reachable from
-            dispose(), i.e. when the element is destroyed. It is not wired to
-            GstBaseTransform's stop vfunc, so no state change resets the plugin.
-          - The wrapper has no flush handling whatsoever, which is why sending a
-            flushing seek did not help either.
-
-        Destroying and recreating the element is therefore the only reliable way
-        to get a clean plugin instance: dropping the last reference runs
-        dispose() -> cleanup() -> deactivate + close, and the replacement gets a
-        fresh instantiate() + activate().
-
-        Must be called while the pipeline is not running (load_file does this
-        immediately after setting playbin to NULL). Cheap enough at once per
-        song load, and a no-op in practice when pitch shift is unavailable and
-        the element is a plain identity passthrough.
-
-        Also a no-op for the native signalsmithpitch element: unlike the
-        LADSPA wrapper, it correctly resets its own internal state on the
-        NULL state transition (its stop() vfunc) and on FLUSH_STOP, so it
-        doesn't need this workaround.
-        """
-        Gst = _get_gst()
-
-        if self.audio_bin is None or self.pitch_shift_element is None:
-            return
-
-        if type(self.pitch_shift_element).__name__ == "GstSignalsmithPitch":
-            return
-
-        ac1 = self.audio_bin.get_by_name("ac1")
-        ac2 = self.audio_bin.get_by_name("ac2")
-        if ac1 is None or ac2 is None:
-            self.logger.warning("Cannot reset pitch shift: audioconvert elements not found")
-            return
-
-        old_element = self.pitch_shift_element
-
-        # Detach the stale instance. Removing it from the bin drops the bin's
-        # reference; the last Python reference goes away when this returns,
-        # triggering dispose() and the LADSPA cleanup described above.
-        ac1.unlink(old_element)
-        old_element.unlink(ac2)
-        old_element.set_state(Gst.State.NULL)
-        self.audio_bin.remove(old_element)
-
-        new_element = self._create_pitch_shift_or_identity()
-        self.audio_bin.add(new_element)
-
-        if not ac1.link(new_element) or not new_element.link(ac2):
-            raise RuntimeError("Failed to relink pitch shift element after reset")
-
-        new_element.sync_state_with_parent()
-        self.pitch_shift_element = new_element
-
-        self.logger.debug("Pitch shift element reset (fresh LADSPA instance)")
 
     # =========================================================================
     # Playback Control
@@ -1067,11 +927,6 @@ class StreamingController:
         # Set to NULL to reset pipeline
         self.playbin.set_state(Gst.State.NULL)
         self.logger.debug("load_file: after NULL")
-
-        # Give the pitch shifter a fresh LADSPA instance. Nothing else clears
-        # its internal buffer, so without this the tail of the previous song
-        # bleeds over the start of this one. See _reset_pitch_shift_element.
-        self._reset_pitch_shift_element()
 
         # Unmute audio (may have been muted for interstitial)
         self.playbin.set_property("mute", False)
