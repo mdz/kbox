@@ -259,6 +259,31 @@ def test_pause_resume(controller, test_video_3s):
     assert controller.get_pipeline_state() == "playing"
 
 
+def test_pause_keeps_feeding_display_bridge(controller, test_video_3s):
+    """
+    Pausing must not starve the display bridge.
+
+    playbin only pushes one preroll frame across the PAUSED transition, and
+    intervideosrc serves that a couple of times before generating black (see
+    docs/development/gstreamer-pipeline.md) -- so pause() has to keep feeding
+    the bridge itself via _start_pause_freeze_pipeline, the same way
+    interstitials do.
+    """
+    Gst = _get_gst()
+    controller.load_file(test_video_3s)
+    time.sleep(0.3)  # let a frame cross the bridge so there's one to freeze
+
+    controller.pause()
+    try:
+        assert controller._pause_freeze_pipeline is not None
+        ret, state, pending = controller._pause_freeze_pipeline.get_state(2 * Gst.SECOND)
+        assert state == Gst.State.PLAYING
+    finally:
+        controller.resume()
+
+    assert controller._pause_freeze_pipeline is None
+
+
 def test_pause_when_not_playing_raises_error(controller):
     """Test that pausing when not playing raises an error."""
     with pytest.raises(RuntimeError, match="not currently playing"):
