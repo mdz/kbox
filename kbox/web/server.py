@@ -886,10 +886,10 @@ def create_app(
         if not is_operator:
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
-        if playback.stop_playback():
-            return {"status": "stopped"}
-        else:
-            raise HTTPException(status_code=400, detail="Failed to stop")
+        # Stopping when already stopped/idle is not an error - the desired
+        # end state is already achieved, so just report success.
+        playback.stop_playback()
+        return {"status": "stopped"}
 
     @app.post("/api/playback/skip")
     async def skip(
@@ -978,10 +978,10 @@ def create_app(
         if not is_operator:
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
-        if playback.restart():
-            return {"status": "restarted"}
-        else:
+        result = playback.restart()
+        if result["status"] == "error":
             raise HTTPException(status_code=400, detail="Failed to restart song")
+        return result
 
     @app.post("/api/playback/seek")
     async def seek(
@@ -993,10 +993,10 @@ def create_app(
         if not is_operator:
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
-        if playback.seek_relative(request_data.delta_seconds):
-            return {"status": "seeked", "delta_seconds": request_data.delta_seconds}
-        else:
+        result = playback.seek_relative(request_data.delta_seconds)
+        if result["status"] == "error":
             raise HTTPException(status_code=400, detail="Failed to seek")
+        return result
 
     # Authentication endpoints
     @app.get("/api/auth/operator")

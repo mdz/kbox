@@ -57,8 +57,8 @@ def _mock_playback():
     playback.skip.return_value = True
     playback.previous.return_value = True
     playback.jump_to_song.return_value = True
-    playback.restart.return_value = True
-    playback.seek_relative.return_value = True
+    playback.restart.return_value = {"status": "restarted"}
+    playback.seek_relative.return_value = {"status": "seeked"}
     playback.set_pitch.return_value = False
     playback.state = PlaybackState.IDLE
     playback.current_song_id = None
