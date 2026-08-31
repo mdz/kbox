@@ -677,6 +677,120 @@ class PlaybackController:
                 self.logger.error("Error stopping playback: %s", e, exc_info=True)
                 return False
 
+    def _navigate(self, offset: int, record_history: bool) -> bool:
+        """
+        Move to the song `offset` positions away from the current one.
+
+        Shared by skip() (offset=+1) and previous() (offset=-1) so both
+        directions behave the same way:
+
+        - While a song is actively playing/paused, this shows the "up next"
+          transition interstitial before starting the target song - same as
+          a natural end-of-song - so the next singer gets a heads up
+          regardless of which direction the operator navigated.
+        - While already in PlaybackState.TRANSITION (the interstitial from a
+          previous skip/previous, or from a natural end-of-song, is still
+          showing), navigates relative to the pending "up next" song,
+          cancels the in-flight transition timer, and re-shows the
+          interstitial for the new target - so the operator isn't locked
+          out of navigation during the wait.
+        - Otherwise (e.g. STOPPED while waiting on a replace_song()
+          download) there's no active performance to protect continuity
+          for, so this switches immediately with no interstitial delay.
+
+        Args:
+            offset: +1 to move forward (skip), -1 to move backward (previous)
+            record_history: whether to record performance history for the
+                song being navigated away from (skip does this, previous
+                does not)
+
+        Returns:
+            True if navigation happened, False if there's nowhere to go
+        """
+        if self.state == PlaybackState.TRANSITION:
+            if not self._next_song_pending:
+                self.logger.warning("In transition but no pending song, cannot navigate")
+                return False
+
+            # The pending "up next" song is what the operator sees on screen,
+            # so navigation is relative to it, not to the cursor (which still
+            # points at the song that actually finished/was skipped).
+            reference_song_id = self._next_song_pending.id
+            target_song = self.queue_manager.get_song_at_offset(reference_song_id, offset)
+            if not target_song:
+                self.logger.info("No song available to navigate to")
+                return False
+
+            self.logger.info(
+                "Navigating during transition: %s -> %s", reference_song_id, target_song.id
+            )
+
+            # Cancel the in-flight transition timer - we're re-targeting it,
+            # otherwise the old pending song would start on top of this one.
+            if self._transition_timer:
+                self._transition_timer.cancel()
+                self._transition_timer = None
+            self._next_song_pending = None
+
+            # Re-show the interstitial for the newly-chosen song.
+            self._show_transition_or_end(
+                finished_song_id=self._cursor_song_id, next_song=target_song
+            )
+            return True
+
+        if not self.current_song_id:
+            if offset > 0:
+                self.logger.info("No current song, trying to start playback")
+                return self._load_and_play_next()
+            self.logger.info("No current song, cannot navigate")
+            return False
+
+        # Only skip needs the current song's data (for history recording);
+        # previous doesn't touch it.
+        current_song = None
+        if record_history:
+            current_song = self.queue_manager.get_item(self.current_song_id)
+            if not current_song:
+                self.logger.error("Current song ID %s not found", self.current_song_id)
+                return False
+
+        target_song = self.queue_manager.get_song_at_offset(self.current_song_id, offset)
+        if not target_song:
+            self.logger.info("No song available to navigate to")
+            return False
+
+        if current_song:
+            current_position = self.streaming_controller.get_position() or 0
+            if self.history_manager and self._should_record_history(
+                current_song.metadata.duration_seconds, current_position
+            ):
+                completion_pct = self._calculate_completion_percentage(
+                    current_position, current_song.metadata.duration_seconds
+                )
+                self._record_performance_history(
+                    current_song, current_position, current_position, completion_pct
+                )
+
+        self.logger.debug(
+            "_navigate: before stop_playback, current=%s target=%s offset=%s",
+            self.current_song_id,
+            target_song.id,
+            offset,
+        )
+        self.streaming_controller.stop_playback()
+
+        if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+            # Active performance - show the interstitial, same flow as a
+            # natural end-of-song, before starting the target song.
+            previous_song_id = self.current_song_id
+            self._show_transition_or_end(finished_song_id=previous_song_id, next_song=target_song)
+        else:
+            # Nothing actually playing (e.g. stopped mid replace-download) -
+            # switch immediately, no interstitial delay needed.
+            self._play_song(target_song)
+
+        return True
+
     def _skip_internal(self) -> bool:
         """
         Skip to next song (internal version, assumes lock is held).
@@ -688,49 +802,7 @@ class PlaybackController:
             True if skipped, False if no next song available
         """
         self.logger.info("Skipping current song")
-
-        if not self.current_song_id:
-            self.logger.info("No current song, trying to start playback")
-            return self._load_and_play_next()
-
-        # Get current song data
-        current_song = self.queue_manager.get_item(self.current_song_id)
-        if not current_song:
-            self.logger.error("Current song ID %s not found", self.current_song_id)
-            return False
-
-        # Get next song after current (by queue position)
-        next_song = self.queue_manager.get_song_at_offset(self.current_song_id, +1)
-
-        if not next_song:
-            self.logger.info("No next song available to skip to")
-            return False
-
-        # Record history if threshold met
-        current_position = self.streaming_controller.get_position() or 0
-        if self.history_manager and self._should_record_history(
-            current_song.metadata.duration_seconds, current_position
-        ):
-            completion_pct = self._calculate_completion_percentage(
-                current_position, current_song.metadata.duration_seconds
-            )
-            self._record_performance_history(
-                current_song, current_position, current_position, completion_pct
-            )
-
-        # Stop current playback
-        self.logger.debug(
-            "skip: before stop_playback, current=%s next=%s",
-            self.current_song_id,
-            next_song.id,
-        )
-        self.streaming_controller.stop_playback()
-        self.logger.debug("skip: after stop_playback")
-
-        # Show interstitial then play next song (same flow as natural end-of-song)
-        skipped_song_id = self.current_song_id
-        self._show_transition_or_end(finished_song_id=skipped_song_id)
-        return True
+        return self._navigate(offset=+1, record_history=True)
 
     def skip(self) -> bool:
         """
@@ -830,51 +902,21 @@ class PlaybackController:
                 item_id, video_id, title, duration_seconds, thumbnail_url, channel
             )
 
-    def _switch_to_song(self, song: QueueItem) -> bool:
-        """
-        Stop current playback and switch to a different song.
-
-        Helper method for navigation operations (previous, etc).
-        Assumes lock is already held.
-
-        Args:
-            song: Queue item to play
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Stop current playback (but do NOT mark as played or record history)
-        if self.current_song_id:
-            self.streaming_controller.stop_playback()
-
-        # Load and play the song (from beginning)
-        return self._play_song(song)
-
     def previous(self) -> bool:
         """
         Go to previous song in the queue.
 
-        Navigation-based: moves to previous song by position.
+        Navigation-based: moves to previous song by position. Mirrors skip()
+        in the backward direction, including showing the "up next"
+        transition interstitial and working while that interstitial is
+        already showing.
 
         Returns:
             True if moved to previous song, False if no previous song
         """
         with self.lock:
             self.logger.info("Going to previous song")
-
-            if not self.current_song_id:
-                self.logger.info("No current song, cannot go to previous")
-                return False
-
-            # Get previous song before current (by queue position)
-            prev_song = self.queue_manager.get_song_at_offset(self.current_song_id, -1)
-
-            if not prev_song:
-                self.logger.info("No previous song available")
-                return False
-
-            # Switch to the previous song
-            return self._switch_to_song(prev_song)
+            return self._navigate(offset=-1, record_history=False)
 
     def move_down(self, item_id: int) -> Dict[str, Any]:
         """
@@ -1158,29 +1200,42 @@ class PlaybackController:
         # to find the next song by position.
         self._show_transition_or_end(finished_song_id=finished_song_id)
 
-    def _show_transition_or_end(self, finished_song_id: Optional[int] = None):
+    def _show_transition_or_end(
+        self,
+        finished_song_id: Optional[int] = None,
+        next_song: Optional[QueueItem] = None,
+    ):
         """
         Show transition screen for next song, or end-of-queue screen.
 
         Called after a song ends. Shows appropriate interstitial and schedules
         the next song to start after the transition duration.
 
-        Respects queue order: only considers the immediate next song by position.
-        If that song isn't ready, goes idle (auto-start will pick it up when ready).
+        Respects queue order: by default only considers the immediate next
+        song by position. If that song isn't ready, goes idle (auto-start
+        will pick it up when ready).
 
         Args:
-            finished_song_id: ID of the song that just finished (used to find next song by position)
+            finished_song_id: ID of the song that just finished (used to find
+                the next song by position when next_song is not given).
+            next_song: explicit song to transition to, overriding the default
+                "next song by position after finished_song_id" derivation.
+                Used by backward navigation (previous()) and by navigation
+                performed while the interstitial is already showing (see
+                _navigate()), where the target isn't simply
+                finished_song_id + 1.
 
         Note: Called with lock held.
         """
-        # Get next song by position after the one that finished
-        # If finished_song_id is None, we have no reference point, so show end screen
-        if finished_song_id is None:
-            self._set_state(PlaybackState.IDLE, "queue exhausted")
-            self._show_end_of_queue_screen()
-            return
+        if next_song is None:
+            # Get next song by position after the one that finished.
+            # If finished_song_id is None, we have no reference point, so show end screen
+            if finished_song_id is None:
+                self._set_state(PlaybackState.IDLE, "queue exhausted")
+                self._show_end_of_queue_screen()
+                return
 
-        next_song = self.queue_manager.get_song_at_offset(finished_song_id, +1)
+            next_song = self.queue_manager.get_song_at_offset(finished_song_id, +1)
 
         if not next_song:
             # No more songs - show end-of-queue screen

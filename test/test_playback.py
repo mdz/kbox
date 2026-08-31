@@ -296,6 +296,148 @@ def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streami
     mock_streaming_controller.stop_playback.assert_not_called()
 
 
+def test_previous_shows_interstitial(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that previous() shows the "up next" interstitial before playing,
+    mirroring skip()'s behavior in the backward direction (issue: skipping
+    backwards used to jump straight into the previous song with no
+    interstitial, giving that singer no heads-up).
+    """
+    current_song = create_mock_queue_item(
+        id=2,
+        title="Current Song",
+        user_name="Bob",
+        video_id="youtube:def456",
+        duration_seconds=180,
+        pitch_semitones=0,
+    )
+    playback_controller.current_song_id = 2
+    playback_controller.state = PlaybackState.PLAYING
+
+    mock_queue_manager.get_item.return_value = current_song
+
+    mock_prev_song = create_mock_queue_item(
+        id=1,
+        title="Prev Song",
+        user_name="Alice",
+        content_path="/path/to/prev.mp4",
+        pitch_semitones=0,
+        content_status=QueueManager.STATUS_READY,
+    )
+    mock_queue_manager.get_song_at_offset.return_value = mock_prev_song
+
+    result = playback_controller.previous()
+
+    assert result is True
+    mock_streaming_controller.stop_playback.assert_called_once()
+    # Same as skip(): goes to TRANSITION and stages the target, doesn't jump
+    # straight into playing it.
+    assert playback_controller.state == PlaybackState.TRANSITION
+    assert playback_controller._next_song_pending == mock_prev_song
+    mock_streaming_controller.load_file.assert_not_called()
+
+
+def test_skip_while_in_transition_retargets_pending(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that skip() works while the transition interstitial is already
+    showing, re-targeting the pending song and cancelling the old timer
+    (issue: skip/previous were inert during TRANSITION, forcing the
+    operator to wait for the pending song to actually start before they
+    could navigate away from it).
+    """
+    playback_controller.state = PlaybackState.TRANSITION
+    playback_controller.current_song_id = None  # cleared by _complete_current_song
+    playback_controller._cursor_song_id = 1  # song that just finished/was skipped
+
+    pending_song = create_mock_queue_item(id=2, title="Pending Song", user_name="Bob")
+    playback_controller._next_song_pending = pending_song
+
+    old_timer = Mock()
+    playback_controller._transition_timer = old_timer
+
+    new_target = create_mock_queue_item(
+        id=3,
+        title="Later Song",
+        user_name="Carol",
+        content_path="/path/to/later.mp4",
+        content_status=QueueManager.STATUS_READY,
+    )
+    # Navigation while in TRANSITION is relative to the pending song (id=2), +1
+    mock_queue_manager.get_song_at_offset.return_value = new_target
+
+    result = playback_controller.skip()
+
+    assert result is True
+    mock_queue_manager.get_song_at_offset.assert_called_once_with(2, 1)
+    # The stale timer must be cancelled so the old pending song can't also start
+    old_timer.cancel.assert_called_once()
+    assert playback_controller.state == PlaybackState.TRANSITION
+    assert playback_controller._next_song_pending == new_target
+    mock_streaming_controller.load_file.assert_not_called()
+
+
+def test_previous_while_in_transition_retargets_pending(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Test that previous() also works while the transition interstitial is
+    showing, navigating backward relative to the pending song.
+    """
+    playback_controller.state = PlaybackState.TRANSITION
+    playback_controller.current_song_id = None
+    playback_controller._cursor_song_id = 1
+
+    pending_song = create_mock_queue_item(id=2, title="Pending Song", user_name="Bob")
+    playback_controller._next_song_pending = pending_song
+
+    old_timer = Mock()
+    playback_controller._transition_timer = old_timer
+
+    earlier_target = create_mock_queue_item(
+        id=1,
+        title="Earlier Song",
+        user_name="Alice",
+        content_path="/path/to/earlier.mp4",
+        content_status=QueueManager.STATUS_READY,
+    )
+    mock_queue_manager.get_song_at_offset.return_value = earlier_target
+
+    result = playback_controller.previous()
+
+    assert result is True
+    mock_queue_manager.get_song_at_offset.assert_called_once_with(2, -1)
+    old_timer.cancel.assert_called_once()
+    assert playback_controller.state == PlaybackState.TRANSITION
+    assert playback_controller._next_song_pending == earlier_target
+
+
+def test_navigate_during_transition_no_target_available(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Navigating past the end/start of the queue during TRANSITION should
+    fail cleanly and leave the existing pending transition untouched."""
+    playback_controller.state = PlaybackState.TRANSITION
+    playback_controller.current_song_id = None
+    playback_controller._cursor_song_id = 1
+
+    pending_song = create_mock_queue_item(id=2, title="Pending Song", user_name="Bob")
+    playback_controller._next_song_pending = pending_song
+
+    timer = Mock()
+    playback_controller._transition_timer = timer
+
+    mock_queue_manager.get_song_at_offset.return_value = None
+
+    result = playback_controller.skip()
+
+    assert result is False
+    # Nothing should have been torn down since navigation didn't happen
+    timer.cancel.assert_not_called()
+    assert playback_controller._next_song_pending == pending_song
+    assert playback_controller.state == PlaybackState.TRANSITION
+
+
 def test_set_pitch(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test setting pitch for current song."""
     playback_controller.current_song_id = 1
