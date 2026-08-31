@@ -52,13 +52,14 @@ These show up periodically and are not indicative of a kbox bug — don't chase 
 
 This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.
 
-Before a PR with substantial changes (especially to streaming, playback, queue, or pipeline code) can be merged:
+CI already runs pytest on every PR — no need to run it manually as a merge gate.
 
-1. Run pytest as a quick sanity check
-2. Ask the user to test end-to-end — run the actual app, play a song, verify it works
-3. Only merge after the user confirms e2e testing passes
+For PRs with substantial changes (especially to streaming, playback, queue, or pipeline code):
 
-Don't merge based on pytest alone for changes that could affect the real pipeline.
+1. Merging to `main` does NOT require e2e hardware testing first — `main` accumulates changes between releases, gated only by CI passing.
+2. Before cutting a release, do a round of end-to-end testing (run the actual app, play a song, verify it works) covering the changes merged since the last release. Only cut the release after e2e testing passes.
+
+CI/pytest is not the final signal for changes that could affect the real pipeline — the e2e pass before release is what actually validates them, it's just decoupled from individual merges.
 
 # Tech Stack
 
