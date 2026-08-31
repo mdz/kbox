@@ -45,7 +45,7 @@ These show up periodically and are not indicative of a kbox bug — don't chase 
 - **GStreamer-Audio-CRITICAL: "gst_audio_ring_buffer_set_channel_positions: should not
   be reached"** — fires on essentially every song load. Upstream GStreamer quirk in
   gstaudioringbuffer.c, not an app-level bug — full root-cause analysis is in the
-  `load_file()` docstring in [kbox/streaming.py](kbox/streaming.py).
+  `load_file()` docstring in [kbox/streaming/controller.py](kbox/streaming/controller.py).
 
 # Testing
 
@@ -89,7 +89,7 @@ the operator-auth vs. controls-unlock distinction.
 
 ## Changing the GStreamer Pipeline
 
-Before changing anything in `kbox/streaming.py`, see
+Before changing anything in `kbox/streaming/`, see
 [docs/development/gstreamer-pipeline.md](docs/development/gstreamer-pipeline.md) — covers
 why the video sink lives in its own pipeline, why the render size is fixed and capped,
 and a list of things that look like they should work but do not (kmssink already scales

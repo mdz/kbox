@@ -9,7 +9,8 @@ frame rate, playback stutters no matter how much headroom the totals suggest.
 
 Elements are built by calling the real StreamingController methods
 (_create_audio_sink_bin, _create_pitch_shift_or_identity,
-_create_qr_overlay_element, _create_videoscale_element, ...) rather than a
+_create_qr_overlay_element, ...) and the pure factory functions in
+kbox.streaming.elements (create_videoscale_element, ...) rather than a
 separately hand-written pipeline description, so this can't quietly drift
 from what the app actually runs the way a from-scratch reimplementation can.
 A prior version of this benchmark hardcoded the QR overlay at 15% of frame
@@ -59,6 +60,7 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.overlay import generate_qr_code
 from kbox.streaming import StreamingController, _get_gst, _render_caps_string
+from kbox.streaming import elements as streaming_elements
 
 AUDIO_RATE = 44100
 AUDIO_SAMPLES_PER_BUFFER = 1024
@@ -217,7 +219,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
             src = _make_video_source(src_w, src_h, frames, fps)
             vc = Gst.ElementFactory.make("videoconvert", "videoconvert")
             overlay_elems = _make_overlays(controller, src_w, src_h)
-            vs = controller._create_videoscale_element()
+            vs = streaming_elements.create_videoscale_element()
             sink = Gst.ElementFactory.make("fakesink", "sink")
             sink.set_property("sync", False)
             return [*src, vc, *overlay_elems, vs, sink]
@@ -225,7 +227,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
         def upscale_with_overlays():
             src = _make_video_source(src_w, src_h, frames, fps)
             vc = Gst.ElementFactory.make("videoconvert", "videoconvert")
-            vs = controller._create_videoscale_element()
+            vs = streaming_elements.create_videoscale_element()
             caps = Gst.ElementFactory.make("capsfilter", "render_caps")
             caps.set_property("caps", Gst.Caps.from_string(_render_caps_string(render_w, render_h)))
             overlay_elems = _make_overlays(controller, render_w, render_h)
@@ -246,7 +248,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
         # videoscale's resampling method dominates the upscale cost. This
         # matrix is exploratory tuning data, not tied to what the app runs --
         # the app always uses the default (method=1, "upscale to screen"
-        # above) via _create_videoscale_element.
+        # above) via kbox.streaming.elements.create_videoscale_element.
         print("\n  exploratory: alternative videoscale methods (not used by the app)\n")
         for method, label in (
             (0, "nearest"),

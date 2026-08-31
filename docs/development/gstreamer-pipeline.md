@@ -3,7 +3,7 @@
 How kbox gets audio and video onto a screen, why it is arranged this way, and
 the things that look like they should work but do not.
 
-Read this before changing anything in `kbox/streaming.py`. Most of the notes
+Read this before changing anything in `kbox/streaming/`. Most of the notes
 below exist because something plausible was tried, shipped, and had to be
 measured on real hardware before it became obvious it was wrong.
 

@@ -33,14 +33,18 @@ def test_streaming_controller_no_gstreamer(mock_config_manager, monkeypatch):
     """StreamingController sets _gst_missing=True and no-ops when GStreamer is absent."""
     import kbox.streaming as streaming_mod
 
-    monkeypatch.setattr(streaming_mod, "_gst_available", None)
-    monkeypatch.setattr(streaming_mod, "_Gst", None)
+    # StreamingController and its mixins call gst._get_gst() (looking it up
+    # on the kbox.streaming.gst submodule at call time), so that's what has
+    # to be patched -- not the package's own re-exported _get_gst attribute,
+    # which internal callers don't go through.
+    monkeypatch.setattr(streaming_mod.gst, "_gst_available", None)
+    monkeypatch.setattr(streaming_mod.gst, "_Gst", None)
 
     def fake_get_gst():
-        streaming_mod._gst_available = False
+        streaming_mod.gst._gst_available = False
         return None
 
-    monkeypatch.setattr(streaming_mod, "_get_gst", fake_get_gst)
+    monkeypatch.setattr(streaming_mod.gst, "_get_gst", fake_get_gst)
 
     from kbox.streaming import StreamingController
 
