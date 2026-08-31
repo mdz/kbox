@@ -23,7 +23,7 @@ little about a Pi:
     docker-compose exec kbox python3 -m pytest test/test_pipeline_benchmark.py -m benchmark -s
 
     # on a macOS dev machine
-    contrib/with-gstreamer.sh uv run pytest test/test_pipeline_benchmark.py -m benchmark -s
+    uv run pytest test/test_pipeline_benchmark.py -m benchmark -s
 
 Measures CPU time (user+system) across all threads rather than wall clock, so
 results stay meaningful when something else is running on the box. Each
@@ -43,6 +43,13 @@ from contextlib import contextmanager
 from unittest.mock import create_autospec
 
 import pytest
+
+from kbox.platform import configure_macos_gstreamer_env
+
+# Must run before anything imports `gi` -- kbox.streaming defers that import,
+# so this just needs to happen at module load time, here. Lets this run
+# directly on a Mac dev machine, via pytest or as a standalone script.
+configure_macos_gstreamer_env()
 
 # All tests in this module require GStreamer, and are only meaningful as a
 # deliberate benchmark run -- see module docstring.

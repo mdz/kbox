@@ -105,6 +105,79 @@ def is_macos() -> bool:
     return sys.platform == "darwin"
 
 
+def configure_macos_gstreamer_env() -> None:
+    """
+    Point GStreamer/PyGObject at Homebrew's install, on macOS.
+
+    macOS is not a deployment platform for kbox -- it is where development
+    happens. A Mac can easily end up with both Homebrew's GStreamer and the
+    official GStreamer.framework from the binary installer
+    (/Library/Frameworks/GStreamer.framework). Loading libraries from one and
+    plugins from the other tends to fail in confusing ways rather than
+    cleanly, so this points everything at Homebrew's copy and does not
+    inherit a plugin registry that might belong to the other one.
+
+    Must run before anything imports `gi` or loads libgstreamer -- both this
+    module's and streaming.py's GStreamer imports are lazy, so calling this
+    early in the process (e.g. the top of main(), or test module import) is
+    enough.
+
+    No-op on non-macOS platforms, or if the environment already looks
+    configured (e.g. a previous call in this process).
+
+    Raises:
+        RuntimeError: if Homebrew's glib/gstreamer can't be resolved. A
+            GStreamer.framework install, or a stray system copy, can satisfy
+            `import gi` well enough to get past a missing check while
+            pulling libraries and plugins from the wrong place -- so this
+            requires Homebrew's copy explicitly rather than letting some
+            other install get picked up silently.
+    """
+    if not is_macos() or "GST_PLUGIN_SYSTEM_PATH_1_0" in os.environ:
+        return
+
+    def brew_prefix(pkg: str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["brew", "--prefix", pkg], capture_output=True, text=True, check=True
+            )
+            return result.stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    glib_prefix = brew_prefix("glib")
+    gstreamer_prefix = brew_prefix("gstreamer")
+    if not glib_prefix or not gstreamer_prefix:
+        raise RuntimeError(
+            "GStreamer via Homebrew is required on macOS, but "
+            "`brew --prefix glib gstreamer` didn't resolve it (is Homebrew "
+            "installed, and are glib/gstreamer installed through it?). "
+            "Run: brew install gstreamer glib gobject-introspection"
+        )
+
+    def prepend(name: str, value: str) -> None:
+        existing = os.environ.get(name)
+        os.environ[name] = f"{value}:{existing}" if existing else value
+
+    # Libraries and GObject introspection data, from Homebrew.
+    prepend("DYLD_LIBRARY_PATH", f"{glib_prefix}/lib:{gstreamer_prefix}/lib")
+    prepend("GI_TYPELIB_PATH", f"{gstreamer_prefix}/share/gir-1.0")
+
+    # Plugins. GST_PLUGIN_SYSTEM_PATH_1_0 is set rather than appended, so a
+    # GStreamer.framework path already in the environment cannot pull
+    # plugins from the other install into this process.
+    os.environ["GST_PLUGIN_SYSTEM_PATH_1_0"] = f"{gstreamer_prefix}/lib/gstreamer-1.0"
+    prepend(
+        "GST_PLUGIN_PATH",
+        f"{os.path.expanduser('~/.gstreamer-1.0')}:{gstreamer_prefix}/lib/gstreamer-1.0",
+    )
+
+    # Forking to scan the plugin registry is unreliable on macOS.
+    os.environ["GST_REGISTRY_FORK"] = "no"
+
+    os.environ["GST_DEBUG_NO_COLOR"] = "1"
+
+
 def find_gstreamer_library() -> Optional[str]:
     """
     Find the GStreamer library path on macOS.
