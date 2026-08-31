@@ -4,11 +4,19 @@ Integration tests for StreamingController.
 These tests use fakesinks for headless testing and verify pipeline state
 transitions, pitch shifting, and error handling without requiring hardware.
 
-All tests in this module require GStreamer and will be skipped if unavailable.
+All tests in this module require GStreamer (and, for the native pitch-shift
+element, native/gst-signalsmith-pitch/build.sh having been run). They do not
+skip when it's unavailable -- they fail loudly, so a missing dependency shows
+up as a red build rather than silently vanished coverage. Run them where
+GStreamer is guaranteed: the Docker image (see .github/workflows/ci.yml), or a
+macOS dev machine with the dev dependencies installed -- see
+docs/development/gstreamer-pipeline.md.
 """
 
 import logging
+import os
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -20,11 +28,8 @@ from kbox.platform import configure_macos_gstreamer_env
 
 # Must run before anything imports `gi` -- kbox.streaming defers that import,
 # so this just needs to happen at module load time, here. Lets
-# `uv run pytest -m gstreamer` work directly on a Mac dev machine.
+# `uv run pytest` work directly on a Mac dev machine.
 configure_macos_gstreamer_env()
-
-# Mark all tests in this module as requiring GStreamer
-pytestmark = pytest.mark.gstreamer
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
@@ -111,13 +116,26 @@ def test_video_3s():
 
 @pytest.fixture
 def mock_config_manager():
-    """Create a mock ConfigManager with test defaults."""
-    db = create_autospec(Database, instance=True)
+    """Create a ConfigManager backed by a real temp-file database.
+
+    A create_autospec(Database) mock previously stood in here, but its
+    cursor().fetchone() returns a truthy MagicMock for any unset key --
+    which made every ConfigManager.get() fall-through to defaults silently
+    return garbage instead of None, masking real bugs (e.g. the
+    signalsmith-pitch-plugin lookup treating a MagicMock as a valid path).
+    A real (temporary) database behaves like production.
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = Database(db_path=path)
     config_manager = ConfigManager(db)
 
     config_manager.set("audio_output_device", None)
 
-    return config_manager
+    yield config_manager
+
+    db.close()
+    os.unlink(path)
 
 
 @pytest.fixture
@@ -465,8 +483,11 @@ def _run_pitch_element_and_measure_frequency(
 def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
     """The native signalsmith element should genuinely change pitch, not just pass audio through."""
     elem = controller._create_signalsmith_pitch_shift()
-    if elem is None:
-        pytest.skip("signalsmithpitch plugin not available on this machine")
+    assert elem is not None, (
+        "signalsmithpitch plugin not available -- run "
+        "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
+        "libgstreamer-plugins-base1.0-dev), or check the Docker image build"
+    )
 
     semitones = 12  # one octave up -> should double the frequency
     input_freq = 220.0
@@ -641,13 +662,10 @@ def test_stop_cleans_up_pipeline(controller, test_video_1s):
     assert controller.playbin is None
 
 
-def test_streaming_controller_initialization():
+def test_streaming_controller_initialization(mock_config_manager):
     """Test basic StreamingController initialization."""
-    db = create_autospec(Database, instance=True)
-    config_manager = ConfigManager(db)
-
     server = create_autospec(MagicMock, instance=True)
-    streaming = StreamingController(config_manager, server, use_fakesinks=True)
+    streaming = StreamingController(mock_config_manager, server, use_fakesinks=True)
 
     # Verify it initialized
     assert streaming.get_pipeline_state() == "ready"
@@ -661,9 +679,9 @@ def test_streaming_controller_initialization():
 
 def test_qr_overlay_resizes_on_video_caps(controller, test_video_3s):
     """Test that QR overlay resizes based on video resolution via caps negotiation."""
-    # Skip if QR overlay not available (optional element)
-    if controller.qr_overlay is None:
-        pytest.skip("QR overlay not available")
+    assert controller.qr_overlay is not None, (
+        "gdkpixbufoverlay not available -- install gstreamer1.0-plugins-good"
+    )
 
     # Store initial size
     initial_size = controller._qr_current_size
@@ -684,8 +702,9 @@ def test_qr_overlay_resizes_on_video_caps(controller, test_video_3s):
 
 def test_qr_overlay_position_calculation(controller, test_video_3s):
     """Test that QR position is calculated correctly for different corners."""
-    if controller.qr_overlay is None:
-        pytest.skip("QR overlay not available")
+    assert controller.qr_overlay is not None, (
+        "gdkpixbufoverlay not available -- install gstreamer1.0-plugins-good"
+    )
 
     # Test each position
     for position in ["top-left", "top-right", "bottom-left", "bottom-right"]:
@@ -712,8 +731,9 @@ def test_qr_overlay_position_calculation(controller, test_video_3s):
 
 def test_show_notification(controller):
     """Test that notifications can be shown and hidden."""
-    if controller.text_overlay is None:
-        pytest.skip("Text overlay not available")
+    assert controller.text_overlay is not None, (
+        "textoverlay not available -- install gstreamer1.0-plugins-base"
+    )
 
     # Show a notification
     controller.show_notification("Test notification", duration_seconds=1.0)
@@ -742,8 +762,9 @@ def test_show_notification_escapes_pango_markup(controller):
     """Titles/artists with &, <, > must be escaped before hitting the
     textoverlay element, or GStreamer emits a Pango markup parse warning
     (e.g. "Shallow ... (Lady Gaga & Bradley Cooper)")."""
-    if controller.text_overlay is None:
-        pytest.skip("Text overlay not available")
+    assert controller.text_overlay is not None, (
+        "textoverlay not available -- install gstreamer1.0-plugins-base"
+    )
 
     raw = "Lady Gaga & Bradley Cooper <3 <live>"
     controller.show_notification(raw, duration_seconds=60.0)
@@ -755,8 +776,9 @@ def test_show_notification_escapes_pango_markup(controller):
 
 def test_set_overlay_text_escapes_pango_markup(controller):
     """set_overlay_text() (persistent overlay) must also escape markup."""
-    if controller.text_overlay is None:
-        pytest.skip("Text overlay not available")
+    assert controller.text_overlay is not None, (
+        "textoverlay not available -- install gstreamer1.0-plugins-base"
+    )
 
     raw = "Now singing: Ben & Jerry's <Encore>"
     controller.set_overlay_text(raw)
@@ -887,8 +909,9 @@ def test_show_notification_during_interstitial(controller, interstitial_image):
     position 0 to force imagefreeze to regenerate the frame so the text
     overlay actually appears on the frozen image.
     """
-    if controller.text_overlay is None:
-        pytest.skip("Text overlay not available")
+    assert controller.text_overlay is not None, (
+        "textoverlay not available -- install gstreamer1.0-plugins-base"
+    )
 
     controller.display_image(interstitial_image)
     assert controller._is_interstitial is True
@@ -950,8 +973,10 @@ def test_overlays_are_composited_after_the_render_caps(controller):
     Upstream they would be drawn onto the source frame and scaled with it,
     which made the QR code enormous and resized it on every song.
     """
-    if not controller.qr_overlay and not controller.text_overlay:
-        pytest.skip("No overlay elements available in this GStreamer build")
+    assert controller.qr_overlay or controller.text_overlay, (
+        "no overlay elements available -- install gstreamer1.0-plugins-good "
+        "and gstreamer1.0-plugins-base"
+    )
 
     chain = _linked_chain(controller.display_pipeline, "intervideosrc")
 
@@ -1082,8 +1107,9 @@ def test_text_layout_leaves_font_size_to_auto_resize(controller):
     deriving a size from the display scales it twice -- which put roughly
     66pt of text across a 1080p screen.
     """
-    if not controller.text_overlay:
-        pytest.skip("Text overlay not available")
+    assert controller.text_overlay is not None, (
+        "textoverlay not available -- install gstreamer1.0-plugins-base"
+    )
 
     font_before = controller.text_overlay.get_property("font-desc")
 
