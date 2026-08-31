@@ -381,8 +381,22 @@ class PlaybackController:
         # Show persistent overlay at the very start of the song (within first 3 seconds)
         # This allows the singer to see their name even if they missed the interstitial
         # and lets the audience learn their name
-        if current_position <= 3:
-            current_song = self.queue_manager.get_item(self.current_song_id)
+        if current_position > 3:
+            return
+
+        song_id = self.current_song_id
+
+        with self._locked():
+            # Re-check under lock: state may have changed (operator skip/
+            # stop, or a song change) since the unlocked check above. Only
+            # set the flag/overlay if the song we decided on is still the
+            # one actually playing.
+            if self._current_singer_shown or self.state != PlaybackState.PLAYING:
+                return
+            if self.current_song_id != song_id:
+                return
+
+            current_song = self.queue_manager.get_item(song_id)
             if current_song:
                 overlay_text = f"Now singing: {current_song.user_name}"
                 # Add extracted song metadata if available
@@ -422,8 +436,10 @@ class PlaybackController:
         if not self.current_song_id:
             return
 
+        song_id = self.current_song_id
+
         # Get current song data to check duration
-        current_song = self.queue_manager.get_item(self.current_song_id)
+        current_song = self.queue_manager.get_item(song_id)
         if not current_song:
             return
 
@@ -433,9 +449,21 @@ class PlaybackController:
 
         # Update overlay text when 15 seconds or less remain
         time_remaining = duration - current_position
-        if time_remaining <= 15:
+        if time_remaining > 15:
+            return
+
+        with self._locked():
+            # Re-check under lock: state may have changed (operator skip/
+            # stop, or a song change) since the unlocked check above. Only
+            # set the flag/overlay if the song we decided on is still the
+            # one actually playing.
+            if self._up_next_shown or self.state != PlaybackState.PLAYING:
+                return
+            if self.current_song_id != song_id:
+                return
+
             # Get next song by queue position (show who's up next regardless of download status)
-            next_song = self.queue_manager.get_song_at_offset(self.current_song_id, +1)
+            next_song = self.queue_manager.get_song_at_offset(song_id, +1)
             if next_song:
                 overlay_text = f"Up next: {next_song.user_name}"
                 self._set_base_overlay(overlay_text)

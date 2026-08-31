@@ -5,6 +5,7 @@ Uses mocks for dependencies.
 """
 
 import threading
+from contextlib import contextmanager
 from unittest.mock import Mock
 
 import pytest
@@ -1667,6 +1668,212 @@ class TestTrailingSilenceSkip:
         pc._check_trailing_silence_skip(150)
 
         mock_streaming_controller.stop_playback.assert_not_called()
+
+
+class TestNotificationRace:
+    """Tests for unsynchronized access to notification state from the
+    monitor thread (_check_current_singer_notification /
+    _check_up_next_notification).
+
+    Both methods follow the same check-then-lock-then-recheck shape as
+    _check_trailing_silence_skip: an unlocked fast-path check, then a
+    re-check under self.lock before mutating the "already shown" flag,
+    because a song change (via _play_song(), which resets both flags) can
+    land between the two. The invariant under test: the notification is
+    shown at most once per song, and the name shown belongs to the song
+    that was still current when the decision was finalized under the lock.
+    """
+
+    def test_current_singer_notification_sets_flag_once(
+        self, playback_controller, mock_queue_manager
+    ):
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        song = create_mock_queue_item(id=1, user_name="Alice")
+        mock_queue_manager.get_item.return_value = song
+
+        pc._check_current_singer_notification(1)
+        assert pc._current_singer_shown is True
+        assert "Alice" in pc._base_overlay_text
+
+        # A second tick for the same song must not re-show it.
+        mock_queue_manager.get_item.reset_mock()
+        pc._check_current_singer_notification(2)
+        mock_queue_manager.get_item.assert_not_called()
+
+    def test_up_next_notification_sets_flag_once(self, playback_controller, mock_queue_manager):
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        current_song = create_mock_queue_item(id=1, duration_seconds=180)
+        next_song = create_mock_queue_item(id=2, user_name="Bob")
+        mock_queue_manager.get_item.return_value = current_song
+        mock_queue_manager.get_song_at_offset.return_value = next_song
+
+        pc._check_up_next_notification(170)  # 10s remaining
+        assert pc._up_next_shown is True
+        assert "Bob" in pc._base_overlay_text
+
+        # A second tick for the same song must not re-show it.
+        mock_queue_manager.get_song_at_offset.reset_mock()
+        pc._check_up_next_notification(175)
+        mock_queue_manager.get_song_at_offset.assert_not_called()
+
+    def test_current_singer_notification_song_change_race_skips_stale_decision(
+        self, playback_controller, mock_queue_manager
+    ):
+        """A song change landing between the unlocked check and the locked
+        re-check must not attribute the notification to the old song.
+
+        Simulates the interleaving deterministically: as soon as the method
+        acquires self.lock (standing in for "another thread's _play_song()
+        ran first and changed the song"), current_song_id is flipped away
+        from the value the unlocked fast-path already decided on.
+        """
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        song1 = create_mock_queue_item(id=1, user_name="Alice")
+        mock_queue_manager.get_item.return_value = song1
+
+        real_locked = pc._locked
+
+        @contextmanager
+        def locked_with_song_change():
+            with real_locked():
+                # Simulate the song changing (as _play_song() does, under
+                # the lock) just before this call's own re-check runs.
+                pc.current_song_id = 2
+                pc._current_singer_shown = False
+                yield
+
+        pc._locked = locked_with_song_change
+        try:
+            pc._check_current_singer_notification(1)
+        finally:
+            pc._locked = real_locked
+
+        # The stale decision (song 1) must not have been applied.
+        assert pc._current_singer_shown is False
+        mock_queue_manager.get_item.assert_not_called()
+
+    def test_up_next_notification_song_change_race_skips_stale_decision(
+        self, playback_controller, mock_queue_manager
+    ):
+        """Same race, for the up-next notification."""
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        current_song = create_mock_queue_item(id=1, duration_seconds=180)
+        next_song = create_mock_queue_item(id=2, user_name="Bob")
+        mock_queue_manager.get_item.return_value = current_song
+        mock_queue_manager.get_song_at_offset.return_value = next_song
+
+        real_locked = pc._locked
+
+        @contextmanager
+        def locked_with_song_change():
+            with real_locked():
+                pc.current_song_id = 3
+                pc._up_next_shown = False
+                yield
+
+        pc._locked = locked_with_song_change
+        try:
+            pc._check_up_next_notification(170)
+        finally:
+            pc._locked = real_locked
+
+        assert pc._up_next_shown is False
+        mock_queue_manager.get_song_at_offset.assert_not_called()
+
+    def test_current_singer_notification_ignored_when_not_playing(
+        self, playback_controller, mock_queue_manager
+    ):
+        """Guards against a stale check firing after an operator action
+        (skip/stop) already changed state, mirroring
+        test_check_trailing_silence_skip_ignored_when_not_playing."""
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+
+        real_locked = pc._locked
+
+        @contextmanager
+        def locked_with_stop():
+            with real_locked():
+                pc.state = PlaybackState.STOPPED
+                yield
+
+        pc._locked = locked_with_stop
+        try:
+            pc._check_current_singer_notification(1)
+        finally:
+            pc._locked = real_locked
+
+        assert pc._current_singer_shown is False
+        mock_queue_manager.get_item.assert_not_called()
+
+    def test_concurrent_current_singer_checks_set_flag_exactly_once(
+        self, playback_controller, mock_queue_manager
+    ):
+        """Several threads racing the same check concurrently (as could
+        happen if the monitor tick overlapped itself) must still only show
+        the notification once. Synchronized with a Barrier, not sleeps."""
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        song = create_mock_queue_item(id=1, user_name="Alice")
+        mock_queue_manager.get_item.return_value = song
+
+        n_threads = 8
+        barrier = threading.Barrier(n_threads)
+
+        def worker():
+            barrier.wait(timeout=10)
+            pc._check_current_singer_notification(1)
+
+        threads = [threading.Thread(target=worker, daemon=True) for _ in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not any(t.is_alive() for t in threads)
+        assert pc._current_singer_shown is True
+        mock_queue_manager.get_item.assert_called_once()
+
+    def test_no_deadlock_when_monitor_checks_reach_play(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """Regression guard for the documented deadlock hazard: self.lock is
+        non-reentrant, and _check_auto_start_when_idle()/
+        _check_auto_resume_after_replace() call self.play(), which acquires
+        it. Running a full monitor-tick sequence (notification checks, then
+        an idle check that reaches play()) in one thread must not hang."""
+        pc = playback_controller
+        pc.state = PlaybackState.PLAYING
+        pc.current_song_id = 1
+        song = create_mock_queue_item(id=1, user_name="Alice", duration_seconds=180)
+        mock_queue_manager.get_item.return_value = song
+        mock_queue_manager.get_song_at_offset.return_value = None
+
+        done = threading.Event()
+
+        def tick():
+            pc._check_current_singer_notification(1)
+            pc._check_up_next_notification(170)
+            pc.state = PlaybackState.IDLE
+            pc._check_auto_start_when_idle()
+            done.set()
+
+        t = threading.Thread(target=tick, daemon=True)
+        t.start()
+        t.join(timeout=10)
+
+        assert done.is_set(), "monitor-tick sequence deadlocked"
+        assert not t.is_alive()
 
 
 class TestVolumeNormalization:
