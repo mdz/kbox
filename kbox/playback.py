@@ -1258,10 +1258,9 @@ class PlaybackController:
 
             from .interstitials import InterstitialGenerator
 
-            # Get cache directory from config or use default
-            cache_dir = self.config_manager.get("cache_directory")
-            if cache_dir:
-                cache_dir = os.path.join(cache_dir, "interstitials")
+            cache_dir = os.path.join(
+                str(self.config_manager.get_cache_directory()), "interstitials"
+            )
             self._interstitial_generator = InterstitialGenerator(cache_dir=cache_dir)
         return self._interstitial_generator
 
