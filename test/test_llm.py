@@ -204,16 +204,21 @@ class TestCompletionLitellmRouting:
             assert mock_litellm.anthropic_key == "sk-ant-key"
 
     def test_gemini_key_routing(self):
+        # litellm has no module-level `gemini_key` attribute it reads, so the
+        # key must be passed through the per-call `api_key` kwarg instead.
         config = _config_with(llm_model="gemini/gemini-1.5-flash", llm_api_key="AIza-gemini")
         client = LLMClient(config)
 
         mock_litellm = MagicMock()
         mock_litellm.completion = Mock(return_value="ok")
+        del mock_litellm.gemini_key
 
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
             client.completion([{"role": "user", "content": "Hi"}], temperature=0.5, max_tokens=50)
 
-            assert mock_litellm.gemini_key == "AIza-gemini"
+            assert not hasattr(mock_litellm, "gemini_key")
+            call_kwargs = mock_litellm.completion.call_args[1]
+            assert call_kwargs["api_key"] == "AIza-gemini"
 
     def test_no_key_routing_when_no_api_key(self):
         config = _config_with(llm_model="ollama/llama3.2")

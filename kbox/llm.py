@@ -88,7 +88,9 @@ class LLMClient:
                 if model.startswith("claude") or model.startswith("anthropic"):
                     litellm.anthropic_key = api_key
                 elif model.startswith("gemini"):
-                    litellm.gemini_key = api_key
+                    # litellm has no module-level `gemini_key` attribute; the key
+                    # is passed through completion_kwargs["api_key"] below instead.
+                    pass
                 else:
                     litellm.openai_key = api_key
 
@@ -107,6 +109,9 @@ class LLMClient:
 
         if base_url:
             completion_kwargs["api_base"] = base_url
+
+        if api_key and model.startswith("gemini"):
+            completion_kwargs["api_key"] = api_key
 
         self.logger.debug("Calling LLM: model=%s, temperature=%s", model, temperature)
 
