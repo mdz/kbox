@@ -8,13 +8,85 @@ All tests in this module require GStreamer and will be skipped if unavailable.
 """
 
 import logging
+import os
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
+
+
+def _configure_macos_gstreamer_env() -> None:
+    """Point GStreamer/PyGObject at Homebrew's install, on macOS.
+
+    Mirrors contrib/with-gstreamer.sh so `uv run pytest -m gstreamer` works
+    directly on a Mac dev machine, without needing to run through that
+    wrapper script first. Only touches the environment on macOS, and only
+    if it doesn't already look configured (e.g. by the wrapper script, or
+    because this was already called once in the process).
+
+    Must run before anything imports `gi` -- kbox.streaming defers that
+    import, so this just needs to happen at module load time, here.
+    """
+    if sys.platform != "darwin" or "GST_PLUGIN_SYSTEM_PATH_1_0" in os.environ:
+        return
+
+    def brew_prefix(pkg: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["brew", "--prefix", pkg], capture_output=True, text=True, check=True
+            )
+            return result.stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    glib_prefix = brew_prefix("glib")
+    gstreamer_prefix = brew_prefix("gstreamer")
+    if not glib_prefix or not gstreamer_prefix:
+        # A GStreamer.framework install from the official binary installer,
+        # or a stray system copy, can satisfy `import gi` well enough to
+        # get past this check while pulling libraries and plugins from the
+        # wrong place -- that fails in confusing, hard-to-diagnose ways
+        # rather than cleanly. Homebrew's copy is the only one this
+        # environment setup targets, so require it explicitly instead of
+        # letting some other install get picked up silently.
+        raise RuntimeError(
+            "GStreamer tests require GStreamer installed via Homebrew, but "
+            "`brew --prefix glib gstreamer` didn't resolve it (is Homebrew "
+            "installed, and are glib/gstreamer installed through it?). "
+            "Run: brew install gstreamer glib gobject-introspection"
+        )
+
+    def prepend(name: str, value: str) -> None:
+        existing = os.environ.get(name)
+        os.environ[name] = f"{value}:{existing}" if existing else value
+
+    # Libraries and GObject introspection data, from Homebrew.
+    prepend("DYLD_LIBRARY_PATH", f"{glib_prefix}/lib:{gstreamer_prefix}/lib")
+    prepend("GI_TYPELIB_PATH", f"{gstreamer_prefix}/share/gir-1.0")
+
+    # Plugins. GST_PLUGIN_SYSTEM_PATH_1_0 is set rather than appended, so a
+    # GStreamer.framework path already in the environment cannot pull
+    # plugins from the other install into this process.
+    os.environ["GST_PLUGIN_SYSTEM_PATH_1_0"] = f"{gstreamer_prefix}/lib/gstreamer-1.0"
+    prepend(
+        "GST_PLUGIN_PATH",
+        f"{os.path.expanduser('~/.gstreamer-1.0')}:{gstreamer_prefix}/lib/gstreamer-1.0",
+    )
+
+    # LADSPA plugins, for the rubberband pitch shifter.
+    prepend("LADSPA_PATH", os.path.expanduser("~/.ladspa"))
+
+    # Forking to scan the plugin registry is unreliable on macOS.
+    os.environ["GST_REGISTRY_FORK"] = "no"
+
+    os.environ["GST_DEBUG_NO_COLOR"] = "1"
+
+
+_configure_macos_gstreamer_env()
 
 # Mark all tests in this module as requiring GStreamer
 pytestmark = pytest.mark.gstreamer

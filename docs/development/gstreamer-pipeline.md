@@ -235,7 +235,7 @@ The pipeline tests are marked `gstreamer` and deselected by default (see
 
 ```bash
 # on a macOS dev machine
-contrib/with-gstreamer.sh uv run pytest -m gstreamer
+uv run pytest -m gstreamer
 
 # on the Pi, inside the container
 docker-compose exec kbox python3 -m pytest -m gstreamer
@@ -245,10 +245,13 @@ macOS needs PyGObject, which is declared as a dev dependency for
 `sys_platform == 'darwin'` only — Linux and the Docker image use the system
 `python3-gi` package instead. If `import gi` fails, run `uv sync --group dev`.
 
-`contrib/with-gstreamer.sh` pins everything to the Homebrew GStreamer. A Mac
-can easily end up with both that and the official `GStreamer.framework` from
-the binary installer, and mixing libraries from one with plugins from the other
-fails in confusing ways.
+`test/test_streaming.py` pins everything to the Homebrew GStreamer before
+importing `gi`, the same way `contrib/with-gstreamer.sh` does for running the
+app. A Mac can easily end up with both that and the official
+`GStreamer.framework` from the binary installer, and mixing libraries from one
+with plugins from the other fails in confusing ways — so the setup requires
+`brew --prefix glib gstreamer` to resolve and raises a clear error instead of
+silently falling through to whatever `import gi` happens to find.
 
 These tests cover pipeline *structure*, not hardware behaviour. macOS has no
 `kmssink`, so anything involving the console, plane scaling or mode reporting

@@ -2,11 +2,14 @@
 # Run a command with GStreamer set up against the Homebrew install, on macOS.
 #
 #   contrib/with-gstreamer.sh uv run python -m kbox.main   # run the app
-#   contrib/with-gstreamer.sh uv run pytest -m gstreamer   # run pipeline tests
 #
 # macOS is not a deployment platform for kbox -- it is where development
 # happens. This exists so the GStreamer-dependent parts can be exercised here
 # rather than only in Docker or on a Pi.
+#
+# test/test_streaming.py sets up this same environment itself, so
+# `uv run pytest -m gstreamer` works directly without this wrapper. It is
+# still needed for running the app itself, and other one-off scripts.
 #
 # Why pin to Homebrew: a Mac can easily end up with two GStreamer installs,
 # Homebrew's and the official GStreamer.framework from the binary installer
