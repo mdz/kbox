@@ -46,7 +46,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: uv sync --locked --group dev
       - name: Run tests
-        run: uv run pytest -v
+        run: uv run pytest -m 'not gstreamer' -v
 
   e2e:
     runs-on: ubuntu-latest

@@ -376,15 +376,19 @@ on it now — do not remove it.
 
 ## Running the GStreamer tests
 
-The pipeline tests are marked `gstreamer` and deselected by default (see
-`addopts` in `pyproject.toml`).
+The pipeline tests are marked `gstreamer` and run as part of the default test
+suite (`uv run pytest`) wherever GStreamer is available -- a macOS dev machine
+with the dev dependencies installed, or the Docker image. The marker exists so
+CI can select/deselect them per job (see `addopts` in `pyproject.toml` and the
+`test`/`gstreamer` jobs in `.github/workflows/ci.yml`), not to skip them by
+default locally.
 
 ```bash
 # on a macOS dev machine
-uv run pytest -m gstreamer
+uv run pytest
 
 # on the Pi, inside the container
-docker-compose exec kbox python3 -m pytest -m gstreamer
+docker-compose exec kbox python3 -m pytest
 ```
 
 macOS needs PyGObject, which is declared as a dev dependency for

@@ -29,12 +29,12 @@ Measures CPU time (user+system) across all threads rather than wall clock, so
 results stay meaningful when something else is running on the box. Each
 variant is run several times and the lowest is reported.
 
-These tests carry both the `gstreamer` and `benchmark` markers, so they are
-excluded from the default test run (see pyproject.toml) and only run when
-explicitly requested with `-m benchmark`. That keeps them out of routine CI
-(their numbers mean nothing off real hardware) while still catching the
-benchmark code itself bit-rotting, since `-m gstreamer` runs (e.g. in CI on
-real GStreamer-capable hardware) exercise them too.
+These tests carry both the `gstreamer` and `benchmark` markers. The `benchmark`
+marker is excluded from the default test run (see pyproject.toml) and they
+only run when explicitly requested with `-m benchmark`. That keeps them out of
+routine CI (their numbers mean nothing off real hardware) while still letting
+a deliberate `-m benchmark` run on GStreamer-capable hardware catch the
+benchmark code itself bit-rotting.
 """
 
 import resource
