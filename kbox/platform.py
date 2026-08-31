@@ -172,9 +172,6 @@ def configure_macos_gstreamer_env() -> None:
         f"{os.path.expanduser('~/.gstreamer-1.0')}:{gstreamer_prefix}/lib/gstreamer-1.0",
     )
 
-    # LADSPA plugins, for the rubberband pitch shifter.
-    prepend("LADSPA_PATH", os.path.expanduser("~/.ladspa"))
-
     # Forking to scan the plugin registry is unreliable on macOS.
     os.environ["GST_REGISTRY_FORK"] = "no"
 

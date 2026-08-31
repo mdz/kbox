@@ -232,14 +232,12 @@ class ConfigManager:
             return {
                 "gstreamer_source": "osxaudiosrc",
                 "gstreamer_sink": "autoaudiosink",
-                "rubberband_plugin": "ladspa-ladspa-rubberband-dylib-rubberband-r3-pitchshifter-stereo",
                 "audio_output_device": None,
             }
         elif sys.platform == "linux":
             return {
                 "gstreamer_source": "alsasrc",
                 "gstreamer_sink": "alsasink",
-                "rubberband_plugin": "ladspa-ladspa-rubberband-so-rubberband-r3-pitchshifter-stereo",
                 "audio_output_device": "plughw:CARD=CODEC,DEV=0",
             }
         else:
@@ -247,7 +245,6 @@ class ConfigManager:
             return {
                 "gstreamer_source": "autoaudiosrc",
                 "gstreamer_sink": "autoaudiosink",
-                "rubberband_plugin": None,
                 "audio_output_device": None,
             }
 
@@ -257,8 +254,6 @@ class ConfigManager:
         "audio_output_channels": "2",  # Number of output channels (2=stereo, 4+ for USB mixers)
         "gstreamer_source": None,  # Overridden by platform defaults
         "gstreamer_sink": None,  # Overridden by platform defaults
-        "rubberband_plugin": None,  # Overridden by platform defaults
-        "pitch_shift_engine": "rubberband",  # "rubberband" (default, burned-in) or "signalsmith" (opt-in, not yet burn-in tested)
         "signalsmith_pitch_plugin_path": None,  # Path to libgstsignalsmithpitch.so; None = auto-detect relative to repo
         "youtube_api_key": None,
         "cache_directory": None,  # Will default to ~/.kbox/library
