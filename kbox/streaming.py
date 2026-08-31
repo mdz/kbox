@@ -510,6 +510,13 @@ class StreamingController:
         ghost_pad = Gst.GhostPad.new("sink", sink_pad)
         video_bin.add_pad(ghost_pad)
 
+        # Log what playbin is actually decoding. This is the only place the
+        # source resolution is visible: everything downstream has been
+        # rescaled to the display.
+        vc.get_static_pad("src").add_probe(
+            Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_source_caps_event
+        )
+
         self.logger.info("Video sink bin created (bridging to display pipeline)")
         return video_bin
 
@@ -577,6 +584,81 @@ class StreamingController:
             self.logger.warning("Failed to create text overlay: %s", e)
             return None
 
+    def _caps_dimensions(self, caps):
+        """
+        Best-effort (width, height) from a caps object, or (None, None).
+
+        Tries several access styles because the structure API varies between
+        PyGObject versions, falling back to parsing the caps string.
+        """
+        struct = caps.get_structure(0) if caps else None
+        if struct is None:
+            return (None, None)
+
+        # Dictionary-style access first (most compatible)
+        if hasattr(struct, "__getitem__"):
+            try:
+                return (struct["width"], struct["height"])
+            except (KeyError, TypeError):
+                pass
+
+        # Some versions expose get_value instead
+        if hasattr(struct, "get_value"):
+            try:
+                return (struct.get_value("width"), struct.get_value("height"))
+            except Exception:
+                pass
+
+        # Last resort: parse the serialised caps
+        import re
+
+        caps_str = caps.to_string()
+        width_match = re.search(r"width=\(int\)(\d+)", caps_str)
+        height_match = re.search(r"height=\(int\)(\d+)", caps_str)
+        if width_match and height_match:
+            return (int(width_match.group(1)), int(height_match.group(1)))
+
+        return (None, None)
+
+    def _on_source_caps_event(self, pad, info):
+        """
+        Log the dimensions of the video stream playbin is actually decoding.
+
+        Purely diagnostic. The display pipeline rescales everything to the
+        screen, so without this the source resolution is invisible in the logs
+        and has to be recovered by probing the file on disk.
+        """
+        Gst = _get_gst()
+
+        try:
+            event = info.get_event()
+            if event is None or event.type != Gst.EventType.CAPS:
+                return Gst.PadProbeReturn.OK
+
+            caps = event.parse_caps()
+            width, height = self._caps_dimensions(caps)
+            if width is not None and height is not None:
+                display = self._display_size
+                if display:
+                    self.logger.info(
+                        "Source video stream: %dx%d (scaled to %dx%d for display)",
+                        width,
+                        height,
+                        display[0],
+                        display[1],
+                    )
+                else:
+                    self.logger.info("Source video stream: %dx%d", width, height)
+            else:
+                self.logger.debug(
+                    "Could not extract source dimensions from caps: %s",
+                    caps.to_string()[:200] if caps else None,
+                )
+        except Exception as e:
+            self.logger.warning("Error logging source video caps: %s", e)
+
+        return Gst.PadProbeReturn.OK
+
     def _on_video_caps_event(self, pad, info):
         """Handle video caps events to detect resolution changes."""
         Gst = _get_gst()
@@ -592,37 +674,7 @@ class StreamingController:
                 if caps:
                     struct = caps.get_structure(0)
                     if struct:
-                        # Extract width and height - try multiple API styles
-                        width = None
-                        height = None
-
-                        # Try dictionary-style access first (most compatible)
-                        if hasattr(struct, "__getitem__"):
-                            try:
-                                width = struct["width"]
-                                height = struct["height"]
-                            except (KeyError, TypeError):
-                                pass
-
-                        # Fallback: try get_value (some versions)
-                        if width is None and hasattr(struct, "get_value"):
-                            try:
-                                width = struct.get_value("width")
-                                height = struct.get_value("height")
-                            except Exception:
-                                pass
-
-                        # Fallback: try to parse from caps string
-                        if width is None:
-                            caps_str = caps.to_string()
-                            self.logger.debug("Parsing caps from string: %s", caps_str)
-                            import re
-
-                            width_match = re.search(r"width=\(int\)(\d+)", caps_str)
-                            height_match = re.search(r"height=\(int\)(\d+)", caps_str)
-                            if width_match and height_match:
-                                width = int(width_match.group(1))
-                                height = int(height_match.group(1))
+                        width, height = self._caps_dimensions(caps)
 
                         if width is not None and height is not None:
                             self.logger.info("Detected video resolution: %dx%d", width, height)
