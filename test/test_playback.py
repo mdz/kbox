@@ -4,6 +4,7 @@ Unit tests for PlaybackController.
 Uses mocks for dependencies.
 """
 
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -1157,7 +1158,8 @@ def test_load_and_play_next_waits_for_not_ready_song(
     )
     mock_queue_manager.get_song_at_offset.return_value = pending_song
 
-    result = playback_controller._load_and_play_next()
+    with playback_controller._locked():
+        result = playback_controller._load_and_play_next()
 
     assert result is False
     assert playback_controller.state == PlaybackState.IDLE
@@ -1182,7 +1184,8 @@ def test_transition_waits_for_not_ready_next_song(
     )
     mock_queue_manager.get_song_at_offset.return_value = downloading_song
 
-    playback_controller._show_transition_or_end(finished_song_id=1)
+    with playback_controller._locked():
+        playback_controller._show_transition_or_end(finished_song_id=1)
 
     # Should go idle, not transition
     assert playback_controller.state == PlaybackState.IDLE
@@ -1765,3 +1768,76 @@ class TestVolumeNormalization:
         mock_streaming_controller.set_volume_gain_db.assert_called_once()
         (gain_db,), _ = mock_streaming_controller.set_volume_gain_db.call_args
         assert gain_db == pytest.approx(-6.0, abs=0.01)
+
+
+# =============================================================================
+# Locking contract (_locked / _require_locked)
+# =============================================================================
+
+
+class TestLockingContract:
+    """Tests for the explicit playback-lock contract.
+
+    Several PlaybackController methods document "assumes lock is already
+    held". _require_locked() turns that convention into a runtime check, and
+    _locked() records the owning thread so the check can tell "this thread
+    holds it" from "somebody holds it".
+    """
+
+    def test_internal_method_raises_without_lock(self, playback_controller):
+        """Calling a lock-requiring internal without the lock raises."""
+        with pytest.raises(AssertionError, match="requires self.lock"):
+            playback_controller._stop_internal()
+
+    def test_internal_method_allowed_under_locked(
+        self, playback_controller, mock_streaming_controller
+    ):
+        """The same call succeeds inside _locked()."""
+        with playback_controller._locked():
+            playback_controller._stop_internal()
+
+        assert playback_controller.state == PlaybackState.STOPPED
+        mock_streaming_controller.stop_playback.assert_called_once()
+
+    def test_raises_when_a_different_thread_holds_the_lock(self, playback_controller):
+        """The lock being held by *another* thread does not satisfy the check.
+
+        This is the case a bare `self.lock.locked()` assertion would miss:
+        the lock is held, just not by us. Sequenced with events, no sleeping.
+        """
+        lock_acquired = threading.Event()
+        release_lock = threading.Event()
+
+        def holder():
+            with playback_controller._locked():
+                lock_acquired.set()
+                release_lock.wait(timeout=10)
+
+        thread = threading.Thread(target=holder, name="LockHolder", daemon=True)
+        thread.start()
+        try:
+            assert lock_acquired.wait(timeout=10), "holder thread never acquired the lock"
+            # The lock is genuinely held - just not by this thread.
+            assert playback_controller.lock.locked()
+            assert playback_controller._lock_owner == thread.ident
+
+            with pytest.raises(AssertionError, match="requires self.lock"):
+                playback_controller._require_locked()
+        finally:
+            release_lock.set()
+            thread.join(timeout=10)
+
+        assert not thread.is_alive()
+        # Owner is cleared on exit, so the check fails again for everyone.
+        assert playback_controller._lock_owner is None
+        with pytest.raises(AssertionError, match="requires self.lock"):
+            playback_controller._require_locked()
+
+    def test_locked_clears_owner_on_exception(self, playback_controller):
+        """_locked() releases the lock and clears the owner even on error."""
+        with pytest.raises(RuntimeError):
+            with playback_controller._locked():
+                raise RuntimeError("boom")
+
+        assert playback_controller._lock_owner is None
+        assert not playback_controller.lock.locked()
