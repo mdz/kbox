@@ -751,12 +751,9 @@ class StreamingController:
         # Clear interstitial flag - we're loading a real song
         self._is_interstitial = False
 
-        # Drop to READY (not NULL) to reset for the new URI. READY releases
-        # streaming resources without tearing down the video sink, so kmssink
-        # keeps holding its DRM plane across the transition instead of
-        # releasing it and letting the console show through momentarily.
-        self.playbin.set_state(Gst.State.READY)
-        self.logger.debug("load_file: after READY")
+        # Set to NULL to reset pipeline
+        self.playbin.set_state(Gst.State.NULL)
+        self.logger.debug("load_file: after NULL")
 
         # Give the pitch shifter a fresh LADSPA instance. Nothing else clears
         # its internal buffer, so without this the tail of the previous song
@@ -1287,11 +1284,8 @@ class StreamingController:
         # Mark that we're showing an interstitial
         self._is_interstitial = True
 
-        # Stop any current playback. READY (not NULL) keeps kmssink holding
-        # its DRM plane instead of releasing it -- see load_file for the
-        # same reasoning; every transition passes through here to show the
-        # interstitial, so this is the NULL call that actually caused #94.
-        self.playbin.set_state(Gst.State.READY)
+        # Stop any current playback
+        self.playbin.set_state(Gst.State.NULL)
 
         # Set the image URI - GStreamer will use imagefreeze for static images
         self.playbin.set_property("uri", f"file://{image_path}")
