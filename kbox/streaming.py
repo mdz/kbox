@@ -79,6 +79,16 @@ def _escape_overlay_text(text: str) -> str:
     return GLib.markup_escape_text(text)
 
 
+def _render_caps_string(width: int, height: int) -> str:
+    """Caps string for the fixed render frame fed to the display sink.
+
+    Pulled out so test/test_pipeline_benchmark.py can build the exact same
+    caps the real display pipeline uses instead of a hand-copied string that
+    can drift from it.
+    """
+    return f"video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1"
+
+
 class StreamingController:
     """Controls GStreamer pipeline for audio/video playback."""
 
@@ -356,7 +366,7 @@ class StreamingController:
 
         Doing the upscale in software instead cost ~46 ms/frame, which caps
         the pipeline at ~22fps and cannot sustain 30fps video. Padding is
-        0.4-1.3 ms/frame. See contrib/benchmark_pipeline.py.
+        0.4-1.3 ms/frame. See test/test_pipeline_benchmark.py.
 
         Overlays are composited after the padding, so they sit in the padded
         frame's coordinate space: the top-left corner is the screen's corner
@@ -384,20 +394,7 @@ class StreamingController:
 
         # 3. videoscale with borders - fits any source into the fixed frame
         # below, letterboxing rather than distorting.
-        #
-        # method=nearest-neighbour instead of the bilinear default. Overlays
-        # (QR/text) are composited downstream of this element, after the
-        # capsfilter, so they are unaffected either way -- this only changes
-        # how the source video itself is scaled. Measured on a Pi 5, 640x360
-        # source upscaled to a 1280x720 render frame: bilinear costs
-        # ~25 ms/frame, nearest-neighbour ~12 ms/frame -- roughly half, for
-        # content that has no detail beyond 360 lines to begin with. See
-        # docs/development/gstreamer-pipeline.md.
-        vs = Gst.ElementFactory.make("videoscale", "videoscale")
-        if vs is None:
-            raise RuntimeError("Failed to create videoscale element")
-        vs.set_property("add-borders", True)
-        vs.set_property("method", 0)  # nearest-neighbour
+        vs = self._create_videoscale_element()
         elements.append(vs)
 
         # 4. capsfilter - pins the frame handed to the sink to one fixed size
@@ -464,10 +461,7 @@ class StreamingController:
         if self._render_size:
             width, height = self._render_size
             capsfilter.set_property(
-                "caps",
-                Gst.Caps.from_string(
-                    f"video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1"
-                ),
+                "caps", Gst.Caps.from_string(_render_caps_string(width, height))
             )
             self.logger.info(
                 "Rendering at %dx%d; the sink scales that to the %dx%d display",
@@ -555,6 +549,31 @@ class StreamingController:
         except Exception as e:
             self.logger.debug("Could not query display size: %s", e)
         return None
+
+    def _create_videoscale_element(self):
+        """Create the videoscale element that fits source video into the
+        fixed render frame, letterboxing rather than distorting.
+
+        Pulled out of _create_display_pipeline so
+        test/test_pipeline_benchmark.py can benchmark the actual element
+        instead of a hand-copied stand-in.
+
+        method=nearest-neighbour instead of the bilinear default. Overlays
+        (QR/text) are composited downstream of this element, after the
+        capsfilter, so they are unaffected either way -- this only changes
+        how the source video itself is scaled. Measured on a Pi 5, 640x360
+        source upscaled to a 1280x720 render frame: bilinear costs
+        ~25 ms/frame, nearest-neighbour ~12 ms/frame -- roughly half, for
+        content that has no detail beyond 360 lines to begin with. See
+        docs/development/gstreamer-pipeline.md.
+        """
+        Gst = _get_gst()
+        vs = Gst.ElementFactory.make("videoscale", "videoscale")
+        if vs is None:
+            raise RuntimeError("Failed to create videoscale element")
+        vs.set_property("add-borders", True)
+        vs.set_property("method", 0)  # nearest-neighbour
+        return vs
 
     def _create_video_sink_bin(self):
         """

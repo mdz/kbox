@@ -221,15 +221,20 @@ change turns out not to be enough.
 
 ## Measuring changes
 
-The display pipeline is on the hot path for every frame. `contrib/benchmark_pipeline.py`
-measures the stages:
+The display pipeline is on the hot path for every frame.
+`test/test_pipeline_benchmark.py` measures the stages, building its pipelines
+from the same `StreamingController` methods the app uses (see the file's
+docstring) so it can't quietly drift from what actually runs:
 
 ```bash
 # on the Pi, inside the container — the only numbers that mean anything
-docker-compose exec kbox python3 contrib/benchmark_pipeline.py
+docker-compose exec kbox python3 -m pytest test/test_pipeline_benchmark.py -m benchmark -s
 
 # on a macOS dev machine
-contrib/with-gstreamer.sh uv run python contrib/benchmark_pipeline.py
+contrib/with-gstreamer.sh uv run pytest test/test_pipeline_benchmark.py -m benchmark -s
+
+# run it directly for custom sizes, framerates, or a longer audio run
+contrib/with-gstreamer.sh uv run python test/test_pipeline_benchmark.py --source 640x480 --screen 1920x1080 --fps 25
 ```
 
 Its headline metric is the frame rate a configuration could sustain, not CPU

@@ -48,6 +48,7 @@ addopts = "-m 'not e2e and not gstreamer'"
 markers = [
     "gstreamer: tests that require GStreamer (run with -m gstreamer; requires GStreamer system packages)",
     "e2e: Playwright browser tests (run with -m e2e; requires playwright install chromium webkit)",
+    "benchmark: pipeline performance benchmarks (run with -m benchmark; numbers only meaningful on target hardware)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:gi.*",
