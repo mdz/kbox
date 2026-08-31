@@ -42,6 +42,12 @@ These show up periodically and are not indicative of a kbox bug — don't chase 
   another client automatically; only worth investigating if extraction actually fails
   outright (no playable format found), not just this warning appearing.
 
+- **GStreamer-Audio-CRITICAL: "gst_audio_ring_buffer_set_channel_positions: should not
+  be reached"** — fires on essentially every song load, engine-agnostic (reproduces
+  under rubberband and signalsmith alike). Upstream GStreamer quirk in
+  gstaudioringbuffer.c, not an app-level bug — full root-cause analysis is in the
+  `load_file()` docstring in [kbox/streaming.py](kbox/streaming.py).
+
 # Testing
 
 This is a multimedia project with GStreamer pipelines, audio/video hardware, and real-time playback. pytest tests use mocks and fakesinks — they verify logic but don't test the actual pipeline.
