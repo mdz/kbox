@@ -557,12 +557,22 @@ class StreamingController:
         Pulled out of _create_display_pipeline so
         test/test_pipeline_benchmark.py can benchmark the actual element
         instead of a hand-copied stand-in.
+
+        method=nearest-neighbour instead of the bilinear default. Overlays
+        (QR/text) are composited downstream of this element, after the
+        capsfilter, so they are unaffected either way -- this only changes
+        how the source video itself is scaled. Measured on a Pi 5, 640x360
+        source upscaled to a 1280x720 render frame: bilinear costs
+        ~25 ms/frame, nearest-neighbour ~12 ms/frame -- roughly half, for
+        content that has no detail beyond 360 lines to begin with. See
+        docs/development/gstreamer-pipeline.md.
         """
         Gst = _get_gst()
         vs = Gst.ElementFactory.make("videoscale", "videoscale")
         if vs is None:
             raise RuntimeError("Failed to create videoscale element")
         vs.set_property("add-borders", True)
+        vs.set_property("method", 0)  # nearest-neighbour
         return vs
 
     def _create_video_sink_bin(self):

@@ -125,6 +125,100 @@ Upstream of the scaler they would be drawn onto the source frame and magnified
 along with it. A QR sized for a 1080p screen drawn on a 360-line video is
 about 45% of its height, and stays that big once scaled up.
 
+## Reducing the scaler's cost
+
+The 360p→720p upscale (~25 ms/frame, see above) adds no information — it
+exists purely so overlays land in a frame with enough resolution to stay
+sharp. Four ways to cut that cost were investigated; measurements below are
+all on a Pi 5, 640x360 @ 30fps unless noted.
+
+**Shipped: `videoscale method=nearest-neighbour`.** Overlays are composited
+*after* the capsfilter (see above), so the scaler's method only affects the
+video itself, never overlay sharpness. Nearest-neighbour halves the upscale
+cost against the bilinear default:
+
+| method | scale-stage cost | total (incl. decode) |
+|---|---|---|
+| bilinear (previous default) | ~25 ms/frame | ~27 ms/frame |
+| nearest-neighbour (shipped) | ~12 ms/frame | ~14 ms/frame |
+
+Content has no detail beyond 360 lines to begin with, so nearest-neighbour's
+blockiness is not expected to be visible at normal viewing distance. No
+other trade-off was found — it's a one-property change.
+
+**Considered: fetch and render at 720p, making `videoscale` a passthrough.**
+Cheaper decode-plus-scale than expected, but decode is *not* free at 720p —
+the Pi 5 has no H.264 hardware decoder (only an HEVC decode block,
+`rpi-hevc-dec`), so 720p H.264 is software-decoded via `openh264dec`.
+Measured with `filesrc ! decodebin ! fakesink`, same content re-encoded at
+both sizes:
+
+| source | decode cost | scale-stage cost (passthrough at 720p) | total |
+|---|---|---|---|
+| 640x360 (current) | ~1.9 ms/frame | ~25 ms/frame (upscale) | ~27 ms/frame |
+| 1280x720 | ~8.1 ms/frame | ~10.9 ms/frame | ~19 ms/frame |
+
+That 10.9 ms at "passthrough" is not zero — `videoconvert` and overlay
+compositing both still cost more on a bigger frame, so this is a real but
+smaller win than "decode is cheaper than upscaling" suggests on its own.
+
+It is also not currently reachable in production: `kbox/ytdlp.py` requests
+`bestvideo[height<={video_max_resolution}]`, but on this deployment's yt-dlp,
+YouTube's DASH formats above 360p require a JS-runtime-based signature/PO
+token solver that isn't installed. Tested across `android`, `web`, `tv`, and
+`web_safari` player clients — all fell back to the legacy progressive 360p
+stream regardless of the configured cap. Raising `video_max_resolution` to
+720 would silently do nothing today; making it work is a yt-dlp/JS-runtime
+dependency question, unrelated to the pipeline itself. Worth revisiting if
+that gets fixed, since it would also raise the picture's actual detail.
+
+**Deferred: V4L2 M2M hardware scaler (`pispbe`).** Mapping the devices into
+the container is trivial (`--device=/dev/video*` in `docker-compose.yml`,
+not currently there) — the real question is what's behind them, and that
+turned out more capable than a first pass suggested. `pispbe`
+(`platform:1000880000.pisp_be`, `/dev/video20`–`/dev/video27`) is the Pi 5
+ISP backend, and `media-ctl -d /dev/media1 -p` shows it as a genuine
+general-purpose engine: one input node (`pispbe-input`, a plain V4L2
+*output*-multiplanar queue any source can write YUV into, not
+camera-specific) feeds a subdev that produces **two independently-sized**
+capture nodes (`pispbe-output0`, `pispbe-output1`) — exactly the "scale to
+one size for overlays, keep the other at source res" shape this problem
+wants, and in hardware. `libpisp1` and the kernel UAPI headers
+(`pisp_be_config.h`) are installed on the host, so the config-buffer format
+libcamera uses to drive it is available without reverse-engineering.
+
+What's missing is any GStreamer glue. `GST_DEBUG=v4l2:5 gst-inspect-1.0
+video4linux2` shows the plugin *does* dynamically probe `/dev/video*` for
+M2M devices — it found and registered `v4l2slh265dec` against
+`rpi-hevc-dec` this way — but it explicitly skips `pispbe`'s nodes. That
+tracks: `rpi-hevc-dec` is a single-node stateless-codec M2M device, the
+shape GStreamer's v4l2 plugin knows how to drive. `pispbe` is a
+multi-node, media-controller-linked device that also needs a per-frame
+config buffer pushed through a seventh node (`pispbe-config`,
+`/dev/video27`) — a different, more involved protocol with no existing
+GStreamer element on either side of it.
+
+Net: the hardware is real and well-suited to this problem, but using it
+means writing a new element (media-ctl link setup at startup, libpisp-driven
+config construction per frame, multi-plane buffer queuing across the input/
+config/output nodes, ideally DMA-BUF-shared with `decodebin`'s output to
+stay zero-copy) rather than configuring one that exists. That's a
+substantial, undocumented-territory systems project — bigger than the DRM
+plane option below, not a quick win. Worth a dedicated follow-up if a future
+need for hardware scaling outgrows what nearest-neighbour buys; not
+attempted in this pass.
+
+**Deferred: overlays on their own DRM plane.** `kmssink` takes a `plane-id`
+property, and the Pi has spare planes free at runtime (checked via
+`/sys/kernel/debug/dri/*/state` — the video currently claims one plane,
+several more sit unused). Moving overlays to a second plane would decouple
+overlay sharpness from render size, unlocking a 360p render (video-only
+scale-stage cost ~2.7 ms/frame, passthrough) without softening the QR or
+text. This is real headroom, but it means a second sink/pipeline and
+plane-level compositing — the highest-complexity option here, and not
+attempted in this pass. Worth a dedicated follow-up if the nearest-neighbour
+change turns out not to be enough.
+
 ## Measuring changes
 
 The display pipeline is on the hot path for every frame.
