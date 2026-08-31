@@ -347,6 +347,32 @@ fixing, not its resolution.
 Useful when investigating: `GST_DEBUG=kmssink:7` prints the plane rectangle it
 actually programs, which beats guessing from what the screen looks like.
 
+### `kmssink` cannot run two instances against one DRM device
+
+The Pi 5 has two micro-HDMI ports and the hardware fully supports driving
+both independently — the DRM connectors enumerate fine in `/sys/class/drm/`,
+each at its own connector ID. It is tempting to route a `tee` into two
+`kmssink`s, one per `connector-id`, to show different overlays on each
+display. This fails:
+
+```
+drmModeSetPlane failed: Permission denied (13)
+```
+
+or a "failed to configure video mode" error, depending on the exact
+combination of properties tried. Each `kmssink` instance tries to become DRM
+master, and they conflict — this held across privileged Docker mode, adding
+the `video`/`render` groups, and toggling `force-modesetting`, so it is not a
+permissions issue to work around.
+
+Two real options if independent per-display overlays are ever needed: switch
+to a Wayland/Weston compositor and `waylandsink` (significant pipeline
+changes), or drive both outputs with identical content via OS-level display
+mirroring (`wlr-randr`/`xrandr`), which needs no pipeline changes at all. For
+same-content-on-both-screens (the common karaoke case), a plain HDMI
+splitter downstream of a single `kmssink` sidesteps the problem entirely and
+is what kbox uses today.
+
 ### `textoverlay` already scales its own font
 
 `auto-resize` is on by default and scales the font relative to a 640-pixel-wide
