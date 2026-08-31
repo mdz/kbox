@@ -896,11 +896,21 @@ def test_display_image_sets_interstitial_state(controller, interstitial_image):
     controller.stop_playback()
 
 
-def test_display_image_mutes_audio(controller, interstitial_image):
-    """display_image() mutes the pipeline — interstitials have no audio track."""
+def test_display_image_produces_no_audio(controller, interstitial_image):
+    """
+    Interstitials are silent.
+
+    This used to be achieved by muting playbin, which was playing the still
+    image. Interstitials now have their own video-only pipeline and playbin is
+    left in NULL, so there is no audio path to mute in the first place.
+    """
+    Gst = _get_gst()
+
     controller.display_image(interstitial_image)
 
-    assert controller.playbin.get_property("mute") is True
+    _, playbin_state, _ = controller.playbin.get_state(Gst.SECOND)
+    assert playbin_state == Gst.State.NULL
+    assert controller.interstitial_pipeline.get_by_name("isink") is not None
 
     controller.stop_playback()
 

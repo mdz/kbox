@@ -23,6 +23,11 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "pre-commit>=4.0",
+    # Lets the gstreamer-marked tests run on a macOS dev machine, via
+    # contrib/with-gstreamer.sh. macOS only: Linux and the Docker image get
+    # GObject introspection from the system python3-gi package instead.
+    "pygobject>=3.50; sys_platform == 'darwin'",
+    "pycairo>=1.26; sys_platform == 'darwin'",
 ]
 
 [build-system]
