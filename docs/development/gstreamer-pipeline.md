@@ -172,15 +172,41 @@ stream regardless of the configured cap. Raising `video_max_resolution` to
 dependency question, unrelated to the pipeline itself. Worth revisiting if
 that gets fixed, since it would also raise the picture's actual detail.
 
-**Ruled out: V4L2 M2M hardware scaler.** No such element is reachable. The
-container's `video4linux2` GStreamer plugin exposes only `v4l2src`,
-`v4l2sink`, and `v4l2radio` — no `v4l2convert` or other M2M scale/convert
-element. `/dev/video19`–`/dev/video35` on the host are `rpi-hevc-dec` (HEVC
-decode) and `pispbe` (the Pi 5 ISP backend, camera-pipeline-oriented) —
-neither is a general-purpose scaler exposed to GStreamer. `docker-compose.yml`
-also doesn't map any `/dev/video*` node into the container. Building this
-would mean writing a custom element against the raw ISP API, not configuring
-an existing one — out of proportion to the win.
+**Deferred: V4L2 M2M hardware scaler (`pispbe`).** Mapping the devices into
+the container is trivial (`--device=/dev/video*` in `docker-compose.yml`,
+not currently there) — the real question is what's behind them, and that
+turned out more capable than a first pass suggested. `pispbe`
+(`platform:1000880000.pisp_be`, `/dev/video20`–`/dev/video27`) is the Pi 5
+ISP backend, and `media-ctl -d /dev/media1 -p` shows it as a genuine
+general-purpose engine: one input node (`pispbe-input`, a plain V4L2
+*output*-multiplanar queue any source can write YUV into, not
+camera-specific) feeds a subdev that produces **two independently-sized**
+capture nodes (`pispbe-output0`, `pispbe-output1`) — exactly the "scale to
+one size for overlays, keep the other at source res" shape this problem
+wants, and in hardware. `libpisp1` and the kernel UAPI headers
+(`pisp_be_config.h`) are installed on the host, so the config-buffer format
+libcamera uses to drive it is available without reverse-engineering.
+
+What's missing is any GStreamer glue. `GST_DEBUG=v4l2:5 gst-inspect-1.0
+video4linux2` shows the plugin *does* dynamically probe `/dev/video*` for
+M2M devices — it found and registered `v4l2slh265dec` against
+`rpi-hevc-dec` this way — but it explicitly skips `pispbe`'s nodes. That
+tracks: `rpi-hevc-dec` is a single-node stateless-codec M2M device, the
+shape GStreamer's v4l2 plugin knows how to drive. `pispbe` is a
+multi-node, media-controller-linked device that also needs a per-frame
+config buffer pushed through a seventh node (`pispbe-config`,
+`/dev/video27`) — a different, more involved protocol with no existing
+GStreamer element on either side of it.
+
+Net: the hardware is real and well-suited to this problem, but using it
+means writing a new element (media-ctl link setup at startup, libpisp-driven
+config construction per frame, multi-plane buffer queuing across the input/
+config/output nodes, ideally DMA-BUF-shared with `decodebin`'s output to
+stay zero-copy) rather than configuring one that exists. That's a
+substantial, undocumented-territory systems project — bigger than the DRM
+plane option below, not a quick win. Worth a dedicated follow-up if a future
+need for hardware scaling outgrows what nearest-neighbour buys; not
+attempted in this pass.
 
 **Deferred: overlays on their own DRM plane.** `kmssink` takes a `plane-id`
 property, and the Pi has spare planes free at runtime (checked via
