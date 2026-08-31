@@ -1387,16 +1387,13 @@ class StreamingController:
                 self.text_overlay.set_property("silent", False)
                 self.logger.info("Showing notification: %s", text)
 
-                # If showing an interstitial (static image), force a seek to
-                # regenerate the frame so the text overlay appears
-                if self._is_interstitial:
-                    Gst = _get_gst()
-                    self.playbin.seek_simple(
-                        Gst.Format.TIME,
-                        Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
-                        0,
-                    )
-                    self.logger.debug("Forced seek to refresh interstitial frame")
+                # No frame regeneration needed. The text overlay lives in the
+                # display pipeline, which is fed continuously -- by playbin
+                # during a song, by imagefreeze during an interstitial -- so
+                # the overlay is composited onto every frame as it passes.
+                # This used to seek playbin to force a still image to be
+                # redrawn, which is now both unnecessary and wrong: playbin is
+                # in NULL while an interstitial shows.
 
                 # Schedule hide after duration
                 def hide_notification():
@@ -1423,14 +1420,8 @@ class StreamingController:
                 self.text_overlay.set_property("silent", True)
                 self._notification_timer = None
 
-                # If showing an interstitial, force a seek to refresh the frame
-                if self._is_interstitial:
-                    Gst = _get_gst()
-                    self.playbin.seek_simple(
-                        Gst.Format.TIME,
-                        Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
-                        0,
-                    )
+                # No frame regeneration needed here either -- see
+                # show_notification.
 
                 self.logger.debug("Notification hidden")
             except Exception as e:
@@ -1593,7 +1584,7 @@ class StreamingController:
         # is set as a property afterwards rather than interpolated, so paths
         # needing escaping in the launch syntax cannot break the parse.
         pipeline = Gst.parse_launch(
-            "filesrc name=isrc ! decodebin ! videoconvert ! imagefreeze "
+            "filesrc name=isrc ! decodebin ! videoconvert ! imagefreeze name=ifreeze "
             f"! video/x-raw,framerate={self.INTERSTITIAL_FRAMERATE}/1 "
             "! videoconvert ! intervideosink name=isink"
         )
