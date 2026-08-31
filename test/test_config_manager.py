@@ -179,13 +179,59 @@ class TestFullConfig:
 
     def test_full_config_values_include_defaults(self, config_manager):
         full = config_manager.get_full_config()
-        assert "operator_pin" in full["values"]
-        assert full["values"]["operator_pin"] == "1234"
+        assert "default_youtube_volume" in full["values"]
+        assert full["values"]["default_youtube_volume"] == "0.8"
 
     def test_full_config_schema_matches_get_config_schema(self, config_manager):
         full = config_manager.get_full_config()
         schema = config_manager.get_config_schema()
         assert set(full["schema"].keys()) == set(schema.keys())
+
+
+class TestFullConfigSecretMasking:
+    def test_password_fields_are_masked_when_set(self, config_manager):
+        config_manager.set("operator_pin", "5678")
+        config_manager.set("llm_api_key", "sk-super-secret")
+        config_manager.set("youtube_api_key", "yt-super-secret")
+
+        full = config_manager.get_full_config()
+
+        assert full["values"]["operator_pin"] == "•" * 8
+        assert full["values"]["llm_api_key"] == "•" * 8
+        assert full["values"]["youtube_api_key"] == "•" * 8
+        for secret in ("5678", "sk-super-secret", "yt-super-secret"):
+            assert secret not in full["values"].values()
+
+    def test_password_field_is_empty_string_when_unset(self, config_manager):
+        config_manager.set("llm_api_key", "")
+
+        full = config_manager.get_full_config()
+
+        assert full["values"]["llm_api_key"] == ""
+
+    def test_internal_secret_keys_are_masked_even_without_schema_entry(self, config_manager):
+        config_manager.set("session_secret", "a-real-session-secret")
+        config_manager.set("access_token", "a-real-access-token")
+
+        full = config_manager.get_full_config()
+
+        assert full["values"]["session_secret"] == "•" * 8
+        assert full["values"]["access_token"] == "•" * 8
+        assert "session_secret" not in full["schema"]
+        assert "access_token" not in full["schema"]
+
+    def test_non_secret_fields_are_returned_unmasked(self, config_manager):
+        config_manager.set("suggestion_theme", "80s dance party")
+
+        full = config_manager.get_full_config()
+
+        assert full["values"]["suggestion_theme"] == "80s dance party"
+
+    def test_get_all_is_not_affected_by_masking(self, config_manager):
+        config_manager.set("operator_pin", "5678")
+
+        assert config_manager.get_all()["operator_pin"] == "5678"
+        assert config_manager.get("operator_pin") == "5678"
 
 
 class TestPlatformDefaults:

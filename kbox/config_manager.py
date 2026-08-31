@@ -22,6 +22,14 @@ CONFIG_GROUPS = {
     "queue": {"label": "Queue", "order": 7},
 }
 
+# Placeholder returned for secret-shaped values instead of the real value
+MASKED_VALUE_PLACEHOLDER = "•" * 8
+
+# Keys that hold secrets but aren't part of CONFIG_SCHEMA (so they're not
+# editable through the config UI), e.g. internally-generated tokens. These
+# must still be masked when returned via get_full_config().
+INTERNAL_SECRET_KEYS = {"session_secret", "access_token"}
+
 # Schema defining metadata for each editable configuration key
 # This drives the configuration UI - the frontend reads this to render appropriate controls
 CONFIG_SCHEMA = {
@@ -428,11 +436,26 @@ class ConfigManager:
         """
         Get complete configuration data for the UI.
 
+        Secret-shaped values (schema control "password", plus internal
+        tokens not exposed in the schema) are masked rather than returned
+        in plaintext.
+
         Returns:
             Dictionary with 'values', 'schema', and 'groups' keys.
         """
+        values = self.get_all()
+        schema = self.get_config_schema()
+
+        secret_keys = INTERNAL_SECRET_KEYS | {
+            key for key, entry in schema.items() if entry.get("control") == "password"
+        }
+        masked_values = {
+            key: (MASKED_VALUE_PLACEHOLDER if value else "") if key in secret_keys else value
+            for key, value in values.items()
+        }
+
         return {
-            "values": self.get_all(),
-            "schema": self.get_config_schema(),
+            "values": masked_values,
+            "schema": schema,
             "groups": self.get_config_groups(),
         }
