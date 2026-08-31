@@ -1140,9 +1140,6 @@ class PlaybackController:
         self.streaming_controller.set_pitch_shift(0)
         self.streaming_controller.set_volume_gain_db(0.0)
 
-        # Clear the singer/up next overlay
-        self._set_base_overlay("")
-
         # Clear current song ID (natural end of song, transitioning to next or idle)
         # NOTE: This is one of only 2 places current_song_id is mutated:
         #   1. _play_song() - sets it when starting playback
@@ -1173,6 +1170,11 @@ class PlaybackController:
 
         Note: Called with lock held.
         """
+        # Whoever was singing is no longer singing. The overlay says who is on
+        # *now*, so it must not survive into the transition screen or the start
+        # of the next song; _play_song brings it back a few seconds in.
+        self._set_base_overlay("")
+
         # Get next song by position after the one that finished
         # If finished_song_id is None, we have no reference point, so show end screen
         if finished_song_id is None:
