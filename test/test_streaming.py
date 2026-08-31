@@ -8,7 +8,9 @@ All tests in this module require GStreamer and will be skipped if unavailable.
 """
 
 import logging
+import os
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -111,13 +113,29 @@ def test_video_3s():
 
 @pytest.fixture
 def mock_config_manager():
-    """Create a mock ConfigManager with test defaults."""
-    db = create_autospec(Database, instance=True)
+    """Create a ConfigManager backed by a real temp-file database.
+
+    A fully autospecced/mocked Database was tried here previously, but
+    `cursor().execute(...).fetchone()` on such a mock returns a truthy
+    MagicMock for ANY key, not just the ones explicitly stubbed -- so
+    config_manager.get() for any unset key (e.g. signalsmith_pitch_plugin_path)
+    silently returned a bogus non-None value instead of falling through to
+    the real default. That masked the signalsmithpitch plugin from ever being
+    found in tests, so the real-pipeline pitch tests below always skipped.
+    A real (if temp-file-backed) database behaves correctly for keys that
+    were never set.
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = Database(db_path=path)
     config_manager = ConfigManager(db)
 
     config_manager.set("audio_output_device", None)
 
-    return config_manager
+    yield config_manager
+
+    db.close()
+    os.unlink(path)
 
 
 @pytest.fixture
@@ -409,7 +427,7 @@ def _estimate_frequency_hz(pcm_bytes: bytes, channels: int, sample_rate: int) ->
 
 
 def _run_pitch_element_and_measure_frequency(
-    pitch_element, semitones, input_freq=220.0, sample_rate=48000
+    pitch_element, semitones, input_freq=220.0, sample_rate=48000, channels=2
 ):
     """Push a real sine wave through pitch_element in a standalone pipeline
     (audiotestsrc -> audioconvert -> pitch_element -> audioconvert -> appsink)
@@ -428,7 +446,7 @@ def _run_pitch_element_and_measure_frequency(
     conv_in = Gst.ElementFactory.make("audioconvert")
     conv_out = Gst.ElementFactory.make("audioconvert")
     out_caps = Gst.Caps.from_string(
-        f"audio/x-raw,format=F32LE,layout=interleaved,rate={sample_rate},channels=2"
+        f"audio/x-raw,format=F32LE,layout=interleaved,rate={sample_rate},channels={channels}"
     )
     capsfilter = Gst.ElementFactory.make("capsfilter")
     capsfilter.set_property("caps", out_caps)
@@ -459,7 +477,7 @@ def _run_pitch_element_and_measure_frequency(
         pipeline.set_state(Gst.State.NULL)
 
     assert chunks, "no output samples captured -- pipeline produced nothing"
-    return _estimate_frequency_hz(b"".join(chunks), channels=2, sample_rate=sample_rate)
+    return _estimate_frequency_hz(b"".join(chunks), channels=channels, sample_rate=sample_rate)
 
 
 def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
@@ -474,6 +492,86 @@ def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
 
     expected_freq = input_freq * (2 ** (semitones / 12))
     assert measured_freq == pytest.approx(expected_freq, rel=0.05)
+
+
+def test_signalsmith_pitch_shift_mono_channel(controller):
+    """The element declares support for any channel count (see caps in
+    gstsignalsmithpitch.cpp) -- confirm mono actually works, not just the
+    stereo path exercised by the other frequency test."""
+    elem = controller._create_signalsmith_pitch_shift()
+    if elem is None:
+        pytest.skip("signalsmithpitch plugin not available on this machine")
+
+    semitones = 12  # one octave up -> should double the frequency
+    input_freq = 220.0
+    measured_freq = _run_pitch_element_and_measure_frequency(
+        elem, semitones, input_freq, channels=1
+    )
+
+    expected_freq = input_freq * (2 ** (semitones / 12))
+    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
+
+
+def test_signalsmith_pitch_shift_semitones_boundary_values(controller):
+    """The semitones property is declared with range [-24, 24]; confirm both
+    extremes round-trip through set/get without being rejected or clamped."""
+    elem = controller._create_signalsmith_pitch_shift()
+    if elem is None:
+        pytest.skip("signalsmithpitch plugin not available on this machine")
+
+    elem.set_property("semitones", -24.0)
+    assert elem.get_property("semitones") == pytest.approx(-24.0)
+
+    elem.set_property("semitones", 24.0)
+    assert elem.get_property("semitones") == pytest.approx(24.0)
+
+
+def test_signalsmith_flush_stop_resets_state(controller):
+    """FLUSH_STOP must reset the element's internal signalsmith-stretch state
+    end-to-end -- this is the behavior kbox's old rubberband destroy/recreate
+    workaround existed to approximate, and the reason this element is used
+    instead of the LADSPA wrapper (see native/gst-signalsmith-pitch/README.md
+    and gst_signalsmith_pitch_sink_event in gstsignalsmithpitch.cpp). Rapid
+    flushing seeks (as happen on quick track transitions) must not error out
+    or leave the pipeline in a broken state.
+    """
+    elem = controller._create_signalsmith_pitch_shift()
+    if elem is None:
+        pytest.skip("signalsmithpitch plugin not available on this machine")
+
+    Gst = _get_gst()
+    pipeline = Gst.Pipeline.new("pitch-shift-flush-test")
+    src = Gst.ElementFactory.make("audiotestsrc")
+    src.set_property("freq", 220.0)
+    src.set_property("wave", "sine")
+    conv_in = Gst.ElementFactory.make("audioconvert")
+    conv_out = Gst.ElementFactory.make("audioconvert")
+    sink = Gst.ElementFactory.make("fakesink")
+
+    for e in (src, conv_in, elem, conv_out, sink):
+        pipeline.add(e)
+    src.link(conv_in)
+    conv_in.link(elem)
+    elem.link(conv_out)
+    conv_out.link(sink)
+
+    pipeline.set_state(Gst.State.PLAYING)
+    bus = pipeline.get_bus()
+    try:
+        msg = bus.timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.ERROR)
+        assert msg is None, f"pipeline errored before seeking: {msg.parse_error()}"
+
+        for i in range(5):
+            ok = pipeline.seek_simple(
+                Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, 0
+            )
+            assert ok, f"flushing seek {i} returned FALSE"
+            time.sleep(0.2)
+
+        msg = bus.timed_pop_filtered(0.5 * Gst.SECOND, Gst.MessageType.ERROR)
+        assert msg is None, f"pipeline errored after flushing seeks: {msg.parse_error()}"
+    finally:
+        pipeline.set_state(Gst.State.NULL)
 
 
 # =========================================================================
