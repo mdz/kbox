@@ -110,11 +110,10 @@ export async function playback(action) {
         const response = await fetch(`/api/playback/${action}`, {method: 'POST'});
         const data = await response.json();
 
-        // Handle warning responses (no next/previous song)
+        // No next/previous song is an expected boundary condition (first/last
+        // song in the queue), not an error - silently no-op rather than
+        // interrupting with an alert.
         if (data.status === 'no_next_song' || data.status === 'no_previous_song') {
-            // Show warning message instead of error
-            const message = data.message || `No ${action} song available`;
-            alert(message);
             return;
         }
 
