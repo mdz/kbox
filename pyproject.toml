@@ -23,8 +23,8 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "pre-commit>=4.0",
-    # Lets the gstreamer-marked tests (and the app itself) run on a macOS
-    # dev machine. macOS only: Linux and the Docker image get GObject
+    # Lets the GStreamer tests (and the app itself) run on a macOS dev
+    # machine. macOS only: Linux and the Docker image get GObject
     # introspection from the system python3-gi package instead.
     "pygobject>=3.50; sys_platform == 'darwin'",
     "pycairo>=1.26; sys_platform == 'darwin'",
@@ -46,7 +46,6 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-m 'not e2e and not benchmark'"
 markers = [
-    "gstreamer: tests that require GStreamer (run in CI on a GStreamer-capable environment; requires GStreamer system packages)",
     "e2e: Playwright browser tests (run with -m e2e; requires playwright install chromium webkit)",
     "benchmark: pipeline performance benchmarks (run with -m benchmark; numbers only meaningful on target hardware)",
 ]

@@ -376,12 +376,12 @@ on it now — do not remove it.
 
 ## Running the GStreamer tests
 
-The pipeline tests are marked `gstreamer` and run as part of the default test
-suite (`uv run pytest`) wherever GStreamer is available -- a macOS dev machine
-with the dev dependencies installed, or the Docker image. The marker exists so
-CI can select/deselect them per job (see `addopts` in `pyproject.toml` and the
-`test`/`gstreamer` jobs in `.github/workflows/ci.yml`), not to skip them by
-default locally.
+The pipeline tests (`test/test_streaming.py`) are plain tests in the default
+test suite (`uv run pytest`) -- there is no marker gating them. They do not
+skip when GStreamer or one of its plugins is unavailable -- they fail loudly,
+on the theory that a quietly-skipped test is worse than no test at all. So
+they only belong on a machine that actually has GStreamer: a macOS dev machine
+with the dev dependencies installed, or the Docker image.
 
 ```bash
 # on a macOS dev machine
@@ -391,9 +391,17 @@ uv run pytest
 docker-compose exec kbox python3 -m pytest
 ```
 
+CI runs the full suite, including these tests, inside the Docker image on both
+target architectures (see the matrixed `test` job in
+`.github/workflows/ci.yml`) -- there's no separate bare-metal CI job that skips
+them.
+
 macOS needs PyGObject, which is declared as a dev dependency for
 `sys_platform == 'darwin'` only — Linux and the Docker image use the system
 `python3-gi` package instead. If `import gi` fails, run `uv sync --group dev`.
+macOS also needs the native signalsmith pitch-shift plugin built once --
+see `native/gst-signalsmith-pitch/README.md` -- or
+`test_signalsmith_pitch_shift_actually_shifts_frequency` fails.
 
 `test/test_streaming.py` and `test/test_pipeline_benchmark.py` both call
 `configure_macos_gstreamer_env()` (in `kbox/platform.py`) before importing
