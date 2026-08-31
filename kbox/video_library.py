@@ -329,13 +329,7 @@ class VideoLibrary:
     @property
     def _base_directory(self) -> Path:
         """Get base storage directory from config, creating it if needed."""
-        cache_dir = self.config_manager.get("cache_directory")
-        if cache_dir is None:
-            cache_dir = str(Path.home() / ".kbox" / "library")
-
-        cache_path = Path(cache_dir)
-        cache_path.mkdir(parents=True, exist_ok=True)
-        return cache_path
+        return self.config_manager.get_cache_directory()
 
     def _get_video_directory(self, video_id: str) -> Path:
         """
