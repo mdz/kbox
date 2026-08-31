@@ -6,8 +6,9 @@ Orchestrates playback, manages state transitions, and handles error recovery.
 
 import logging
 import threading
+from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from .database import ConfigRepository
 from .models import QueueItem
@@ -66,7 +67,22 @@ class PlaybackController:
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
+
+        # LOCK ORDERING: self.lock (OUTER) -> self._notification_lock (INNER).
+        # Code holding self.lock may acquire self._notification_lock (e.g.
+        # _stop_internal() -> _set_base_overlay()). The reverse must NEVER
+        # happen: nothing executed while holding self._notification_lock may
+        # call a method that takes self.lock.
+        #
+        # This lock is deliberately NOT an RLock. Re-entering it is a bug, and
+        # a plain Lock deadlocks loudly instead of silently absorbing it.
+        # Methods that require it are marked with self._require_locked().
         self.lock = threading.Lock()
+
+        # Thread ID of the current holder of self.lock, or None. Maintained by
+        # _locked() and checked by _require_locked(). Only ever written while
+        # self.lock is held, so no separate synchronization is needed.
+        self._lock_owner: Optional[int] = None
 
         # Cached trailing-silence trim point (seconds) for the current song,
         # looked up once in _play_song(). None if unavailable/disabled.
@@ -100,12 +116,56 @@ class PlaybackController:
         # Overlay management - PlaybackController owns overlay state
         self._base_overlay_text = ""  # Persistent overlay (current singer, up next, etc.)
         self._notification_timer: Optional[threading.Timer] = None
+        # INNER lock - see the lock-ordering note on self.lock above. May be
+        # acquired while self.lock is held; must never be held while acquiring
+        # self.lock.
         self._notification_lock = threading.Lock()
 
         self._start_monitor()
 
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
+
+    # =========================================================================
+    # Locking
+    # =========================================================================
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """
+        Acquire the playback lock, recording the owning thread.
+
+        Use this instead of `with self.lock:` everywhere. Recording the owner
+        is what makes _require_locked() able to check that *this* thread holds
+        the lock, rather than merely that somebody does.
+
+        self.lock is not reentrant, so nesting this (directly or via a method
+        that uses it) deadlocks. That is intentional - see the lock-ordering
+        note in __init__.
+        """
+        with self.lock:
+            self._lock_owner = threading.get_ident()
+            try:
+                yield
+            finally:
+                self._lock_owner = None
+
+    def _require_locked(self) -> None:
+        """
+        Assert that the calling thread holds the playback lock.
+
+        Called at the top of methods documented as "assumes lock is already
+        held", turning that convention from a comment into a runtime check.
+
+        Note this checks ownership, not merely that the lock is held:
+        threading.Lock.locked() would also be True while a *different* thread
+        held it, which is exactly the case worth catching.
+        """
+        if self._lock_owner != threading.get_ident():
+            raise AssertionError(
+                f"{type(self).__name__} method requires self.lock to be held by the "
+                f"calling thread; use 'with self._locked():' at the entry point"
+            )
 
     # =========================================================================
     # Queue Cursor
@@ -441,7 +501,7 @@ class PlaybackController:
         if current_position < self._current_trim_point:
             return
 
-        with self.lock:
+        with self._locked():
             # Re-check under lock: state may have changed (operator skip/
             # stop, or another path already advanced the song) since the
             # unlocked check above.
@@ -473,7 +533,7 @@ class PlaybackController:
         Returns:
             True if playback started, False otherwise
         """
-        with self.lock:
+        with self._locked():
             if self.state == PlaybackState.PLAYING:
                 self.logger.debug("Already playing")
                 return True
@@ -519,7 +579,10 @@ class PlaybackController:
 
         Respects queue order: if the next song isn't ready yet, we go idle
         rather than skipping ahead to a later song.
+
+        Assumes lock is already held.
         """
+        self._require_locked()
         cursor = self.get_cursor()
         if cursor is not None:
             next_song = self.queue_manager.get_song_at_offset(cursor, +1)
@@ -540,12 +603,15 @@ class PlaybackController:
         """
         Load and play a specific song.
 
+        Assumes lock is already held.
+
         Args:
             song: Queue item to play
 
         Returns:
             True if playback started, False on error
         """
+        self._require_locked()
         content_path = song.content_path
         if not content_path:
             self.logger.warning("No content path for song %s", song.id)
@@ -621,7 +687,7 @@ class PlaybackController:
         Returns:
             True if paused, False otherwise
         """
-        with self.lock:
+        with self._locked():
             if self.state != PlaybackState.PLAYING:
                 self.logger.debug("Not playing, cannot pause")
                 return False
@@ -641,6 +707,7 @@ class PlaybackController:
         Helper method for stopping playback. Assumes lock is already held.
         The current_song_id is preserved so that play() can resume from the same song.
         """
+        self._require_locked()
         self.streaming_controller.stop_playback()
         self._set_base_overlay("")  # Clear the singer/up next overlay
         # Note: current_song_id is NOT cleared - we remember the song for resume
@@ -656,7 +723,7 @@ class PlaybackController:
         Returns:
             True if stopped, False otherwise
         """
-        with self.lock:
+        with self._locked():
             # Cancel any pending transition
             if self._transition_timer:
                 self._transition_timer.cancel()
@@ -706,7 +773,10 @@ class PlaybackController:
 
         Returns:
             True if navigation happened, False if there's nowhere to go
+
+        Note: Assumes lock is already held.
         """
+        self._require_locked()
         if self.state == PlaybackState.TRANSITION:
             if not self._next_song_pending:
                 self.logger.warning("In transition but no pending song, cannot navigate")
@@ -801,6 +871,7 @@ class PlaybackController:
         Returns:
             True if skipped, False if no next song available
         """
+        self._require_locked()
         self.logger.info("Skipping current song")
         return self._navigate(offset=+1, record_history=True)
 
@@ -814,7 +885,7 @@ class PlaybackController:
         Returns:
             True if skipped, False if no next song available
         """
-        with self.lock:
+        with self._locked():
             return self._skip_internal()
 
     def jump_to_song(self, item_id: int) -> bool:
@@ -830,7 +901,7 @@ class PlaybackController:
         Returns:
             True if successful, False otherwise
         """
-        with self.lock:
+        with self._locked():
             self.logger.info("Jumping to song ID %s", item_id)
 
             # Get the song from queue
@@ -883,7 +954,7 @@ class PlaybackController:
         Returns:
             True if successful, False if the item wasn't found
         """
-        with self.lock:
+        with self._locked():
             item = self.queue_manager.get_item(item_id)
             if not item:
                 self.logger.warning("Cannot replace: queue item %s not found", item_id)
@@ -914,7 +985,7 @@ class PlaybackController:
         Returns:
             True if moved to previous song, False if no previous song
         """
-        with self.lock:
+        with self._locked():
             self.logger.info("Going to previous song")
             return self._navigate(offset=-1, record_history=False)
 
@@ -933,7 +1004,7 @@ class PlaybackController:
             - old_position: Original position
             - new_position: New position
         """
-        with self.lock:
+        with self._locked():
             self.logger.info("Moving down song %s", item_id)
 
             # Get current item
@@ -982,7 +1053,7 @@ class PlaybackController:
             - old_position: Original position
             - new_position: New position
         """
-        with self.lock:
+        with self._locked():
             self.logger.info("Moving up song %s", item_id)
 
             # Get current item
@@ -1030,7 +1101,7 @@ class PlaybackController:
         Returns:
             True if successful, False if item not found
         """
-        with self.lock:
+        with self._locked():
             self.logger.info("Moving song %s to play next", item_id)
 
             # Determine target position based on current playback
@@ -1081,7 +1152,7 @@ class PlaybackController:
         Returns:
             True if successful, False if item not found
         """
-        with self.lock:
+        with self._locked():
             self.logger.info("Moving song %s to end of queue", item_id)
 
             # Get max position
@@ -1119,6 +1190,7 @@ class PlaybackController:
             item_id: ID of the queue item that failed
             error_message: Error message
         """
+        self._require_locked()
         self.logger.error("Playback error for item %s: %s", item_id, error_message)
 
         # Stop playback so operator can investigate
@@ -1128,7 +1200,7 @@ class PlaybackController:
 
     def on_song_end(self):
         """Called when current song ends (EOS)."""
-        with self.lock:
+        with self._locked():
             self._complete_current_song()
 
     def _complete_current_song(self, final_position: Optional[int] = None):
@@ -1147,6 +1219,7 @@ class PlaybackController:
                 (the natural-EOS case, where GStreamer is already stopped
                 at the real end of the file).
         """
+        self._require_locked()
         finished_song_id = None
 
         if self.current_song_id:
@@ -1224,6 +1297,7 @@ class PlaybackController:
 
         Note: Called with lock held.
         """
+        self._require_locked()
         # Whoever was singing is no longer singing. The overlay says who is on
         # *now*, so it must not survive into the transition screen or the start
         # of the next song; _play_song brings it back a few seconds in.
@@ -1288,7 +1362,7 @@ class PlaybackController:
 
     def _on_transition_complete(self):
         """Called when transition timer fires to start the next song."""
-        with self.lock:
+        with self._locked():
             if self.state != PlaybackState.TRANSITION:
                 self.logger.debug("Transition complete but state changed, ignoring")
                 return
@@ -1409,41 +1483,57 @@ class PlaybackController:
         """
         Get current playback status.
 
+        Only briefly holds self.lock to snapshot (state, current_song_id) for
+        a consistent view; the position query (GStreamer) and queue lookup
+        (SQLite) below are blocking I/O and run outside the lock so status
+        polls don't contend with in-progress song transitions (e.g.
+        _play_song() holding the lock across load_file()).
+
+        Because the snapshot is taken before the I/O, the song can end or a
+        new one can start while this method is running. That's acceptable
+        for a status read (a UI poll, not a control decision), but it means
+        current_song_id may no longer match the live queue by the time
+        get_item() runs -- handled below the same way a missing item is
+        always handled.
+
         Returns:
             Dictionary with playback state and current song info
         """
         from dataclasses import asdict
 
-        with self.lock:
-            position = None
-            if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
-                position = self.streaming_controller.get_position()
+        with self._locked():
+            state = self.state
+            current_song_id = self.current_song_id
 
-            # Query current song data from database (always fresh)
-            current_song = None
-            if self.current_song_id:
-                queue_item = self.queue_manager.get_item(self.current_song_id)
-                if queue_item:
-                    # Convert QueueItem to dict for JSON serialization
-                    current_song = asdict(queue_item)
-                    # Convert datetime objects to ISO format strings for JSON
-                    if current_song.get("created_at"):
-                        current_song["created_at"] = current_song["created_at"].isoformat()
-                    # Flatten metadata and settings for easier frontend access
-                    current_song["title"] = queue_item.metadata.title
-                    current_song["duration_seconds"] = queue_item.metadata.duration_seconds
-                    current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
-                    current_song["channel"] = queue_item.metadata.channel
-                    current_song["artist"] = queue_item.metadata.artist
-                    current_song["song_name"] = queue_item.metadata.song_name
-                    current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
+        position = None
+        if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+            position = self.streaming_controller.get_position()
 
-            status = {
-                "state": self.state.value,
-                "current_song": current_song,
-                "position_seconds": position,
-            }
-            return status
+        # Query current song data from database (always fresh)
+        current_song = None
+        if current_song_id:
+            queue_item = self.queue_manager.get_item(current_song_id)
+            if queue_item:
+                # Convert QueueItem to dict for JSON serialization
+                current_song = asdict(queue_item)
+                # Convert datetime objects to ISO format strings for JSON
+                if current_song.get("created_at"):
+                    current_song["created_at"] = current_song["created_at"].isoformat()
+                # Flatten metadata and settings for easier frontend access
+                current_song["title"] = queue_item.metadata.title
+                current_song["duration_seconds"] = queue_item.metadata.duration_seconds
+                current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
+                current_song["channel"] = queue_item.metadata.channel
+                current_song["artist"] = queue_item.metadata.artist
+                current_song["song_name"] = queue_item.metadata.song_name
+                current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
+
+        status = {
+            "state": state.value,
+            "current_song": current_song,
+            "position_seconds": position,
+        }
+        return status
 
     def set_pitch(self, semitones: int) -> bool:
         """
@@ -1455,7 +1545,7 @@ class PlaybackController:
         Returns:
             True if set, False if no current song
         """
-        with self.lock:
+        with self._locked():
             if not self.current_song_id:
                 self.logger.warning("No current song to adjust pitch")
                 return False
@@ -1477,7 +1567,7 @@ class PlaybackController:
             Dictionary with status information:
             - status: 'restarted', 'nothing_playing', or 'error'
         """
-        with self.lock:
+        with self._locked():
             if not self.current_song_id or self.state not in (
                 PlaybackState.PLAYING,
                 PlaybackState.PAUSED,
@@ -1501,7 +1591,7 @@ class PlaybackController:
             Dictionary with status information:
             - status: 'seeked', 'nothing_playing', or 'error'
         """
-        with self.lock:
+        with self._locked():
             if not self.current_song_id or self.state not in (
                 PlaybackState.PLAYING,
                 PlaybackState.PAUSED,

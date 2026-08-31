@@ -424,20 +424,20 @@ def create_app(
     from fastapi.responses import FileResponse
 
     @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon():
+    def favicon():
         return FileResponse("kbox/web/static/favicon.ico")
 
     @app.get("/apple-touch-icon.png", include_in_schema=False)
-    async def apple_touch_icon():
+    def apple_touch_icon():
         return FileResponse("kbox/web/static/apple-touch-icon.png")
 
     @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
-    async def apple_touch_icon_precomposed():
+    def apple_touch_icon_precomposed():
         return FileResponse("kbox/web/static/apple-touch-icon-precomposed.png")
 
     # Queue endpoints
     @app.get("/api/queue")
-    async def get_queue(
+    def get_queue(
         queue_mgr: QueueManager = Depends(get_queue_manager),
         playback: PlaybackController = Depends(get_playback_controller),
         current_user_id: Optional[str] = Depends(get_current_user_id),
@@ -516,7 +516,7 @@ def create_app(
         }
 
     @app.get("/api/queue/settings/{video_id:path}")
-    async def get_song_settings(
+    def get_song_settings(
         video_id: str,
         history_mgr=Depends(get_history_manager),
         current_user_id: str = Depends(require_user),
@@ -531,7 +531,7 @@ def create_app(
         return {"settings": None}
 
     @app.post("/api/queue")
-    async def add_song(
+    def add_song(
         request_data: AddSongRequest,
         request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
@@ -575,7 +575,7 @@ def create_app(
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.delete("/api/queue/{item_id}")
-    async def remove_song(
+    def remove_song(
         item_id: int,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         is_operator: bool = Depends(check_operator),
@@ -604,7 +604,7 @@ def create_app(
         return {"status": "removed"}
 
     @app.post("/api/queue/{item_id}/replace")
-    async def replace_song(
+    def replace_song(
         item_id: int,
         request_data: ReplaceSongRequest,
         queue_mgr: QueueManager = Depends(get_queue_manager),
@@ -642,7 +642,7 @@ def create_app(
         return {"status": "replaced"}
 
     @app.patch("/api/queue/{item_id}/position")
-    async def reorder_song(
+    def reorder_song(
         item_id: int,
         request_data: ReorderRequest,
         queue_mgr: QueueManager = Depends(get_queue_manager),
@@ -657,7 +657,7 @@ def create_app(
         return {"status": "reordered"}
 
     @app.patch("/api/queue/{item_id}")
-    async def update_queue_item(
+    def update_queue_item(
         item_id: int,
         request_data: UpdateQueueItemRequest,
         queue_mgr: QueueManager = Depends(get_queue_manager),
@@ -694,7 +694,7 @@ def create_app(
         return {"status": "updated", "item": updated_item}
 
     @app.post("/api/queue/{item_id}/play-next")
-    async def play_next(
+    def play_next(
         item_id: int,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -709,7 +709,7 @@ def create_app(
         return {"status": "moved_to_next"}
 
     @app.post("/api/queue/{item_id}/move-to-end")
-    async def move_to_end(
+    def move_to_end(
         item_id: int,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -724,7 +724,7 @@ def create_app(
         return {"status": "moved_to_end"}
 
     @app.post("/api/queue/{item_id}/move-down")
-    async def move_down(
+    def move_down(
         item_id: int,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -743,7 +743,7 @@ def create_app(
         return result
 
     @app.post("/api/queue/{item_id}/move-up")
-    async def move_up(
+    def move_up(
         item_id: int,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -762,7 +762,7 @@ def create_app(
         return result
 
     @app.post("/api/queue/clear")
-    async def clear_queue(
+    def clear_queue(
         queue_mgr: QueueManager = Depends(get_queue_manager),
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -777,7 +777,7 @@ def create_app(
 
     # Video search endpoints
     @app.get("/api/search")
-    async def search_videos(
+    def search_videos(
         q: str,
         max_results: int = 10,
         video_lib: VideoLibrary = Depends(get_video_library),
@@ -800,7 +800,7 @@ def create_app(
         return {"results": results}
 
     @app.get("/api/suggestions")
-    async def get_suggestions(
+    def get_suggestions(
         max_results: int = 8,
         suggestion_engine: SuggestionEngine = Depends(get_suggestion_engine),
         current_user_id: str = Depends(require_user),
@@ -831,7 +831,7 @@ def create_app(
             )
 
     @app.get("/api/video/{video_id:path}")
-    async def get_video_info(
+    def get_video_info(
         video_id: str,
         video_lib: VideoLibrary = Depends(get_video_library),
     ):
@@ -843,14 +843,14 @@ def create_app(
 
     # Playback endpoints
     @app.get("/api/playback/status")
-    async def get_playback_status(
+    def get_playback_status(
         playback: PlaybackController = Depends(get_playback_controller),
     ):
         """Get current playback status."""
         return playback.get_status()
 
     @app.post("/api/playback/play")
-    async def play(
+    def play(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
@@ -864,7 +864,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Failed to start playback")
 
     @app.post("/api/playback/pause")
-    async def pause(
+    def pause(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
@@ -878,7 +878,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Failed to pause")
 
     @app.post("/api/playback/stop")
-    async def stop(
+    def stop(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
@@ -892,7 +892,7 @@ def create_app(
         return {"status": "stopped"}
 
     @app.post("/api/playback/skip")
-    async def skip(
+    def skip(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
@@ -907,7 +907,7 @@ def create_app(
             return {"status": "no_next_song", "message": "No next song in queue to skip to"}
 
     @app.post("/api/playback/previous")
-    async def previous(
+    def previous(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
@@ -922,7 +922,7 @@ def create_app(
             return {"status": "no_previous_song", "message": "Previous song not available"}
 
     @app.post("/api/playback/jump/{item_id}")
-    async def jump_to_song(
+    def jump_to_song(
         item_id: int,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -937,7 +937,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Failed to play song now")
 
     @app.post("/api/playback/pitch")
-    async def set_pitch(
+    def set_pitch(
         request_data: PitchRequest,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -970,7 +970,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Failed to update pitch")
 
     @app.post("/api/playback/restart")
-    async def restart(
+    def restart(
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
     ):
@@ -984,7 +984,7 @@ def create_app(
         return result
 
     @app.post("/api/playback/seek")
-    async def seek(
+    def seek(
         request_data: SeekRequest,
         playback: PlaybackController = Depends(get_playback_controller),
         is_operator: bool = Depends(check_operator),
@@ -1000,13 +1000,13 @@ def create_app(
 
     # Authentication endpoints
     @app.get("/api/auth/operator")
-    async def check_operator_status(request: Request):
+    def check_operator_status(request: Request):
         """Check if user is currently authenticated as operator."""
         is_operator = check_operator(request)
         return {"operator": is_operator}
 
     @app.post("/api/auth/operator")
-    async def authenticate_operator(
+    def authenticate_operator(
         request: Request,
         auth_data: OperatorAuthRequest,
         config: ConfigManager = Depends(get_config_manager),
@@ -1020,14 +1020,14 @@ def create_app(
             raise HTTPException(status_code=401, detail="Invalid PIN")
 
     @app.post("/api/auth/logout")
-    async def logout_operator(request: Request):
+    def logout_operator(request: Request):
         """Exit operator mode."""
         request.session["operator"] = False
         return {"status": "logged_out", "operator": False}
 
     # Configuration endpoints
     @app.get("/api/config")
-    async def get_config(config: ConfigManager = Depends(get_config_manager)):
+    def get_config(config: ConfigManager = Depends(get_config_manager)):
         """
         Get all configuration with rich schema metadata.
 
@@ -1056,7 +1056,7 @@ def create_app(
         return config_data
 
     @app.patch("/api/config")
-    async def update_config(
+    def update_config(
         request: Request,
         request_data: ConfigUpdateRequest,
         config: ConfigManager = Depends(get_config_manager),
@@ -1124,7 +1124,7 @@ def create_app(
 
     # User endpoints
     @app.post("/api/users")
-    async def register_user(
+    def register_user(
         request: Request,
         request_data: UserRequest,
         user_mgr: UserManager = Depends(get_user_manager),
@@ -1175,7 +1175,7 @@ def create_app(
         return user
 
     @app.get("/api/users/lookup")
-    async def lookup_user(
+    def lookup_user(
         name: str,
         user_mgr: UserManager = Depends(get_user_manager),
         history_mgr=Depends(get_history_manager),
@@ -1214,7 +1214,7 @@ def create_app(
         return {"normalized_name": normalize_name(name), "candidates": candidate_dicts}
 
     @app.post("/api/users/claim")
-    async def claim_user(
+    def claim_user(
         request: Request,
         request_data: UserRequest,
         user_mgr: UserManager = Depends(get_user_manager),
@@ -1251,7 +1251,7 @@ def create_app(
 
     # History endpoints
     @app.get("/api/history/{user_id}")
-    async def get_user_history(
+    def get_user_history(
         user_id: str,
         history_mgr=Depends(get_history_manager),
         is_operator: bool = Depends(check_operator),
@@ -1296,7 +1296,7 @@ def create_app(
 
     # Favorites endpoints
     @app.post("/api/favorites")
-    async def add_favorite(
+    def add_favorite(
         request_data: AddFavoriteRequest,
         favorites_mgr=Depends(get_favorites_manager),
         current_user_id: str = Depends(require_user),
@@ -1314,7 +1314,7 @@ def create_app(
         return {"status": "favorited"}
 
     @app.delete("/api/favorites/{video_id}")
-    async def remove_favorite(
+    def remove_favorite(
         video_id: str,
         favorites_mgr=Depends(get_favorites_manager),
         current_user_id: str = Depends(require_user),
@@ -1324,7 +1324,7 @@ def create_app(
         return {"status": "unfavorited"}
 
     @app.get("/api/favorites/{user_id}")
-    async def get_user_favorites(
+    def get_user_favorites(
         user_id: str,
         favorites_mgr=Depends(get_favorites_manager),
         current_user_id: Optional[str] = Depends(get_current_user_id),
@@ -1357,14 +1357,14 @@ def create_app(
 
     # Web UI
     @app.get("/display", response_class=HTMLResponse)
-    async def display(request: Request):
+    def display(request: Request):
         """Fullscreen YouTube embed display for TV/monitor."""
         # Authenticate the session so API calls from this page work
         request.session["guest_authenticated"] = True
         return templates.TemplateResponse(request, "display.html")
 
     @app.post("/api/display/song-ended")
-    async def display_song_ended(
+    def display_song_ended(
         playback: PlaybackController = Depends(get_playback_controller),
     ):
         """Signal that a song finished playing (called by /display when embed ends)."""
@@ -1372,7 +1372,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request, config: ConfigManager = Depends(get_config_manager)):
+    def index(request: Request, config: ConfigManager = Depends(get_config_manager)):
         """Serve web UI."""
         return templates.TemplateResponse(
             request,
