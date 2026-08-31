@@ -327,10 +327,11 @@ class StreamingController:
         holds the last frame for its timeout and then emits black -- so gaps
         show black rather than whatever is underneath.
 
-        The videoscale + capsfilter pair at the end forces every frame to the
-        display's native resolution with black borders baked in
-        (add-borders), so the sink's output always covers the whole screen
-        regardless of the source video's aspect ratio (issue #93).
+        The videoscale + capsfilter pair forces every frame to the display's
+        native resolution with black borders baked in (add-borders), so the
+        sink's output always covers the whole screen regardless of the source
+        video's aspect ratio (issue #93). Overlays are composited after that
+        pair, in screen space, so they do not get scaled with the video.
         """
         Gst = _get_gst()
 
@@ -350,31 +351,40 @@ class StreamingController:
             raise RuntimeError("Failed to create videoconvert element")
         elements.append(vc)
 
-        # 3. QR code overlay (optional - graceful fallback if unavailable)
-        self.qr_overlay = self._create_qr_overlay_element()
-        if self.qr_overlay:
-            elements.append(self.qr_overlay)
-
-        # 4. Text overlay for notifications (optional - graceful fallback)
-        self.text_overlay = self._create_text_overlay_element()
-        if self.text_overlay:
-            elements.append(self.text_overlay)
-
-        # Initialize notification lock
-        self._notification_lock = threading.Lock()
-
-        # 5. videoscale with borders - letterboxes rather than distorting
+        # 3. videoscale with borders - letterboxes rather than distorting
         vs = Gst.ElementFactory.make("videoscale", "videoscale")
         if vs is None:
             raise RuntimeError("Failed to create videoscale element")
         vs.set_property("add-borders", True)
         elements.append(vs)
 
-        # 6. capsfilter - caps are set once the display size is known, below
+        # 4. capsfilter - caps are set once the display size is known, below
         capsfilter = Gst.ElementFactory.make("capsfilter", "display_caps")
         if capsfilter is None:
             raise RuntimeError("Failed to create capsfilter element")
         elements.append(capsfilter)
+
+        # Overlays come AFTER the scaler on purpose, so they are composited
+        # in screen space at a fixed resolution. Upstream of it they would be
+        # drawn onto the source frame and then scaled along with it: a QR
+        # sized for a 1080p screen lands on a 360-line video as ~45% of its
+        # height and stays that big once scaled up, and because each song has
+        # a different source resolution the same pixel size comes out a
+        # different size on screen every time. Down here one pixel is one
+        # screen pixel, so overlays stay put and stay the same size.
+
+        # 5. QR code overlay (optional - graceful fallback if unavailable)
+        self.qr_overlay = self._create_qr_overlay_element()
+        if self.qr_overlay:
+            elements.append(self.qr_overlay)
+
+        # 6. Text overlay for notifications (optional - graceful fallback)
+        self.text_overlay = self._create_text_overlay_element()
+        if self.text_overlay:
+            elements.append(self.text_overlay)
+
+        # Initialize notification lock
+        self._notification_lock = threading.Lock()
 
         # 7. Platform-appropriate video sink
         from .platform import create_video_sink
@@ -411,16 +421,19 @@ class StreamingController:
                 ),
             )
             self.logger.info("Display pipeline pinned to %dx%d (full screen)", width, height)
-            # Size the QR against the screen, not the source video, so it
-            # stays put instead of resizing per song.
+            # Size overlays against the screen, not the source video, so they
+            # stay put instead of resizing per song.
             self._update_qr_size_for_resolution(width, height)
+            self._update_text_size_for_resolution(height)
         else:
             # Unknown display size (e.g. a windowed sink on macOS). Leave the
             # capsfilter open and fall back to sizing the QR from the frames.
+            # Probe the capsfilter's output, not the converter's: that is what
+            # the overlays downstream are actually drawing onto.
             self.logger.info("Display size unknown; leaving output caps unconstrained")
             if self.qr_overlay:
-                vc_src_pad = vc.get_static_pad("src")
-                vc_src_pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_video_caps_event)
+                caps_src_pad = capsfilter.get_static_pad("src")
+                caps_src_pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_video_caps_event)
 
         ret = pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
@@ -537,7 +550,9 @@ class StreamingController:
             text.set_property("halignment", "right")
             text.set_property("xpad", 20)
             text.set_property("ypad", 20)
-            text.set_property("font-desc", "Sans 9")  # Half of original 18pt
+            # Placeholder; _update_text_size_for_resolution replaces this once
+            # the display size is known.
+            text.set_property("font-desc", "Sans 9")
             text.set_property("shaded-background", True)
             text.set_property("silent", True)  # No text initially
 
@@ -598,6 +613,7 @@ class StreamingController:
                         if width is not None and height is not None:
                             self.logger.info("Detected video resolution: %dx%d", width, height)
                             self._update_qr_size_for_resolution(width, height)
+                            self._update_text_size_for_resolution(height)
                         else:
                             self.logger.debug(
                                 "Could not extract resolution from caps: %s",
@@ -657,6 +673,35 @@ class StreamingController:
 
         except Exception as e:
             self.logger.warning("Failed to update QR size for resolution: %s", e)
+
+    def _update_text_size_for_resolution(self, height):
+        """
+        Scale the notification text with the frame it is drawn on.
+
+        Same reasoning as the QR overlay: the text is composited in screen
+        space now, so a fixed point size no longer gets magnified along with
+        the video. Deriving it from the height keeps it the same physical
+        size on screen whatever the source video's resolution is.
+        """
+        if not self.text_overlay:
+            return
+
+        try:
+            font_points = max(9, round(height * 0.02))
+            padding = max(10, int(height * 0.02))
+
+            self.text_overlay.set_property("font-desc", f"Sans {font_points}")
+            self.text_overlay.set_property("xpad", padding)
+            self.text_overlay.set_property("ypad", padding)
+
+            self.logger.info(
+                "Text overlay sized for height %d: font=Sans %d, padding=%dpx",
+                height,
+                font_points,
+                padding,
+            )
+        except Exception as e:
+            self.logger.warning("Failed to update text size for resolution: %s", e)
 
     def _create_signalsmith_pitch_shift(self):
         """Try to create the native signalsmithpitch element, registering its
