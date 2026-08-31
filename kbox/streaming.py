@@ -140,6 +140,13 @@ class StreamingController:
         # showing. Mutually exclusive with playbin: only one may feed at once.
         self.interstitial_pipeline: Any = None
 
+        # Feeds the display bridge with the last frame while playback is
+        # paused -- see pause(). Also mutually exclusive with playbin feeding
+        # the bridge; unlike the interstitial case it runs alongside a
+        # (stalled) playbin rather than instead of one.
+        self._pause_freeze_pipeline: Any = None
+        self._last_video_sample: Any = None  # most recent Gst.Sample off the video bin
+
         # Overlay elements (set by _create_display_pipeline)
         self.qr_overlay = None
         self.text_overlay = None
@@ -611,6 +618,10 @@ class StreamingController:
             Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_source_caps_event
         )
 
+        # Cache the latest frame so pause() can keep the bridge fed with it
+        # -- see _start_pause_freeze_pipeline.
+        vc.get_static_pad("src").add_probe(Gst.PadProbeType.BUFFER, self._on_video_buffer_probe)
+
         self.logger.info("Video sink bin created (bridging to display pipeline)")
         return video_bin
 
@@ -750,6 +761,24 @@ class StreamingController:
                 )
         except Exception as e:
             self.logger.warning("Error logging source video caps: %s", e)
+
+        return Gst.PadProbeReturn.OK
+
+    def _on_video_buffer_probe(self, pad, info):
+        """
+        Cache the most recent frame crossing into the display bridge.
+
+        pause() replays this cached sample through a small freeze pipeline
+        to keep the bridge fed -- see _start_pause_freeze_pipeline. Storing a
+        Gst.Sample (buffer + the caps active when it arrived) just bumps a
+        refcount, so this adds negligible cost per frame.
+        """
+        Gst = _get_gst()
+
+        buf = info.get_buffer()
+        caps = pad.get_current_caps()
+        if buf is not None and caps is not None:
+            self._last_video_sample = Gst.Sample.new(buf, caps, None, None)
 
         return Gst.PadProbeReturn.OK
 
@@ -933,6 +962,7 @@ class StreamingController:
         # Hand the display bridge over to playbin: the interstitial pipeline
         # must stop feeding it before playbin starts, or both would.
         self._stop_interstitial_pipeline()
+        self._stop_pause_freeze_pipeline()
 
         # Drop to READY to reset pipeline before loading the next file. See
         # the "NULL versus READY also makes no difference to format
@@ -997,6 +1027,8 @@ class StreamingController:
         self.playbin.set_state(Gst.State.READY)
         self.logger.debug("stop_playback: after READY")
 
+        self._stop_pause_freeze_pipeline()
+
         self.state = "idle"
         self.current_file = None
         self.logger.info("Returned to idle state")
@@ -1021,6 +1053,11 @@ class StreamingController:
                 "Pause state change: ret=%s, state=%s, pending=%s", ret, state, pending
             )
 
+        # playbin stops feeding the display bridge across this transition
+        # (beyond one preroll frame) -- keep the picture up ourselves. See
+        # _start_pause_freeze_pipeline.
+        self._start_pause_freeze_pipeline()
+
         self.state = "paused"
         self.logger.info("Playback paused")
 
@@ -1031,6 +1068,10 @@ class StreamingController:
         if self.state != "paused":
             self.logger.warning("Cannot resume: not currently paused")
             raise RuntimeError("Cannot resume: not currently paused")
+
+        # Stop feeding the frozen frame before playbin resumes feeding real
+        # ones, or both would push to the bridge at once.
+        self._stop_pause_freeze_pipeline()
 
         Gst = _get_gst()
         ret = self.playbin.set_state(Gst.State.PLAYING)
@@ -1059,6 +1100,7 @@ class StreamingController:
         self._stop_bus_polling()
 
         self._stop_interstitial_pipeline()
+        self._stop_pause_freeze_pipeline()
 
         if self.playbin:
             try:
@@ -1101,6 +1143,7 @@ class StreamingController:
         self._stop_bus_polling()
 
         self._stop_interstitial_pipeline()
+        self._stop_pause_freeze_pipeline()
 
         # Set pipeline to NULL and release resources
         if self.playbin:
@@ -1473,6 +1516,80 @@ class StreamingController:
             self.logger.warning("Error stopping interstitial pipeline: %s", e)
         finally:
             self.interstitial_pipeline = None
+
+    def _start_pause_freeze_pipeline(self):
+        """
+        Start feeding the display bridge the last frame, for as long as
+        playback stays paused.
+
+        playbin's own video-sink-bin only pushes one preroll buffer to
+        intervideosink across a PAUSED transition and then goes quiet --
+        decoding does not continue while paused. intervideosrc serves that
+        buffer a couple of times and then falls back to generating black
+        (its "timeout" property does not hold a frame, see
+        docs/development/gstreamer-pipeline.md), so a few hundred
+        milliseconds into a pause the screen blanks to black behind the
+        overlays. This mirrors the fix already used for interstitials
+        (_create_interstitial_pipeline): keep pushing the frame through
+        imagefreeze so the bridge never runs dry.
+
+        If no frame has crossed the bridge yet (e.g. paused a moment after
+        load_file's pre-seek PAUSED, before any buffer flowed) there is
+        nothing to freeze on, so this is a no-op and playback falls back to
+        the earlier black-screen behaviour for that edge case.
+        """
+        if self._last_video_sample is None:
+            self.logger.debug("No cached frame to freeze on pause")
+            return
+
+        Gst = _get_gst()
+
+        self._stop_pause_freeze_pipeline()
+
+        try:
+            pipeline = Gst.parse_launch(
+                "appsrc name=asrc format=time ! imagefreeze "
+                f"! video/x-raw,framerate={self.INTERSTITIAL_FRAMERATE}/1 "
+                "! videoconvert ! intervideosink name=isink"
+            )
+
+            buf = self._last_video_sample.get_buffer().copy()
+            buf.pts = 0
+            buf.dts = 0
+
+            appsrc = pipeline.get_by_name("asrc")
+            appsrc.set_property("caps", self._last_video_sample.get_caps())
+
+            sink = pipeline.get_by_name("isink")
+            sink.set_property("channel", self.DISPLAY_CHANNEL)
+            sink.set_property("sync", True)
+
+            ret = pipeline.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                self.logger.warning("Failed to start pause freeze pipeline")
+                pipeline.set_state(Gst.State.NULL)
+                return
+
+            appsrc.emit("push-buffer", buf)
+            appsrc.emit("end-of-stream")
+
+            self._pause_freeze_pipeline = pipeline
+        except Exception as e:
+            self.logger.warning("Error starting pause freeze pipeline: %s", e)
+
+    def _stop_pause_freeze_pipeline(self):
+        """Tear down the pause freeze pipeline if one is running."""
+        if not self._pause_freeze_pipeline:
+            return
+
+        Gst = _get_gst()
+        try:
+            self._pause_freeze_pipeline.set_state(Gst.State.NULL)
+            self._pause_freeze_pipeline.get_state(5 * Gst.SECOND)
+        except Exception as e:
+            self.logger.warning("Error stopping pause freeze pipeline: %s", e)
+        finally:
+            self._pause_freeze_pipeline = None
 
     def _create_interstitial_pipeline(self, image_path: str):
         """
