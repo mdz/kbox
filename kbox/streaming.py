@@ -82,6 +82,10 @@ def _escape_overlay_text(text: str) -> str:
 class StreamingController:
     """Controls GStreamer pipeline for audio/video playback."""
 
+    # intervideosink/intervideosrc channel connecting playbin to the display
+    # pipeline. Any string works as long as both ends agree.
+    DISPLAY_CHANNEL = "kbox-display"
+
     def __init__(self, config_manager, server, use_fakesinks: bool = False):
         """
         Initialize StreamingController with persistent pipeline.
@@ -110,7 +114,12 @@ class StreamingController:
         self.pitch_shift_element: Any = None
         self.volume_element: Any = None
 
-        # Overlay elements (set by _create_video_sink_bin)
+        # Always-on display pipeline (set by _create_display_pipeline). Owns
+        # the screen for the whole process lifetime -- see that method.
+        self.display_pipeline: Any = None
+        self._display_size: Optional[tuple] = None  # (width, height) if known
+
+        # Overlay elements (set by _create_display_pipeline)
         self.qr_overlay = None
         self.text_overlay = None
         self._notification_timer = None
@@ -192,6 +201,11 @@ class StreamingController:
         self._ensure_gst_initialized()
 
         Gst = _get_gst()
+
+        # Bring up the display pipeline FIRST. It claims the screen once and
+        # holds it for the entire session, independently of playbin.
+        self._create_display_pipeline()
+
         self.playbin = Gst.ElementFactory.make("playbin", "playbin")
         if self.playbin is None:
             raise RuntimeError("Failed to create playbin element")
@@ -286,26 +300,62 @@ class StreamingController:
         self.logger.info("Audio sink bin created with pitch shift")
         return audio_bin
 
-    def _create_video_sink_bin(self):
-        """Create video sink bin with overlays, scaling and format conversion."""
-        Gst = _get_gst()
-        video_bin = Gst.Bin.new("video_sink_bin")
+    def _create_display_pipeline(self):
+        """
+        Create the always-on display pipeline that owns the screen.
 
-        # Build element chain: videoconvert -> qr_overlay -> text_overlay -> videoscale -> sink
+        This is a separate GstPipeline from playbin, started once and left in
+        PLAYING for the whole life of the process.
+
+        It has to be separate. playbin owns whatever element is set as its
+        "video-sink", so every song change drags that sink down with it --
+        and GstBaseSink.stop() runs on the PAUSED->READY transition, which
+        for kmssink means closing the DRM file descriptor. Closing it drops
+        DRM master and hands the screen back to the kernel console, which is
+        what made the getty login prompt flash between songs (issue #94).
+        Dropping to READY instead of NULL does not help: both pass through
+        PAUSED->READY. The sink's lifetime, not its state value, is the bug.
+
+        Keeping the sink in its own pipeline means the display is claimed
+        once at startup and never released while kbox runs. playbin is then
+        free to cycle NULL/READY/PLAYING per song without touching it.
+
+        Frames cross from playbin over an intervideosink/intervideosrc
+        channel. intervideosink keeps sync=true, so playbin still does A/V
+        sync before handing buffers over and lyric timing is preserved.
+        When playbin is between songs and nothing is arriving, intervideosrc
+        holds the last frame for its timeout and then emits black -- so gaps
+        show black rather than whatever is underneath.
+
+        The videoscale + capsfilter pair at the end forces every frame to the
+        display's native resolution with black borders baked in
+        (add-borders), so the sink's output always covers the whole screen
+        regardless of the source video's aspect ratio (issue #93).
+        """
+        Gst = _get_gst()
+
+        pipeline = Gst.Pipeline.new("display_pipeline")
         elements = []
 
-        # 1. videoconvert (required)
+        # 1. intervideosrc - receives frames from playbin's intervideosink
+        src = Gst.ElementFactory.make("intervideosrc", "intervideosrc")
+        if src is None:
+            raise RuntimeError("Failed to create intervideosrc element")
+        src.set_property("channel", self.DISPLAY_CHANNEL)
+        elements.append(src)
+
+        # 2. videoconvert (required)
         vc = Gst.ElementFactory.make("videoconvert", "videoconvert")
         if vc is None:
             raise RuntimeError("Failed to create videoconvert element")
         elements.append(vc)
 
-        # 2. QR code overlay (optional - graceful fallback if unavailable)
+        # 3. QR code overlay (optional - graceful fallback if unavailable)
         self.qr_overlay = self._create_qr_overlay_element()
         if self.qr_overlay:
             elements.append(self.qr_overlay)
 
-        # 3. Text overlay for notifications (optional - graceful fallback)
+        # 4. Text overlay for notifications (optional - graceful fallback)
         self.text_overlay = self._create_text_overlay_element()
         if self.text_overlay:
             elements.append(self.text_overlay)
@@ -313,45 +363,128 @@ class StreamingController:
         # Initialize notification lock
         self._notification_lock = threading.Lock()
 
-        # 4. videoscale (required)
+        # 5. videoscale with borders - letterboxes rather than distorting
         vs = Gst.ElementFactory.make("videoscale", "videoscale")
         if vs is None:
             raise RuntimeError("Failed to create videoscale element")
+        vs.set_property("add-borders", True)
         elements.append(vs)
 
-        # 5. Platform-appropriate video sink
+        # 6. capsfilter - caps are set once the display size is known, below
+        capsfilter = Gst.ElementFactory.make("capsfilter", "display_caps")
+        if capsfilter is None:
+            raise RuntimeError("Failed to create capsfilter element")
+        elements.append(capsfilter)
+
+        # 7. Platform-appropriate video sink
         from .platform import create_video_sink
 
         sink = create_video_sink(use_fakesinks=self.use_fakesinks)
         elements.append(sink)
 
-        # Add all elements to bin
         for elem in elements:
-            video_bin.add(elem)
+            pipeline.add(elem)
 
-        # Link elements in order
         for i in range(len(elements) - 1):
             if not elements[i].link(elements[i + 1]):
                 raise RuntimeError(
                     f"Failed to link {elements[i].get_name()} to {elements[i + 1].get_name()}"
                 )
 
-        # Create ghost pad pointing to first element's sink pad
-        sink_pad = elements[0].get_static_pad("sink")
-        ghost_pad = Gst.GhostPad.new("sink", sink_pad)
-        video_bin.add_pad(ghost_pad)
+        self.display_pipeline = pipeline
 
-        # Add pad probe on videoconvert's src pad to detect video dimensions
-        if self.qr_overlay:
-            vc_src_pad = vc.get_static_pad("src")
-            vc_src_pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_video_caps_event)
-            self.logger.debug("QR overlay pad probe added to videoconvert src pad")
+        # READY opens the DRM device, which is what makes kmssink able to
+        # report the connector's mode. Ask it for the real display size so
+        # the capsfilter can pin output to the full screen.
+        ret = pipeline.set_state(Gst.State.READY)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("Display pipeline failed to reach READY state")
+        pipeline.get_state(5 * Gst.SECOND)
+
+        self._display_size = self._query_display_size(sink)
+        if self._display_size:
+            width, height = self._display_size
+            capsfilter.set_property(
+                "caps",
+                Gst.Caps.from_string(
+                    f"video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1"
+                ),
+            )
+            self.logger.info("Display pipeline pinned to %dx%d (full screen)", width, height)
+            # Size the QR against the screen, not the source video, so it
+            # stays put instead of resizing per song.
+            self._update_qr_size_for_resolution(width, height)
+        else:
+            # Unknown display size (e.g. a windowed sink on macOS). Leave the
+            # capsfilter open and fall back to sizing the QR from the frames.
+            self.logger.info("Display size unknown; leaving output caps unconstrained")
+            if self.qr_overlay:
+                vc_src_pad = vc.get_static_pad("src")
+                vc_src_pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_video_caps_event)
+
+        ret = pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("Display pipeline failed to reach PLAYING state")
 
         self.logger.info(
-            "Video sink bin created with overlays (qr=%s, text=%s)",
+            "Display pipeline started and holding the screen (qr=%s, text=%s)",
             self.qr_overlay is not None,
             self.text_overlay is not None,
         )
+
+    def _query_display_size(self, sink):
+        """
+        Return the sink's (width, height), or None if it can't report one.
+
+        kmssink exposes display-width/display-height once it has opened the
+        DRM device. Other sinks (autovideosink on macOS, fakesink in tests)
+        have no such properties, in which case output stays unconstrained.
+        """
+        try:
+            if sink.find_property("display-width") is None:
+                return None
+            width = sink.get_property("display-width")
+            height = sink.get_property("display-height")
+            if width and height:
+                return (int(width), int(height))
+        except Exception as e:
+            self.logger.debug("Could not query display size: %s", e)
+        return None
+
+    def _create_video_sink_bin(self):
+        """
+        Create the bin playbin renders video into.
+
+        This is only a bridge to the display pipeline (see
+        _create_display_pipeline). Everything that actually touches the
+        screen lives over there, so that playbin's per-song state changes
+        never reach the real video sink.
+        """
+        Gst = _get_gst()
+        video_bin = Gst.Bin.new("video_sink_bin")
+
+        vc = Gst.ElementFactory.make("videoconvert", "playbin_videoconvert")
+        if vc is None:
+            raise RuntimeError("Failed to create videoconvert element")
+
+        inter = Gst.ElementFactory.make("intervideosink", "intervideosink")
+        if inter is None:
+            raise RuntimeError("Failed to create intervideosink element")
+        inter.set_property("channel", self.DISPLAY_CHANNEL)
+        # sync=true (the default) keeps playbin responsible for A/V sync:
+        # buffers are released on the clock, so lyrics stay aligned to audio.
+        inter.set_property("sync", True)
+
+        video_bin.add(vc)
+        video_bin.add(inter)
+        if not vc.link(inter):
+            raise RuntimeError("Failed to link videoconvert to intervideosink")
+
+        sink_pad = vc.get_static_pad("sink")
+        ghost_pad = Gst.GhostPad.new("sink", sink_pad)
+        video_bin.add_pad(ghost_pad)
+
+        self.logger.info("Video sink bin created (bridging to display pipeline)")
         return video_bin
 
     def _create_qr_overlay_element(self):
@@ -886,6 +1019,16 @@ class StreamingController:
             except Exception as e:
                 self.logger.error("Error stopping pipeline: %s", e, exc_info=True)
 
+        # Release the screen last, so it stays claimed until we are really
+        # shutting down rather than blinking during teardown.
+        if self.display_pipeline:
+            try:
+                Gst = _get_gst()
+                self.display_pipeline.set_state(Gst.State.NULL)
+                self.display_pipeline = None
+            except Exception as e:
+                self.logger.error("Error stopping display pipeline: %s", e, exc_info=True)
+
         self.logger.info("Streaming controller stopped")
 
     def reinitialize_pipeline(self):
@@ -920,6 +1063,17 @@ class StreamingController:
             self.volume_element = None
             self.qr_overlay = None
             self.text_overlay = None
+
+        # Tear the display pipeline down too -- it holds the DRM device, and
+        # the rebuilt one cannot claim the screen until this one lets go.
+        # This does briefly show the console, but only on an explicit config
+        # change, not on the per-song path that #94 is about.
+        if self.display_pipeline:
+            Gst = _get_gst()
+            self.display_pipeline.set_state(Gst.State.NULL)
+            self.display_pipeline.get_state(5 * Gst.SECOND)
+            self.display_pipeline = None
+            self._display_size = None
 
         # Reset state
         self.state = "idle"
