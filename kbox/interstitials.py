@@ -232,6 +232,9 @@ class InterstitialGenerator:
 
         img, draw = self._create_base_image()
 
+        # kbox wordmark, small, top of screen
+        self._center_wordmark(draw, 50, self._get_wordmark_font(56))
+
         # "Up Next" label
         label_font = self._get_font(48)
         self._center_text(draw, "UP NEXT", self.height // 3 - 60, label_font, ACCENT_COLOR)
@@ -280,6 +283,9 @@ class InterstitialGenerator:
 
         img, draw = self._create_base_image()
 
+        # kbox wordmark, small, top of screen
+        self._center_wordmark(draw, 50, self._get_wordmark_font(56))
+
         # Main message
         message_font = self._get_font(72, bold=True)
         self._center_text(draw, message, self.height // 3, message_font, PRIMARY_TEXT_COLOR)
@@ -320,6 +326,9 @@ class InterstitialGenerator:
             return self._generate_fallback_image("message")
 
         img, draw = self._create_base_image()
+
+        # kbox wordmark, small, top of screen
+        self._center_wordmark(draw, 50, self._get_wordmark_font(56))
 
         message_font = self._get_font(64, bold=True)
         self._center_text(draw, message, self.height // 2 - 40, message_font, PRIMARY_TEXT_COLOR)
