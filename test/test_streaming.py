@@ -896,11 +896,21 @@ def test_display_image_sets_interstitial_state(controller, interstitial_image):
     controller.stop_playback()
 
 
-def test_display_image_mutes_audio(controller, interstitial_image):
-    """display_image() mutes the pipeline — interstitials have no audio track."""
+def test_display_image_produces_no_audio(controller, interstitial_image):
+    """
+    Interstitials are silent.
+
+    This used to be achieved by muting playbin, which was playing the still
+    image. Interstitials now have their own video-only pipeline and playbin is
+    left in NULL, so there is no audio path to mute in the first place.
+    """
+    Gst = _get_gst()
+
     controller.display_image(interstitial_image)
 
-    assert controller.playbin.get_property("mute") is True
+    _, playbin_state, _ = controller.playbin.get_state(Gst.SECOND)
+    assert playbin_state == Gst.State.NULL
+    assert controller.interstitial_pipeline.get_by_name("isink") is not None
 
     controller.stop_playback()
 
@@ -964,3 +974,204 @@ def test_show_notification_during_interstitial(controller, interstitial_image):
     assert controller.text_overlay.get_property("silent") is False
 
     controller.stop_playback()
+
+
+# =========================================================================
+# Display Pipeline Architecture Tests
+#
+# The video sink lives in its own pipeline rather than inside playbin, so
+# that playbin's per-song state changes never release the screen. These
+# guard the structural invariants that arrangement depends on. Each one
+# stands for a regression that actually shipped while building it.
+# =========================================================================
+
+
+def _linked_chain(pipeline, start_element_name):
+    """Factory names of the linked element chain, in order, from an element."""
+    element = pipeline.get_by_name(start_element_name)
+    names = []
+    while element is not None:
+        names.append(element.get_factory().get_name())
+        src_pad = element.get_static_pad("src")
+        if src_pad is None:
+            break
+        peer = src_pad.get_peer()
+        if peer is None:
+            break
+        element = peer.get_parent_element()
+    return names
+
+
+def test_display_pipeline_is_separate_from_playbin(controller):
+    """
+    The video sink must not live inside playbin.
+
+    playbin owns its video-sink, so a sink inside it gets stopped on every
+    song change -- which for kmssink closes the DRM fd and hands the screen
+    back to the kernel console.
+    """
+    assert controller.display_pipeline is not None
+    assert controller.display_pipeline is not controller.playbin
+
+
+def test_overlays_are_composited_after_the_render_caps(controller):
+    """
+    Overlays must sit downstream of the capsfilter.
+
+    Down there they are composited into the fixed render frame, so the
+    top-left corner is the screen's corner even when the video is inset
+    between bars, and a proportion of the frame is a constant size on screen.
+    Upstream they would be drawn onto the source frame and scaled with it,
+    which made the QR code enormous and resized it on every song.
+    """
+    if not controller.qr_overlay and not controller.text_overlay:
+        pytest.skip("No overlay elements available in this GStreamer build")
+
+    chain = _linked_chain(controller.display_pipeline, "intervideosrc")
+
+    assert "capsfilter" in chain, f"no capsfilter in display chain: {chain}"
+    caps_at = chain.index("capsfilter")
+
+    for overlay in ("gdkpixbufoverlay", "textoverlay"):
+        if overlay in chain:
+            assert chain.index(overlay) > caps_at, (
+                f"{overlay} must be composited after the render caps, got: {chain}"
+            )
+
+
+@pytest.mark.parametrize(
+    "display,expected",
+    [
+        # Displays at or below the cap are rendered at their own size, so
+        # nothing is scaled twice.
+        ((1280, 720), (1280, 720)),
+        ((640, 360), (640, 360)),
+        # Taller displays are rendered at the cap, keeping the aspect ratio,
+        # and the sink scales up from there for free.
+        ((1920, 1080), (1280, 720)),
+        ((3840, 2160), (1280, 720)),
+        # Non-16:9 displays keep their own ratio.
+        ((1024, 768), (960, 720)),
+    ],
+)
+def test_render_size_keeps_display_aspect_ratio(controller, display, expected):
+    """
+    The render size matches the display's aspect ratio and is capped.
+
+    Matching the ratio is what lets the sink's fit-preserving scale cover the
+    whole screen, so the console cannot show through the margins. The cap is
+    what keeps the cost survivable: rendering straight at 1080p measured
+    ~46 ms/frame, which cannot sustain 30fps.
+    """
+    assert controller._choose_render_size(display) == expected
+
+    width, height = expected
+    assert abs(width / height - display[0] / display[1]) < 0.01
+    assert height <= max(controller.MAX_RENDER_HEIGHT, display[1])
+    # Odd dimensions upset chroma-subsampled formats.
+    assert width % 2 == 0 and height % 2 == 0
+
+
+def test_no_render_size_when_display_size_is_unknown(controller):
+    """A sink that cannot report a mode leaves the caps open rather than guessing."""
+    assert controller._choose_render_size(None) is None
+
+
+def test_bridge_channels_all_agree(controller, interstitial_image):
+    """
+    Every end of the bridge must name the same channel.
+
+    If these drift apart the display silently stops receiving frames -- there
+    is no error, the screen just stops updating.
+    """
+    channel = StreamingController.DISPLAY_CHANNEL
+
+    src = controller.display_pipeline.get_by_name("intervideosrc")
+    assert src.get_property("channel") == channel
+
+    playbin_side = controller.video_bin.get_by_name("intervideosink")
+    assert playbin_side.get_property("channel") == channel
+
+    interstitial = controller._create_interstitial_pipeline(interstitial_image)
+    try:
+        assert interstitial.get_by_name("isink").get_property("channel") == channel
+    finally:
+        interstitial.set_state(_get_gst().State.NULL)
+
+
+def test_interstitial_pipeline_uses_imagefreeze(controller, interstitial_image):
+    """
+    A still image has to become a continuous stream.
+
+    Decoded on its own it yields one buffer and then EOS, which starves the
+    bridge: intervideosrc serves a buffer only a couple of times before it
+    starts generating black frames, blanking the idle screen a second after
+    every stop.
+    """
+    pipeline = controller._create_interstitial_pipeline(interstitial_image)
+    try:
+        assert pipeline.get_by_name("ifreeze") is not None
+    finally:
+        pipeline.set_state(_get_gst().State.NULL)
+
+
+def test_only_one_source_feeds_the_bridge(controller, interstitial_image, test_video_1s):
+    """
+    playbin and the interstitial pipeline are mutually exclusive.
+
+    Both feeding the bridge at once would interleave a song with an
+    interstitial on screen.
+    """
+    Gst = _get_gst()
+
+    controller.display_image(interstitial_image)
+    assert controller.interstitial_pipeline is not None
+    _, playbin_state, _ = controller.playbin.get_state(Gst.SECOND)
+    assert playbin_state == Gst.State.NULL
+
+    controller.load_file(test_video_1s)
+    assert controller.interstitial_pipeline is None
+
+
+def test_query_display_size_handles_sinks_without_mode_properties(controller):
+    """
+    Sinks that cannot report a mode leave output unconstrained.
+
+    autovideosink on macOS and fakesink in tests have no display-width, and
+    must degrade to "unknown" rather than raising.
+    """
+
+    class _SinkWithoutModeProperties:
+        def find_property(self, name):
+            return None
+
+    assert controller._query_display_size(_SinkWithoutModeProperties()) is None
+
+
+def test_text_layout_leaves_font_size_to_auto_resize(controller):
+    """
+    Padding scales with the screen; font size must not.
+
+    textoverlay's auto-resize already scales the font by width/640, so also
+    deriving a size from the display scales it twice -- which put roughly
+    66pt of text across a 1080p screen.
+    """
+    if not controller.text_overlay:
+        pytest.skip("Text overlay not available")
+
+    font_before = controller.text_overlay.get_property("font-desc")
+
+    controller._update_text_layout_for_resolution(1920)
+
+    assert controller.text_overlay.get_property("font-desc") == font_before
+    assert controller.text_overlay.get_property("auto-resize") is True
+    # xpad is raw pixels that auto-resize does not touch, so it does scale:
+    # 20 * (1920 / 640) == 60
+    assert controller.text_overlay.get_property("xpad") == 60
+
+
+def test_caps_dimensions_extracts_width_and_height(controller):
+    """The shared caps parser pulls dimensions out of a caps object."""
+    caps = _get_gst().Caps.from_string("video/x-raw,format=I420,width=1280,height=720")
+
+    assert controller._caps_dimensions(caps) == (1280, 720)

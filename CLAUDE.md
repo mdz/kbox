@@ -87,6 +87,15 @@ testing), see [docs/development/browser-automation-notes.md](docs/development/br
 covers native `confirm()` dialogs being silently auto-declined, search form quirks, and
 the operator-auth vs. controls-unlock distinction.
 
+## Changing the GStreamer Pipeline
+
+Before changing anything in `kbox/streaming.py`, see
+[docs/development/gstreamer-pipeline.md](docs/development/gstreamer-pipeline.md) — covers
+why the video sink lives in its own pipeline, why the render size is fixed and capped,
+and a list of things that look like they should work but do not (kmssink already scales
+in hardware; `intervideosrc`'s `timeout` does not hold a frame; `inter` elements only
+pair up inside one process; CPU percentage hides dropped frames).
+
 # Product Context
 
 This software runs karaoke parties. Primary focus is home karaoke; bar/KJ environments are a secondary consideration (keep flexibility, don't hardcode one mode).
