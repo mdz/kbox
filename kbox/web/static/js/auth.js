@@ -322,8 +322,8 @@ export async function submitOperatorPin() {
 // Prompt for operator authentication
 export function promptOperatorAuth() {
     if (isOperator) {
-        // Already authenticated, show status
-        alert('You are authenticated as operator');
+        // Already authenticated - the button already shows a checkmark, so
+        // there's nothing further to confirm.
         return;
     }
     // Show PIN modal, refresh page on success
