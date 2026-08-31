@@ -7,8 +7,8 @@ apart in a recognition list). No dependencies on the rest of the app so it
 can be imported from database.py, user.py, and server.py without creating
 import cycles.
 
-See ldocs/GUEST_IDENTITY_CONTINUITY.md (product/UX design) and
-ldocs/GUEST_IDENTITY_TECHNICAL_DESIGN.md (this implementation) for context.
+See docs/development/guest-identity.md (product/UX design) and
+docs/development/guest-identity-implementation.md (this implementation) for context.
 """
 
 import hashlib

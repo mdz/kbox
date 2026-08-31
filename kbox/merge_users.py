@@ -2,7 +2,7 @@
 Operator CLI for coalescing duplicate guest identities.
 
 kbox never merges identities automatically (see
-ldocs/GUEST_IDENTITY_CONTINUITY.md) — a mis-tap or "I'm new" guess on a
+docs/development/guest-identity.md) — a mis-tap or "I'm new" guess on a
 name collision permanently adds a ghost identity. This is the tool an
 operator uses to fold one back into another, e.g. after confirming with a
 regular that two records are really them.

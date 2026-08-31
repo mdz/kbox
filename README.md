@@ -58,7 +58,7 @@ docker-compose build
 docker-compose up
 ```
 
-Then open `http://localhost:8000` in your browser and configure your YouTube API key in Settings.
+Then open `http://localhost:8000` in your browser and configure your YouTube API key in Settings (see `docs/setup/youtube-api.md` if you need help getting one).
 
 ## Quick Start (Native)
 
@@ -67,7 +67,7 @@ uv sync
 uv run python -m kbox.main
 ```
 
-Open `http://localhost:8000` on your phone to queue songs, and `http://localhost:8000/display` on your TV/monitor for the fullscreen karaoke display. Configure your YouTube API key in Settings.
+Open `http://localhost:8000` on your phone to queue songs, and `http://localhost:8000/display` on your TV/monitor for the fullscreen karaoke display. Configure your YouTube API key in Settings (see `docs/setup/youtube-api.md` if you need help getting one).
 
 ## Platform Support
 
