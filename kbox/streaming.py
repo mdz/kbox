@@ -340,11 +340,28 @@ class StreamingController:
         it during songs and a separate imagefreeze pipeline feeds it during
         interstitials -- see _create_interstitial_pipeline.
 
-        The videoscale + capsfilter pair forces every frame to the display's
-        native resolution with black borders baked in (add-borders), so the
-        sink's output always covers the whole screen regardless of the source
-        video's aspect ratio (issue #93). Overlays are composited after that
-        pair, in screen space, so they do not get scaled with the video.
+        kmssink already scales its plane to fill the screen in hardware, so
+        nothing here upscales in software. Verified on a Pi 5 (vc4-drm):
+        given a 640x360 frame on a 1920x1080 screen it issues
+        "drmModeSetPlane at (0,0) 1920x1080 sourcing at (0,0) 640x360".
+
+        What it will not do is cover the screen when the frame's aspect ratio
+        differs from the display's: it scales to fit while preserving aspect,
+        so a 4:3 source lands as 1440x1080 centred and the kernel console
+        shows through the 240px bars either side (issue #93). videobox fixes
+        that by padding the frame out to the display's aspect ratio at source
+        resolution -- cheap, since it only adds borders -- after which
+        kmssink's own scaling covers the whole screen.
+
+        Doing the upscale in software instead cost ~46 ms/frame, which caps
+        the pipeline at ~22fps and cannot sustain 30fps video. Padding is
+        0.4-1.3 ms/frame. See contrib/benchmark_pipeline.py.
+
+        Overlays are composited after the padding, so they sit in the padded
+        frame's coordinate space: the top-left corner is the screen's corner
+        even when the video itself is inset between bars. Sizing them as a
+        proportion of the padded frame keeps them a constant size on screen,
+        because everything downstream is scaled by the same factor.
         """
         Gst = _get_gst()
 
@@ -364,29 +381,23 @@ class StreamingController:
             raise RuntimeError("Failed to create videoconvert element")
         elements.append(vc)
 
-        # 3. videoscale with borders - letterboxes rather than distorting
-        vs = Gst.ElementFactory.make("videoscale", "videoscale")
-        if vs is None:
-            raise RuntimeError("Failed to create videoscale element")
-        vs.set_property("add-borders", True)
-        elements.append(vs)
+        # 3. videobox - pads the frame out to the display's aspect ratio.
+        # Borders are recalculated per source resolution in
+        # _on_display_source_caps; there is nothing useful to set until the
+        # first frames arrive.
+        videobox = Gst.ElementFactory.make("videobox", "videobox")
+        if videobox is None:
+            raise RuntimeError("Failed to create videobox element")
+        elements.append(videobox)
 
-        # 4. capsfilter - caps are set once the display size is known, below
-        capsfilter = Gst.ElementFactory.make("capsfilter", "display_caps")
-        if capsfilter is None:
-            raise RuntimeError("Failed to create capsfilter element")
-        elements.append(capsfilter)
+        # Overlays come AFTER the padding on purpose, so they are composited
+        # in the padded frame's coordinate space: its top-left is the screen's
+        # top-left even when the video is inset between bars. Sized as a
+        # proportion of the padded frame, they come out the same size on
+        # screen for any source resolution, because kmssink scales the whole
+        # frame by one factor.
 
-        # Overlays come AFTER the scaler on purpose, so they are composited
-        # in screen space at a fixed resolution. Upstream of it they would be
-        # drawn onto the source frame and then scaled along with it: a QR
-        # sized for a 1080p screen lands on a 360-line video as ~45% of its
-        # height and stays that big once scaled up, and because each song has
-        # a different source resolution the same pixel size comes out a
-        # different size on screen every time. Down here one pixel is one
-        # screen pixel, so overlays stay put and stay the same size.
-
-        # 5. QR code overlay (optional - graceful fallback if unavailable)
+        # 4. QR code overlay (optional - graceful fallback if unavailable)
         self.qr_overlay = self._create_qr_overlay_element()
         if self.qr_overlay:
             elements.append(self.qr_overlay)
@@ -399,7 +410,7 @@ class StreamingController:
         # Initialize notification lock
         self._notification_lock = threading.Lock()
 
-        # 7. Platform-appropriate video sink
+        # 6. Platform-appropriate video sink
         from .platform import create_video_sink
 
         sink = create_video_sink(use_fakesinks=self.use_fakesinks)
@@ -417,8 +428,8 @@ class StreamingController:
         self.display_pipeline = pipeline
 
         # READY opens the DRM device, which is what makes kmssink able to
-        # report the connector's mode. Ask it for the real display size so
-        # the capsfilter can pin output to the full screen.
+        # report the connector's mode. The mode's aspect ratio is what the
+        # frames get padded to.
         ret = pipeline.set_state(Gst.State.READY)
         if ret == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("Display pipeline failed to reach READY state")
@@ -426,27 +437,22 @@ class StreamingController:
 
         self._display_size = self._query_display_size(sink)
         if self._display_size:
-            width, height = self._display_size
-            capsfilter.set_property(
-                "caps",
-                Gst.Caps.from_string(
-                    f"video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1"
-                ),
+            self.logger.info(
+                "Display is %dx%d; frames will be padded to its aspect ratio",
+                self._display_size[0],
+                self._display_size[1],
             )
-            self.logger.info("Display pipeline pinned to %dx%d (full screen)", width, height)
-            # Size overlays against the screen, not the source video, so they
-            # stay put instead of resizing per song.
-            self._update_qr_size_for_resolution(width, height)
-            self._update_text_layout_for_resolution(width)
         else:
-            # Unknown display size (e.g. a windowed sink on macOS). Leave the
-            # capsfilter open and fall back to sizing the QR from the frames.
-            # Probe the capsfilter's output, not the converter's: that is what
-            # the overlays downstream are actually drawing onto.
-            self.logger.info("Display size unknown; leaving output caps unconstrained")
-            if self.qr_overlay:
-                caps_src_pad = capsfilter.get_static_pad("src")
-                caps_src_pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_video_caps_event)
+            # Sinks that cannot report a mode (autovideosink on macOS,
+            # fakesink in tests). Nothing to pad to, so videobox is left with
+            # no borders and the sink does whatever it does.
+            self.logger.info("Display size unknown; frames will not be padded")
+
+        # Overlay geometry follows the padded frame, which is only known once
+        # frames start arriving, so it is set from this probe rather than here.
+        vc.get_static_pad("src").add_probe(
+            Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_display_source_caps
+        )
 
         ret = pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
@@ -457,6 +463,97 @@ class StreamingController:
             self.qr_overlay is not None,
             self.text_overlay is not None,
         )
+
+    def _compute_padding(self, src_width, src_height):
+        """
+        Borders needed to bring a frame to the display's aspect ratio.
+
+        Returns (left, right, top, bottom) in pixels, all zero when the frame
+        already matches or the display size is unknown. Only one axis is ever
+        padded: whichever is short relative to the display.
+
+        kmssink scales to fit while preserving aspect, so a frame narrower
+        than the screen ends up inset with the console showing beside it.
+        Padding first means the frame it scales already covers the screen.
+        """
+        if not self._display_size or not src_width or not src_height:
+            return (0, 0, 0, 0)
+
+        screen_width, screen_height = self._display_size
+        screen_ratio = screen_width / screen_height
+        source_ratio = src_width / src_height
+
+        # Within a pixel of matching: padding would be pointless.
+        if abs(source_ratio - screen_ratio) < 1e-6:
+            return (0, 0, 0, 0)
+
+        if source_ratio < screen_ratio:
+            # Too tall for the screen: pad the sides (pillarbox).
+            target_width = int(round(src_height * screen_ratio))
+            extra = max(0, target_width - src_width)
+            left = extra // 2
+            return (left, extra - left, 0, 0)
+
+        # Too wide for the screen: pad above and below (letterbox).
+        target_height = int(round(src_width / screen_ratio))
+        extra = max(0, target_height - src_height)
+        top = extra // 2
+        return (0, 0, top, extra - top)
+
+    def _on_display_source_caps(self, pad, info):
+        """
+        Repad and resize overlays whenever the incoming frame size changes.
+
+        Runs on every caps change, which in practice means each new song and
+        each switch between a song and an interstitial.
+        """
+        Gst = _get_gst()
+
+        try:
+            event = info.get_event()
+            if event is None or event.type != Gst.EventType.CAPS:
+                return Gst.PadProbeReturn.OK
+
+            width, height = self._caps_dimensions(event.parse_caps())
+            if width is None or height is None:
+                return Gst.PadProbeReturn.OK
+
+            left, right, top, bottom = self._compute_padding(width, height)
+
+            videobox = (
+                self.display_pipeline.get_by_name("videobox") if self.display_pipeline else None
+            )
+            if videobox is not None:
+                # videobox adds borders for negative values and crops for
+                # positive ones, so the padding is applied negated.
+                videobox.set_property("left", -left)
+                videobox.set_property("right", -right)
+                videobox.set_property("top", -top)
+                videobox.set_property("bottom", -bottom)
+
+            padded_width = width + left + right
+            padded_height = height + top + bottom
+
+            if left or right or top or bottom:
+                self.logger.info(
+                    "Source %dx%d padded to %dx%d for the display's aspect ratio",
+                    width,
+                    height,
+                    padded_width,
+                    padded_height,
+                )
+            else:
+                self.logger.info("Source %dx%d already matches the display ratio", width, height)
+
+            # Overlays are downstream of videobox, so they are sized against
+            # the padded frame. kmssink scales that whole frame by one factor,
+            # so a proportion of it is a constant size on screen.
+            self._update_qr_size_for_resolution(padded_width, padded_height)
+            self._update_text_layout_for_resolution(padded_width)
+        except Exception as e:
+            self.logger.warning("Error handling display source caps: %s", e, exc_info=True)
+
+        return Gst.PadProbeReturn.OK
 
     def _query_display_size(self, sink):
         """
@@ -656,41 +753,6 @@ class StreamingController:
                 )
         except Exception as e:
             self.logger.warning("Error logging source video caps: %s", e)
-
-        return Gst.PadProbeReturn.OK
-
-    def _on_video_caps_event(self, pad, info):
-        """Handle video caps events to detect resolution changes."""
-        Gst = _get_gst()
-
-        try:
-            event = info.get_event()
-            if event is None:
-                return Gst.PadProbeReturn.OK
-
-            if event.type == Gst.EventType.CAPS:
-                self.logger.debug("Received CAPS event on videoconvert src pad")
-                caps = event.parse_caps()
-                if caps:
-                    struct = caps.get_structure(0)
-                    if struct:
-                        width, height = self._caps_dimensions(caps)
-
-                        if width is not None and height is not None:
-                            self.logger.info("Detected video resolution: %dx%d", width, height)
-                            self._update_qr_size_for_resolution(width, height)
-                            self._update_text_layout_for_resolution(width)
-                        else:
-                            self.logger.debug(
-                                "Could not extract resolution from caps: %s",
-                                caps.to_string()[:200],
-                            )
-                    else:
-                        self.logger.debug("CAPS event had no structure")
-                else:
-                    self.logger.debug("CAPS event had no caps")
-        except Exception as e:
-            self.logger.warning("Error processing video caps event: %s", e, exc_info=True)
 
         return Gst.PadProbeReturn.OK
 

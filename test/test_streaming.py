@@ -1014,28 +1014,76 @@ def test_display_pipeline_is_separate_from_playbin(controller):
     assert controller.display_pipeline is not controller.playbin
 
 
-def test_overlays_are_composited_after_the_scaler(controller):
+def test_overlays_are_composited_after_the_padding(controller):
     """
-    Overlays must sit downstream of videoscale/capsfilter.
+    Overlays must sit downstream of videobox.
 
-    Upstream of the scaler they are drawn onto the source frame and then
-    magnified along with it, which rendered the QR code enormous and made it
-    change size on every song because each source has its own resolution.
+    Downstream of the padding they are placed in the padded frame's
+    coordinate space, so the top-left corner is the screen's corner even when
+    the video is inset between bars, and a proportion of the frame is a
+    constant size on screen. Upstream they would land inside the video area
+    and shift with it.
     """
     if not controller.qr_overlay and not controller.text_overlay:
         pytest.skip("No overlay elements available in this GStreamer build")
 
     chain = _linked_chain(controller.display_pipeline, "intervideosrc")
 
-    assert "videoscale" in chain, f"no scaler in display chain: {chain}"
-    assert "capsfilter" in chain, f"no capsfilter in display chain: {chain}"
-    scaler_end = max(chain.index("videoscale"), chain.index("capsfilter"))
+    assert "videobox" in chain, f"no videobox in display chain: {chain}"
+    padding_at = chain.index("videobox")
 
     for overlay in ("gdkpixbufoverlay", "textoverlay"):
         if overlay in chain:
-            assert chain.index(overlay) > scaler_end, (
-                f"{overlay} must be composited after the scaler, got: {chain}"
+            assert chain.index(overlay) > padding_at, (
+                f"{overlay} must be composited after the padding, got: {chain}"
             )
+
+
+def test_display_chain_does_not_scale_in_software(controller):
+    """
+    kmssink scales its plane in hardware, so nothing here should upscale.
+
+    Doing it in software cost ~46 ms/frame, capping the pipeline near 22fps
+    and leaving it unable to sustain 30fps video.
+    """
+    chain = _linked_chain(controller.display_pipeline, "intervideosrc")
+
+    assert "videoscale" not in chain, f"software scaler back in display chain: {chain}"
+
+
+@pytest.mark.parametrize(
+    "screen,source,expected",
+    [
+        # 16:9 source on a 16:9 screen needs nothing.
+        ((1920, 1080), (640, 360), (0, 0, 0, 0)),
+        ((1920, 1080), (1280, 720), (0, 0, 0, 0)),
+        # 4:3 source is too tall: pad the sides. 480 * 16/9 = 853, so 213
+        # split across both, the odd pixel going to the right.
+        ((1920, 1080), (640, 480), (106, 107, 0, 0)),
+        # Wider than the screen: pad top and bottom. 640 / (16/9) = 360.
+        ((1920, 1080), (640, 270), (0, 0, 45, 45)),
+        # A 4:3 screen wants the padding on the other axis. 640 / (4/3) = 480.
+        ((1024, 768), (640, 360), (0, 0, 60, 60)),
+    ],
+)
+def test_padding_matches_display_aspect_ratio(controller, screen, source, expected):
+    """Padding brings the frame to the display's aspect ratio, on one axis."""
+    controller._display_size = screen
+
+    assert controller._compute_padding(*source) == expected
+
+    left, right, top, bottom = expected
+    padded_w = source[0] + left + right
+    padded_h = source[1] + top + bottom
+    # Within a pixel, since borders are whole numbers.
+    assert abs(padded_w / padded_h - screen[0] / screen[1]) < 0.01
+
+
+def test_no_padding_when_display_size_is_unknown(controller):
+    """A sink that cannot report a mode leaves frames unpadded rather than guessing."""
+    controller._display_size = None
+
+    assert controller._compute_padding(640, 480) == (0, 0, 0, 0)
 
 
 def test_display_chain_runs_from_bridge_to_sink(controller):
