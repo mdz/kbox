@@ -11,7 +11,7 @@ dependencies = [
     "google-api-python-client",
     "yt-dlp",
     "qrcode[pil]",
-    "litellm",
+    "litellm>=1.81.0",
 ]
 
 [dependency-groups]

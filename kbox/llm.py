@@ -8,7 +8,6 @@ handling API key configuration and provider-specific setup.
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -16,21 +15,6 @@ if TYPE_CHECKING:
 
 # Type alias for LLM completion functions (litellm.completion signature)
 CompletionFn = Callable[..., Any]
-
-# LiteLLM logs completions via a background thread (litellm.utils.py's
-# "success_handler"), which re-validates the response against a streaming-shaped
-# Union[Choices, StreamingChoices]/Message schema. A normal non-streaming ModelResponse
-# trips a Pydantic serializer mismatch there even though it round-trips fine — the
-# response object we actually use is unaffected. This filter is process-wide (Python's
-# warnings filter list is global, and the warning fires in litellm's own thread pool
-# after `completion()` has already returned, so a scoped context manager can't catch
-# it) but matches only this specific pydantic.main warning, not warnings in general.
-warnings.filterwarnings(
-    "ignore",
-    message="Pydantic serializer warnings",
-    category=UserWarning,
-    module="pydantic",
-)
 
 
 class LLMClient:
