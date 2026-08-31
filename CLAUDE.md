@@ -83,7 +83,7 @@ uv run mypy kbox/            # type-check
 ## Driving kbox via Browser Automation
 
 Before using a browser-automation tool against a live kbox instance (e.g. for burn-in
-testing), see [docs/development/BROWSER_AUTOMATION_NOTES.md](docs/development/BROWSER_AUTOMATION_NOTES.md) —
+testing), see [docs/development/browser-automation-notes.md](docs/development/browser-automation-notes.md) —
 covers native `confirm()` dialogs being silently auto-declined, search form quirks, and
 the operator-auth vs. controls-unlock distinction.
 
