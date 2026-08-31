@@ -48,11 +48,12 @@ def mock_streaming_controller():
 
 
 @pytest.fixture
-def mock_config_manager():
+def mock_config_manager(tmp_path):
     """Create a mock ConfigManager."""
     config = Mock()
     # Configure get() to return None for unknown keys, or specific values
     config.get.return_value = None
+    config.get_cache_directory.return_value = tmp_path
     return config
 
 

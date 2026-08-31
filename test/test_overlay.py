@@ -10,39 +10,42 @@ from kbox.overlay import format_notification, generate_qr_code
 
 class TestGenerateQrCode:
     def test_returns_valid_png_path(self):
-        path = generate_qr_code("https://example.com")
-        assert path is not None
-        assert os.path.exists(path)
-        assert path.endswith(".png")
-
-    def test_respects_cache_dir(self):
-        cache_dir = tempfile.mkdtemp()
+        output_dir = tempfile.mkdtemp()
         try:
-            path = generate_qr_code("https://example.com", cache_dir=cache_dir)
+            path = generate_qr_code("https://example.com", output_dir=output_dir)
             assert path is not None
-            assert path.startswith(cache_dir)
+            assert os.path.exists(path)
+            assert path.endswith(".png")
+        finally:
+            shutil.rmtree(output_dir)
+
+    def test_respects_output_dir(self):
+        output_dir = tempfile.mkdtemp()
+        try:
+            path = generate_qr_code("https://example.com", output_dir=output_dir)
+            assert path is not None
+            assert path.startswith(output_dir)
             assert os.path.basename(path) == "qr_code.png"
         finally:
-            shutil.rmtree(cache_dir)
+            shutil.rmtree(output_dir)
 
-    def test_creates_cache_dir_if_missing(self):
-        cache_dir = os.path.join(tempfile.mkdtemp(), "nested", "dir")
+    def test_creates_output_dir_if_missing(self):
+        output_dir = os.path.join(tempfile.mkdtemp(), "nested", "dir")
         try:
-            path = generate_qr_code("https://example.com", cache_dir=cache_dir)
+            path = generate_qr_code("https://example.com", output_dir=output_dir)
             assert path is not None
-            assert os.path.isdir(cache_dir)
+            assert os.path.isdir(output_dir)
         finally:
-            shutil.rmtree(os.path.dirname(os.path.dirname(cache_dir)))
-
-    def test_default_uses_tempdir(self):
-        path = generate_qr_code("https://example.com")
-        assert path is not None
-        assert "kbox_qr_code.png" in path
+            shutil.rmtree(os.path.dirname(os.path.dirname(output_dir)))
 
     def test_returns_none_when_import_fails(self):
-        with patch("builtins.__import__", side_effect=ImportError("no qrcode")):
-            result = generate_qr_code("https://example.com")
-            assert result is None
+        output_dir = tempfile.mkdtemp()
+        try:
+            with patch("builtins.__import__", side_effect=ImportError("no qrcode")):
+                result = generate_qr_code("https://example.com", output_dir=output_dir)
+                assert result is None
+        finally:
+            shutil.rmtree(output_dir)
 
 
 class TestFormatNotification:
