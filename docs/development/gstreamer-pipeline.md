@@ -125,6 +125,74 @@ Upstream of the scaler they would be drawn onto the source frame and magnified
 along with it. A QR sized for a 1080p screen drawn on a 360-line video is
 about 45% of its height, and stays that big once scaled up.
 
+## Reducing the scaler's cost
+
+The 360p→720p upscale (~25 ms/frame, see above) adds no information — it
+exists purely so overlays land in a frame with enough resolution to stay
+sharp. Four ways to cut that cost were investigated; measurements below are
+all on a Pi 5, 640x360 @ 30fps unless noted.
+
+**Shipped: `videoscale method=nearest-neighbour`.** Overlays are composited
+*after* the capsfilter (see above), so the scaler's method only affects the
+video itself, never overlay sharpness. Nearest-neighbour halves the upscale
+cost against the bilinear default:
+
+| method | scale-stage cost | total (incl. decode) |
+|---|---|---|
+| bilinear (previous default) | ~25 ms/frame | ~27 ms/frame |
+| nearest-neighbour (shipped) | ~12 ms/frame | ~14 ms/frame |
+
+Content has no detail beyond 360 lines to begin with, so nearest-neighbour's
+blockiness is not expected to be visible at normal viewing distance. No
+other trade-off was found — it's a one-property change.
+
+**Considered: fetch and render at 720p, making `videoscale` a passthrough.**
+Cheaper decode-plus-scale than expected, but decode is *not* free at 720p —
+the Pi 5 has no H.264 hardware decoder (only an HEVC decode block,
+`rpi-hevc-dec`), so 720p H.264 is software-decoded via `openh264dec`.
+Measured with `filesrc ! decodebin ! fakesink`, same content re-encoded at
+both sizes:
+
+| source | decode cost | scale-stage cost (passthrough at 720p) | total |
+|---|---|---|---|
+| 640x360 (current) | ~1.9 ms/frame | ~25 ms/frame (upscale) | ~27 ms/frame |
+| 1280x720 | ~8.1 ms/frame | ~10.9 ms/frame | ~19 ms/frame |
+
+That 10.9 ms at "passthrough" is not zero — `videoconvert` and overlay
+compositing both still cost more on a bigger frame, so this is a real but
+smaller win than "decode is cheaper than upscaling" suggests on its own.
+
+It is also not currently reachable in production: `kbox/ytdlp.py` requests
+`bestvideo[height<={video_max_resolution}]`, but on this deployment's yt-dlp,
+YouTube's DASH formats above 360p require a JS-runtime-based signature/PO
+token solver that isn't installed. Tested across `android`, `web`, `tv`, and
+`web_safari` player clients — all fell back to the legacy progressive 360p
+stream regardless of the configured cap. Raising `video_max_resolution` to
+720 would silently do nothing today; making it work is a yt-dlp/JS-runtime
+dependency question, unrelated to the pipeline itself. Worth revisiting if
+that gets fixed, since it would also raise the picture's actual detail.
+
+**Ruled out: V4L2 M2M hardware scaler.** No such element is reachable. The
+container's `video4linux2` GStreamer plugin exposes only `v4l2src`,
+`v4l2sink`, and `v4l2radio` — no `v4l2convert` or other M2M scale/convert
+element. `/dev/video19`–`/dev/video35` on the host are `rpi-hevc-dec` (HEVC
+decode) and `pispbe` (the Pi 5 ISP backend, camera-pipeline-oriented) —
+neither is a general-purpose scaler exposed to GStreamer. `docker-compose.yml`
+also doesn't map any `/dev/video*` node into the container. Building this
+would mean writing a custom element against the raw ISP API, not configuring
+an existing one — out of proportion to the win.
+
+**Deferred: overlays on their own DRM plane.** `kmssink` takes a `plane-id`
+property, and the Pi has spare planes free at runtime (checked via
+`/sys/kernel/debug/dri/*/state` — the video currently claims one plane,
+several more sit unused). Moving overlays to a second plane would decouple
+overlay sharpness from render size, unlocking a 360p render (video-only
+scale-stage cost ~2.7 ms/frame, passthrough) without softening the QR or
+text. This is real headroom, but it means a second sink/pipeline and
+plane-level compositing — the highest-complexity option here, and not
+attempted in this pass. Worth a dedicated follow-up if the nearest-neighbour
+change turns out not to be enough.
+
 ## Measuring changes
 
 The display pipeline is on the hot path for every frame. `contrib/benchmark_pipeline.py`

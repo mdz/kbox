@@ -384,10 +384,20 @@ class StreamingController:
 
         # 3. videoscale with borders - fits any source into the fixed frame
         # below, letterboxing rather than distorting.
+        #
+        # method=nearest-neighbour instead of the bilinear default. Overlays
+        # (QR/text) are composited downstream of this element, after the
+        # capsfilter, so they are unaffected either way -- this only changes
+        # how the source video itself is scaled. Measured on a Pi 5, 640x360
+        # source upscaled to a 1280x720 render frame: bilinear costs
+        # ~25 ms/frame, nearest-neighbour ~12 ms/frame -- roughly half, for
+        # content that has no detail beyond 360 lines to begin with. See
+        # docs/development/gstreamer-pipeline.md.
         vs = Gst.ElementFactory.make("videoscale", "videoscale")
         if vs is None:
             raise RuntimeError("Failed to create videoscale element")
         vs.set_property("add-borders", True)
+        vs.set_property("method", 0)  # nearest-neighbour
         elements.append(vs)
 
         # 4. capsfilter - pins the frame handed to the sink to one fixed size
