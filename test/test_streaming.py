@@ -1014,84 +1014,67 @@ def test_display_pipeline_is_separate_from_playbin(controller):
     assert controller.display_pipeline is not controller.playbin
 
 
-def test_overlays_are_composited_after_the_padding(controller):
+def test_overlays_are_composited_after_the_render_caps(controller):
     """
-    Overlays must sit downstream of videobox.
+    Overlays must sit downstream of the capsfilter.
 
-    Downstream of the padding they are placed in the padded frame's
-    coordinate space, so the top-left corner is the screen's corner even when
-    the video is inset between bars, and a proportion of the frame is a
-    constant size on screen. Upstream they would land inside the video area
-    and shift with it.
+    Down there they are composited into the fixed render frame, so the
+    top-left corner is the screen's corner even when the video is inset
+    between bars, and a proportion of the frame is a constant size on screen.
+    Upstream they would be drawn onto the source frame and scaled with it,
+    which made the QR code enormous and resized it on every song.
     """
     if not controller.qr_overlay and not controller.text_overlay:
         pytest.skip("No overlay elements available in this GStreamer build")
 
     chain = _linked_chain(controller.display_pipeline, "intervideosrc")
 
-    assert "videobox" in chain, f"no videobox in display chain: {chain}"
-    padding_at = chain.index("videobox")
+    assert "capsfilter" in chain, f"no capsfilter in display chain: {chain}"
+    caps_at = chain.index("capsfilter")
 
     for overlay in ("gdkpixbufoverlay", "textoverlay"):
         if overlay in chain:
-            assert chain.index(overlay) > padding_at, (
-                f"{overlay} must be composited after the padding, got: {chain}"
+            assert chain.index(overlay) > caps_at, (
+                f"{overlay} must be composited after the render caps, got: {chain}"
             )
 
 
-def test_display_chain_does_not_scale_in_software(controller):
-    """
-    kmssink scales its plane in hardware, so nothing here should upscale.
-
-    Doing it in software cost ~46 ms/frame, capping the pipeline near 22fps
-    and leaving it unable to sustain 30fps video.
-    """
-    chain = _linked_chain(controller.display_pipeline, "intervideosrc")
-
-    assert "videoscale" not in chain, f"software scaler back in display chain: {chain}"
-
-
 @pytest.mark.parametrize(
-    "screen,source,expected",
+    "display,expected",
     [
-        # 16:9 source on a 16:9 screen needs nothing.
-        ((1920, 1080), (640, 360), (0, 0, 0, 0)),
-        ((1920, 1080), (1280, 720), (0, 0, 0, 0)),
-        # 4:3 source is too tall: pad the sides. 480 * 16/9 = 853, so 213
-        # split across both, the odd pixel going to the right.
-        ((1920, 1080), (640, 480), (106, 107, 0, 0)),
-        # Wider than the screen: pad top and bottom. 640 / (16/9) = 360.
-        ((1920, 1080), (640, 270), (0, 0, 45, 45)),
-        # A 4:3 screen wants the padding on the other axis. 640 / (4/3) = 480.
-        ((1024, 768), (640, 360), (0, 0, 60, 60)),
+        # Displays at or below the cap are rendered at their own size, so
+        # nothing is scaled twice.
+        ((1280, 720), (1280, 720)),
+        ((640, 360), (640, 360)),
+        # Taller displays are rendered at the cap, keeping the aspect ratio,
+        # and the sink scales up from there for free.
+        ((1920, 1080), (1280, 720)),
+        ((3840, 2160), (1280, 720)),
+        # Non-16:9 displays keep their own ratio.
+        ((1024, 768), (960, 720)),
     ],
 )
-def test_padding_matches_display_aspect_ratio(controller, screen, source, expected):
-    """Padding brings the frame to the display's aspect ratio, on one axis."""
-    controller._display_size = screen
+def test_render_size_keeps_display_aspect_ratio(controller, display, expected):
+    """
+    The render size matches the display's aspect ratio and is capped.
 
-    assert controller._compute_padding(*source) == expected
+    Matching the ratio is what lets the sink's fit-preserving scale cover the
+    whole screen, so the console cannot show through the margins. The cap is
+    what keeps the cost survivable: rendering straight at 1080p measured
+    ~46 ms/frame, which cannot sustain 30fps.
+    """
+    assert controller._choose_render_size(display) == expected
 
-    left, right, top, bottom = expected
-    padded_w = source[0] + left + right
-    padded_h = source[1] + top + bottom
-    # Within a pixel, since borders are whole numbers.
-    assert abs(padded_w / padded_h - screen[0] / screen[1]) < 0.01
-
-
-def test_no_padding_when_display_size_is_unknown(controller):
-    """A sink that cannot report a mode leaves frames unpadded rather than guessing."""
-    controller._display_size = None
-
-    assert controller._compute_padding(640, 480) == (0, 0, 0, 0)
+    width, height = expected
+    assert abs(width / height - display[0] / display[1]) < 0.01
+    assert height <= max(controller.MAX_RENDER_HEIGHT, display[1])
+    # Odd dimensions upset chroma-subsampled formats.
+    assert width % 2 == 0 and height % 2 == 0
 
 
-def test_display_chain_runs_from_bridge_to_sink(controller):
-    """The display chain is fully linked from the bridge through to the sink."""
-    chain = _linked_chain(controller.display_pipeline, "intervideosrc")
-
-    assert chain[0] == "intervideosrc"
-    assert chain[-1] == "fakesink"  # controller fixture uses use_fakesinks=True
+def test_no_render_size_when_display_size_is_unknown(controller):
+    """A sink that cannot report a mode leaves the caps open rather than guessing."""
+    assert controller._choose_render_size(None) is None
 
 
 def test_bridge_channels_all_agree(controller, interstitial_image):
