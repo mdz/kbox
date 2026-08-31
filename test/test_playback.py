@@ -618,6 +618,44 @@ def test_get_status(playback_controller, mock_queue_manager):
     assert status["current_song"]["title"] == "Test Song"
 
 
+def test_get_status_does_not_hold_lock_during_io(
+    playback_controller, mock_queue_manager, mock_streaming_controller
+):
+    """Regression test: get_status() must not hold self.lock across I/O.
+
+    get_status() only needs the lock to snapshot (state, current_song_id)
+    consistently; the position query (GStreamer) and queue lookup (SQLite)
+    are blocking I/O that should run with the lock released, so a status
+    poll doesn't contend with e.g. _play_song() holding the lock across
+    load_file(). Both mocks assert the lock is free when called.
+    """
+    song = create_mock_queue_item(id=1, title="Test Song")
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+
+    def get_position_checks_lock_free():
+        assert not playback_controller.lock.locked(), (
+            "get_position() was called while self.lock was held"
+        )
+        return 42
+
+    def get_item_checks_lock_free(song_id):
+        assert not playback_controller.lock.locked(), (
+            "get_item() was called while self.lock was held"
+        )
+        return song
+
+    mock_streaming_controller.get_position.side_effect = get_position_checks_lock_free
+    mock_queue_manager.get_item.side_effect = get_item_checks_lock_free
+
+    status = playback_controller.get_status()
+
+    assert status["position_seconds"] == 42
+    assert status["current_song"]["id"] == 1
+    mock_streaming_controller.get_position.assert_called_once()
+    mock_queue_manager.get_item.assert_called_once_with(1)
+
+
 def test_jump_to_song_while_playing(
     playback_controller, mock_queue_manager, mock_streaming_controller
 ):

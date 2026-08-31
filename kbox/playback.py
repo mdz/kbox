@@ -1483,41 +1483,57 @@ class PlaybackController:
         """
         Get current playback status.
 
+        Only briefly holds self.lock to snapshot (state, current_song_id) for
+        a consistent view; the position query (GStreamer) and queue lookup
+        (SQLite) below are blocking I/O and run outside the lock so status
+        polls don't contend with in-progress song transitions (e.g.
+        _play_song() holding the lock across load_file()).
+
+        Because the snapshot is taken before the I/O, the song can end or a
+        new one can start while this method is running. That's acceptable
+        for a status read (a UI poll, not a control decision), but it means
+        current_song_id may no longer match the live queue by the time
+        get_item() runs -- handled below the same way a missing item is
+        always handled.
+
         Returns:
             Dictionary with playback state and current song info
         """
         from dataclasses import asdict
 
         with self._locked():
-            position = None
-            if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
-                position = self.streaming_controller.get_position()
+            state = self.state
+            current_song_id = self.current_song_id
 
-            # Query current song data from database (always fresh)
-            current_song = None
-            if self.current_song_id:
-                queue_item = self.queue_manager.get_item(self.current_song_id)
-                if queue_item:
-                    # Convert QueueItem to dict for JSON serialization
-                    current_song = asdict(queue_item)
-                    # Convert datetime objects to ISO format strings for JSON
-                    if current_song.get("created_at"):
-                        current_song["created_at"] = current_song["created_at"].isoformat()
-                    # Flatten metadata and settings for easier frontend access
-                    current_song["title"] = queue_item.metadata.title
-                    current_song["duration_seconds"] = queue_item.metadata.duration_seconds
-                    current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
-                    current_song["channel"] = queue_item.metadata.channel
-                    current_song["artist"] = queue_item.metadata.artist
-                    current_song["song_name"] = queue_item.metadata.song_name
-                    current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
+        position = None
+        if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+            position = self.streaming_controller.get_position()
 
-            status = {
-                "state": self.state.value,
-                "current_song": current_song,
-                "position_seconds": position,
-            }
-            return status
+        # Query current song data from database (always fresh)
+        current_song = None
+        if current_song_id:
+            queue_item = self.queue_manager.get_item(current_song_id)
+            if queue_item:
+                # Convert QueueItem to dict for JSON serialization
+                current_song = asdict(queue_item)
+                # Convert datetime objects to ISO format strings for JSON
+                if current_song.get("created_at"):
+                    current_song["created_at"] = current_song["created_at"].isoformat()
+                # Flatten metadata and settings for easier frontend access
+                current_song["title"] = queue_item.metadata.title
+                current_song["duration_seconds"] = queue_item.metadata.duration_seconds
+                current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
+                current_song["channel"] = queue_item.metadata.channel
+                current_song["artist"] = queue_item.metadata.artist
+                current_song["song_name"] = queue_item.metadata.song_name
+                current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
+
+        status = {
+            "state": state.value,
+            "current_song": current_song,
+            "position_seconds": position,
+        }
+        return status
 
     def set_pitch(self, semitones: int) -> bool:
         """
