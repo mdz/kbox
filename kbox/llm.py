@@ -72,6 +72,18 @@ class LLMClient:
 
         Raises:
             Exception: If LLM call fails
+
+        Note on "Pydantic serializer warnings: ... Expected `Message`" / "Expected
+        `StreamingChoices`" logged around every call: this is emitted by LiteLLM's own
+        background success-handler thread (litellm.utils.py, "Wrapper: Completed Call,
+        calling success_handler"), not by our code. LiteLLM's internal logging path
+        re-validates the response against a `Union[Choices, StreamingChoices]` /
+        `Message` schema that's shaped for streaming responses, so a normal
+        non-streaming `ModelResponse` trips a serializer mismatch there even though it
+        round-trips fine. The actual response object returned to callers here (and used
+        via `response.choices[0].message.content` in song_metadata.py) is unaffected —
+        confirmed by successful extraction on the same call. Known upstream LiteLLM
+        quirk (seen on 1.80.15); do not treat this warning as evidence of an app bug.
         """
         # Get LLM config
         model = self.config.get("llm_model")
