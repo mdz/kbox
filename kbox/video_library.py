@@ -161,6 +161,54 @@ def karaoke_quality_score(title: str, channel: str = "") -> int:
     return 0
 
 
+# =========================================================================
+# Search Query Normalization
+# =========================================================================
+
+# A standalone "karaoke" token, with any surrounding whitespace.
+_KARAOKE_TOKEN = re.compile(r"\bkaraoke\b", re.IGNORECASE)
+
+# Collapses the whitespace left behind after tokens are removed.
+_EXTRA_WHITESPACE = re.compile(r"\s+")
+
+
+def karaoke_search_query(query: str) -> str:
+    """
+    Build the query actually sent to a search backend.
+
+    Every kbox search is a karaoke search, so "karaoke" is appended for the
+    user.  People also type it themselves, and the search-suggestion
+    dropdown offers completions that already contain it (YouTube's own
+    suggestions for "bohemian rha" include "bohemian rhapsody karaoke"), so
+    naively appending produces "... karaoke karaoke".
+
+    YouTube tolerates the repetition — results are near-identical either way
+    — but it makes logs confusing and, more importantly, lets two different
+    suggestions collapse onto the same search.  Callers that show a list of
+    suggestions should deduplicate on this function's output.
+
+    Standalone "karaoke" tokens are stripped wherever they appear and
+    exactly one is appended, so "karaoke bohemian rhapsody", "bohemian
+    rhapsody karaoke" and "bohemian rhapsody" all normalize to the same
+    query.
+
+    Args:
+        query: Raw user query.
+
+    Returns:
+        Query with exactly one trailing "karaoke" token.
+    """
+    stripped = _KARAOKE_TOKEN.sub(" ", query)
+    stripped = _EXTRA_WHITESPACE.sub(" ", stripped).strip()
+
+    # A query of just "karaoke" (or only karaoke tokens) strips to nothing;
+    # appending to that would yield a leading space and an empty search.
+    if not stripped:
+        return "karaoke"
+
+    return f"{stripped} karaoke"
+
+
 class VideoSearchSource(ABC):
     """
     Abstract base class for video search sources.

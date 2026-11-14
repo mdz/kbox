@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from googleapiclient.discovery import build
 
+from .video_library import karaoke_search_query
+
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
 
@@ -61,7 +63,8 @@ class YouTubeAPI:
         """
         Search for videos using the YouTube Data API.
 
-        Appends "karaoke" to the query automatically.
+        Normalizes the query so it carries exactly one "karaoke" token
+        (see karaoke_search_query).
 
         Args:
             query: Search query
@@ -78,7 +81,7 @@ class YouTubeAPI:
         if not youtube:
             raise RuntimeError("YouTube API key is not configured")
 
-        search_query = f"{query} karaoke"
+        search_query = karaoke_search_query(query)
         self.logger.debug("Searching YouTube via API: %s", search_query)
 
         request = youtube.search().list(

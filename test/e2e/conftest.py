@@ -27,13 +27,25 @@ from playwright.sync_api import sync_playwright
 
 # test/ is on sys.path when pytest runs from repo root with no __init__.py in test/
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from support.app_factory import build_test_app  # noqa: E402
+from support.app_factory import FakeSuggestFetcher, build_test_app  # noqa: E402
 
 MOBILE_DEVICES = ["Pixel 5", "iPhone 13"]
 
 
 @pytest.fixture
-def live_app(tmp_path):
+def suggest_fetcher():
+    """Stands in for Google's suggestion endpoint, inside the real suggester.
+
+    Created before the app so build_test_app can wire it in. Request this
+    fixture to choose what the endpoint "returns"; leave it alone and it
+    offers nothing, which is what every test that isn't about autocomplete
+    wants.
+    """
+    return FakeSuggestFetcher()
+
+
+@pytest.fixture
+def live_app(tmp_path, suggest_fetcher):
     """Spin up a real uvicorn server with a fresh temp DB and return its base URL."""
     assert Path.cwd().name == "kbox" or (Path.cwd() / "kbox").is_dir(), (
         "pytest must run from repo root so static/template paths resolve correctly"
@@ -41,7 +53,9 @@ def live_app(tmp_path):
 
     cache = tmp_path / "cache"
     cache.mkdir()
-    app, db, queue = build_test_app(str(tmp_path / "test.db"), str(cache))
+    app, db, queue = build_test_app(
+        str(tmp_path / "test.db"), str(cache), suggest_fetch=suggest_fetcher
+    )
 
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
     server = uvicorn.Server(config)

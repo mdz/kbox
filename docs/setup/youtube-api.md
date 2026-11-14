@@ -58,15 +58,29 @@ results and quota instead of the fallback.
 
 ## API Quota and Limits
 
-- **Free tier**: 10,000 units per day
-- **Search**: 100 units per request
-- **Video info**: 1 unit per request
-- This means ~100 searches per day on the free tier
+Search has its own quota bucket, separate from the general unit pool. The
+default allocations are:
 
-For production use, you may want to:
-- Monitor your quota usage in Google Cloud Console
-- Set up billing alerts
-- Consider upgrading if needed
+- **Search requests**: 100 per day (1 unit each, from the search bucket)
+- **Everything else** (video info, etc.): 10,000 units per day, 1 unit per
+  request
+
+So the practical ceiling is **~100 searches per day** by default. That is
+usually enough for a party — a guest typically searches once or twice per
+song they add. When it runs out, kbox logs a warning and falls back to
+`yt-dlp` for the rest of the day, so search keeps working; it is just slower
+(yt-dlp is rate-limited to one call every two seconds). The quota resets at
+midnight Pacific Time.
+
+Raising the limit is a request, not a purchase: use Google's [quota
+extension request form](https://support.google.com/youtube/contact/yt_api_form).
+Note that the two buckets are raised independently — increasing "Queries per
+day" does **not** give you more searches. The row to look at (and to ask for)
+is **Search Queries per day**, under **APIs & Services** > **YouTube Data API
+v3** > **Quotas & System Limits** in the Cloud Console.
+
+If you are developing a kbox feature that issues searches, assume the stock
+100/day: most installs will not have an extension.
 
 ## Troubleshooting
 
@@ -76,8 +90,11 @@ For production use, you may want to:
 - Check that API restrictions allow YouTube Data API v3
 
 ### "Quota exceeded" error
-- You've hit the daily limit
-- Wait 24 hours or increase quota in Google Cloud Console
+- You've hit a daily limit — most likely **Search Queries per day** (default 100)
+- Check which bucket is exhausted under **Quotas & System Limits** in the Cloud Console
+- Search keeps working via the `yt-dlp` fallback, just more slowly — the
+  quota resets at midnight Pacific Time
+- If you hit this regularly, request a quota increase
 
 ### "Access denied" error
 - Check IP restrictions if you set them

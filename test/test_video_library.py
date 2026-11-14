@@ -22,6 +22,7 @@ from kbox.video_library import (
     VideoSearchSource,
     is_likely_karaoke,
     karaoke_quality_score,
+    karaoke_search_query,
 )
 
 
@@ -764,3 +765,49 @@ class TestSearchRanking:
             "youtube:title_kw",
             "youtube:ambiguous",
         ]
+
+
+class TestKaraokeSearchQuery:
+    """Normalizing the query that goes to a search backend."""
+
+    def test_appends_karaoke(self):
+        assert karaoke_search_query("bohemian rhapsody") == "bohemian rhapsody karaoke"
+
+    def test_does_not_double_up(self):
+        """Autocomplete offers completions that already say "karaoke"."""
+        assert karaoke_search_query("bohemian rhapsody karaoke") == "bohemian rhapsody karaoke"
+
+    def test_strips_karaoke_from_anywhere(self):
+        assert karaoke_search_query("karaoke bohemian rhapsody") == "bohemian rhapsody karaoke"
+        assert karaoke_search_query("bohemian karaoke rhapsody") == "bohemian rhapsody karaoke"
+
+    def test_strips_repeated_karaoke(self):
+        assert karaoke_search_query("karaoke karaoke song") == "song karaoke"
+
+    def test_case_insensitive(self):
+        assert karaoke_search_query("Bohemian Rhapsody KARAOKE") == "Bohemian Rhapsody karaoke"
+
+    def test_bare_karaoke_query(self):
+        """Stripping everything would leave an empty search."""
+        assert karaoke_search_query("karaoke") == "karaoke"
+        assert karaoke_search_query("  KARAOKE  ") == "karaoke"
+
+    def test_collapses_whitespace(self):
+        assert karaoke_search_query("  bohemian    rhapsody  ") == "bohemian rhapsody karaoke"
+
+    def test_leaves_karaoke_inside_words_alone(self):
+        """Word boundaries only - a channel name shouldn't be mangled."""
+        assert karaoke_search_query("karafun bohemian") == "karafun bohemian karaoke"
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "bohemian rhapsody",
+            "bohemian rhapsody karaoke",
+            "karaoke bohemian rhapsody",
+            "  Bohemian   Rhapsody   ",
+        ],
+    )
+    def test_variants_converge(self, query):
+        """Suggestions that differ only in these ways are the same search."""
+        assert karaoke_search_query(query).lower() == "bohemian rhapsody karaoke"

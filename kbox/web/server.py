@@ -21,6 +21,7 @@ from ..database import EventRepository
 from ..identity import normalize_name
 from ..playback import PlaybackController, PlaybackState
 from ..queue import QueueManager
+from ..search_suggest import SearchSuggester
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine, SuggestionError
 from ..user import UserManager
@@ -30,6 +31,27 @@ logger = logging.getLogger(__name__)
 # Root logger stays at INFO (DEBUG globally is too spammy from third-party
 # libs like httpx/litellm); opt this logger in on its own.
 logger.setLevel(logging.DEBUG)
+
+# Measured against the live endpoint, asking at every prefix length whether
+# the song the guest was actually after was already on offer. Replayed over
+# 185 real searches from user_events:
+#
+#     1 char   2%     2 chars   2%     3 chars  15%     4 chars  29%
+#     5 chars 44%     6 chars  52%     8 chars  62%    11 chars  83%
+#
+# There is no knee to land on - it is a ramp - so this number is a judgement
+# about where a dropdown stops being noise, not a measurement. 4 is roughly
+# where the hit rate doubles off the floor, while still serving the real
+# four-character queries in the corpus ("Mary", "cure", "River"), which a
+# higher threshold would shut out entirely.
+#
+# An earlier version of this comment claimed a sharp knee at 3 characters and
+# a 75% hit rate. That came from replaying 30 karaoke standards - the most
+# searched songs on earth, which is precisely what a popularity-ranked
+# suggestion endpoint is best at. Real queries are artist-plus-title, partial,
+# misspelled and often obscure. Do not re-tune this against a corpus of
+# well-known songs; see docs/development/search-autocomplete.md.
+MIN_SUGGEST_QUERY_LENGTH = 4
 
 
 class _ClockTolerantTimestampSigner(itsdangerous.TimestampSigner):
@@ -182,6 +204,11 @@ def get_favorites_manager(request: Request):
     return request.app.state.favorites_manager
 
 
+def get_search_suggester(request: Request) -> SearchSuggester:
+    """Get SearchSuggester from app state."""
+    return request.app.state.search_suggester
+
+
 def get_event_repo(request: Request) -> EventRepository:
     """Get EventRepository, lazily created from the database."""
     if not hasattr(request.app.state, "_event_repo"):
@@ -271,6 +298,9 @@ def create_app(
     app.state.suggestion_engine = suggestion_engine
     app.state.streaming_controller = streaming_controller
     app.state.access_token = access_token
+    # Autocomplete is self-contained (config + an HTTP call), so it's built
+    # here rather than threaded through main.py's wiring.
+    app.state.search_suggester = SearchSuggester(config_manager)
 
     # Middleware is added in LIFO order (last added runs first)
     # So we add GuestAuthMiddleware BEFORE SessionMiddleware so it runs AFTER
@@ -798,6 +828,35 @@ def create_app(
                 logger.debug("Failed to log search event", exc_info=True)
 
         return {"results": results}
+
+    @app.get("/api/search/suggest")
+    def suggest_search_queries(
+        q: str,
+        max_results: int = 8,
+        suggester: SearchSuggester = Depends(get_search_suggester),
+    ):
+        """
+        Autocomplete the search box.
+
+        Returns an empty list for the cases that are not errors: disabled by
+        the operator, query too short, or Google unreachable (which the
+        suggester logs and backs off from).  The search box treats "no
+        suggestions" as the normal case, so none of those reach a guest.
+
+        Anything else — a reply we cannot parse, a bug in the suggester —
+        is deliberately left to raise, producing a 500 and a traceback in the
+        log.  The search box treats a 500 the same as an empty list, so the
+        guest still sees nothing broken, but the failure is on the record
+        rather than silently disabling the feature.
+
+        Deliberately not recorded as a user event: a search event is logged
+        when someone actually searches, and logging every keystroke prefix
+        would bury that signal.
+        """
+        if len(q.strip()) < MIN_SUGGEST_QUERY_LENGTH:
+            return {"suggestions": []}
+
+        return {"suggestions": suggester.suggest(q, max_results)}
 
     @app.get("/api/suggestions")
     def get_suggestions(
@@ -1382,6 +1441,7 @@ def create_app(
                 "duplicate_singer_nudge_enabled": config.get_bool(
                     "duplicate_singer_nudge_enabled", True
                 ),
+                "search_suggestions_enabled": config.get_bool("search_suggestions_enabled", True),
                 "suggestion_theme": config.get("suggestion_theme"),
             },
         )

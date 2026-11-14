@@ -710,6 +710,73 @@ class TestVideoSearchEndpoints:
         finally:
             conn.close()
 
+    def test_suggest(self, client):
+        """GET /api/search/suggest - autocomplete the search box."""
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester,
+            "suggest",
+            return_value=["bohemian rhapsody", "bohemian rhapsody piano"],
+        ):
+            response = client.get("/api/search/suggest?q=bohemian")
+
+        assert response.status_code == 200
+        assert response.json()["suggestions"] == [
+            "bohemian rhapsody",
+            "bohemian rhapsody piano",
+        ]
+
+    def test_suggest_ignores_short_queries(self, client):
+        """One or two characters match everything - don't bother upstream."""
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester, "suggest"
+        ) as mock_suggest:
+            response = client.get("/api/search/suggest?q=bo")
+
+        assert response.status_code == 200
+        assert response.json()["suggestions"] == []
+        mock_suggest.assert_not_called()
+
+    def test_suggest_degrades_quietly(self, client):
+        """An unavailable upstream is an empty list, never an error."""
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester, "suggest", return_value=[]
+        ):
+            response = client.get("/api/search/suggest?q=bohemian")
+
+        assert response.status_code == 200
+        assert response.json()["suggestions"] == []
+
+    def test_suggest_does_not_hide_a_broken_parser(self, client):
+        """A reply the suggester can't read must not look like "no results".
+
+        The route lets it raise, so the failure lands in the log as a 500
+        instead of silently disabling autocomplete. The search box treats a
+        500 the same as an empty list, so guests still see nothing broken.
+        """
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester,
+            "suggest",
+            side_effect=ValueError("unexpected response shape"),
+        ):
+            with pytest.raises(ValueError):
+                client.get("/api/search/suggest?q=bohemian")
+
+    def test_suggest_does_not_log_search_events(self, client, app_components, alice):
+        """Keystroke prefixes would drown out real searches in the event log."""
+        set_user(client, ALICE_ID, "Alice")
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester, "suggest", return_value=["bohemian rhapsody"]
+        ):
+            client.get("/api/search/suggest?q=bohemian")
+
+        conn = app_components["history"].database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM user_events WHERE event_type = 'search'")
+            assert cursor.fetchone()["count"] == 0
+        finally:
+            conn.close()
+
     def test_search_no_event_for_anonymous_user(self, client, app_components):
         """Search works without logging when user is not authenticated."""
         response = client.get("/api/search?q=test")
