@@ -234,6 +234,12 @@ breaker behavior are tested without sleeping.
   renders inconsistently on mobile and cannot be styled.
 - **Absolutely positioned**, so the list overlays what is below rather than
   shoving the results down on every keystroke.
+- **Anchored to the form, not the input.** The Search button sits full-width
+  directly beneath the input in this layout, so a list hanging off the input
+  paints over it — and a guest who wants to search the words they actually
+  typed cannot reach the button. This shipped briefly and was caught by the
+  queue e2e tests timing out on "element is not stable"; there is now a test
+  that taps Search with the dropdown open.
 - **Rows built from text nodes, not `innerHTML`.** These strings come from an
   external service and land on a tap target.
 - **The typed prefix stays dim; the completion is bold.** The completion is

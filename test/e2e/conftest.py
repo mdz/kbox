@@ -83,6 +83,20 @@ def mobile_page(request):
         browser = engine.launch()
         context = browser.new_context(**device)
         page = context.new_page()
+
+        # Search autocomplete would otherwise reach Google's suggestion
+        # endpoint from CI on any test that types into the search box. Answer
+        # with nothing by default; tests that are about the dropdown register
+        # their own route, which takes precedence.
+        page.route(
+            "**/api/search/suggest*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"suggestions": []}',
+            ),
+        )
+
         yield page
         context.close()
         browser.close()

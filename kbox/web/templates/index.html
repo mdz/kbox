@@ -217,10 +217,15 @@
             font-size: 18px;
         }
 
-        /* Autocomplete dropdown.  Anchored to the input rather than placed
-           in flow so it overlays the results below instead of shoving them
-           down on every keystroke. */
-        .search-input-wrap {
+        /* Autocomplete dropdown.  Positioned rather than placed in flow so it
+           overlays the content below instead of shoving it down on every
+           keystroke.
+
+           It hangs off the whole form, not off the input. In this layout the
+           Search button sits full-width directly beneath the input, so a list
+           anchored to the input covers it — and a guest who wants to search
+           the words they actually typed can no longer reach the button. */
+        #search-form {
             position: relative;
         }
 
@@ -230,7 +235,9 @@
             left: 0;
             right: 0;
             z-index: 50;
-            margin: -2px 0 0 0;
+            /* The form's inputs carry 5px vertical margins; sit flush under
+               the button rather than inheriting a gap. */
+            margin: -3px 0 0 0;
             padding: 4px;
             list-style: none;
             background: #2b2b2b;

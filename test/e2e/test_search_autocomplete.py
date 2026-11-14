@@ -146,6 +146,27 @@ def test_failed_suggest_request_leaves_search_working(mobile_page, init_user):
     expect(mobile_page.locator(".search-result-title")).to_have_text("Test Song")
 
 
+def test_search_button_stays_reachable_under_the_dropdown(mobile_page, init_user):
+    """A guest who ignores the suggestions must still be able to tap Search.
+
+    The Search button sits full-width directly below the input, so a dropdown
+    anchored to the input covers it — which is exactly what happened, and what
+    broke the queue tests before the list was re-anchored to the form.
+    """
+    init_user("Alice")
+    stub_suggestions(mobile_page)
+
+    type_query(mobile_page)
+    expect(mobile_page.locator("#search-suggestions")).to_be_visible()
+
+    # Would time out on "element is not stable / visible" if the dropdown
+    # were painted over the button.
+    mobile_page.locator("#search-button").click(timeout=5000)
+
+    expect(mobile_page.locator("#search-input")).to_have_value("bohemian")
+    expect(mobile_page.locator(".search-result-title")).to_have_text("Test Song")
+
+
 def test_clearing_the_box_closes_the_dropdown(mobile_page, init_user):
     """Deleting back below the minimum length dismisses suggestions."""
     init_user("Alice")
