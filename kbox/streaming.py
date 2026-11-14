@@ -235,15 +235,10 @@ class StreamingController:
         self.video_bin = self._create_video_sink_bin()
         self.playbin.set_property("video-sink", self.video_bin)
 
-        # Connect bus handlers for EOS, errors, and warnings
-        bus = self.playbin.get_bus()
-        bus.add_signal_watch()
-        bus.connect("message::eos", self._on_eos)
-        bus.connect("message::error", self._on_error)
-        bus.connect("message::warning", self._on_warning)
-
-        # Start bus polling thread for EOS/error handling
-        # (signal watch requires GLib main loop which may not be running)
+        # Bus messages are delivered by polling threads, not by
+        # bus.add_signal_watch() + bus.connect(): a signal watch only fires
+        # from a GLib main loop, and kbox never runs one. Both this bus and
+        # the display pipeline's are polled -- see _start_bus_polling().
         self._start_bus_polling()
 
         # Start in READY state (idle, no output)
@@ -436,13 +431,11 @@ class StreamingController:
 
         self.display_pipeline = pipeline
 
-        # Watch this pipeline's bus. Without it a failure here is completely
-        # silent: the app logs a clean startup and the screen just shows
-        # whatever the console was showing.
-        bus = pipeline.get_bus()
-        bus.add_signal_watch()
-        bus.connect("message::error", self._on_display_error)
-        bus.connect("message::warning", self._on_display_warning)
+        # This pipeline's bus is polled alongside playbin's by
+        # _start_bus_polling(), which the caller starts once this pipeline
+        # exists. Without that a failure here is completely silent: the app
+        # logs a clean startup and the screen just shows whatever the console
+        # was showing.
 
         # READY opens the DRM device, which is what makes kmssink able to
         # report the connector's mode.
@@ -1615,31 +1608,74 @@ class StreamingController:
     # Bus Polling (for environments without GLib main loop)
     # =========================================================================
 
-    def _start_bus_polling(self):
-        """Start a thread to poll the bus for messages."""
-        import threading
+    def _dispatch_playbin_message(self, bus, msg):
+        """Route one message from playbin's bus to its handler."""
+        Gst = _get_gst()
+        if msg.type == Gst.MessageType.EOS:
+            self._on_eos(bus, msg)
+        elif msg.type == Gst.MessageType.ERROR:
+            self._on_error(bus, msg)
+        elif msg.type == Gst.MessageType.WARNING:
+            self._on_warning(bus, msg)
 
+    def _dispatch_display_message(self, bus, msg):
+        """Route one message from the display pipeline's bus to its handler."""
+        Gst = _get_gst()
+        if msg.type == Gst.MessageType.ERROR:
+            self._on_display_error(bus, msg)
+        elif msg.type == Gst.MessageType.WARNING:
+            self._on_display_warning(bus, msg)
+
+    def _start_bus_polling(self):
+        """
+        Start the threads that deliver bus messages.
+
+        One thread per bus (playbin's and the display pipeline's). Polling is
+        the only delivery path: bus.add_signal_watch() needs a GLib main loop
+        and kbox does not run one, so a connected signal handler would never
+        fire.
+        """
         self._bus_poll_running = True
+        self._bus_poll_threads = []
+        self._start_bus_poller("GstBusPoll", lambda: self.playbin, self._dispatch_playbin_message)
+        self._start_bus_poller(
+            "GstDisplayBusPoll",
+            lambda: self.display_pipeline,
+            self._dispatch_display_message,
+        )
+
+    def _start_bus_poller(self, name, get_pipeline, dispatch):
+        """Poll one pipeline's bus in a thread until polling is stopped."""
+        import threading
 
         def poll_bus():
             Gst = _get_gst()
-            bus = self.playbin.get_bus()
-            while self._bus_poll_running and self.playbin:
+            while self._bus_poll_running:
+                # Re-read the pipeline each pass: teardown clears these
+                # attributes, and the bus of a NULL-state pipeline is of no
+                # further use.
+                pipeline = get_pipeline()
+                if pipeline is None:
+                    return
+                bus = pipeline.get_bus()
                 msg = bus.timed_pop(100 * Gst.MSECOND)  # 100ms timeout
                 if msg:
-                    if msg.type == Gst.MessageType.EOS:
-                        self._on_eos(bus, msg)
-                    elif msg.type == Gst.MessageType.ERROR:
-                        self._on_error(bus, msg)
+                    try:
+                        dispatch(bus, msg)
+                    except Exception:
+                        self.logger.exception("Error handling bus message on %s", name)
 
-        self._bus_poll_thread = threading.Thread(target=poll_bus, daemon=True, name="GstBusPoll")
-        self._bus_poll_thread.start()
+        thread = threading.Thread(target=poll_bus, daemon=True, name=name)
+        self._bus_poll_threads.append(thread)
+        thread.start()
 
     def _stop_bus_polling(self):
-        """Stop the bus polling thread."""
+        """Stop the bus polling threads."""
         self._bus_poll_running = False
-        if hasattr(self, "_bus_poll_thread") and self._bus_poll_thread.is_alive():
-            self._bus_poll_thread.join(timeout=1)
+        for thread in getattr(self, "_bus_poll_threads", []):
+            if thread.is_alive():
+                thread.join(timeout=1)
+        self._bus_poll_threads = []
 
     # =========================================================================
     # Testing Support

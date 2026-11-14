@@ -33,7 +33,7 @@ configure_macos_gstreamer_env()
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.streaming import StreamingController, _get_gst
+from kbox.streaming import StreamingController, _get_glib, _get_gst
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -1216,3 +1216,126 @@ def test_caps_dimensions_extracts_width_and_height(controller):
     caps = _get_gst().Caps.from_string("video/x-raw,format=I420,width=1280,height=720")
 
     assert controller._caps_dimensions(caps) == (1280, 720)
+
+
+# =========================================================================
+# Bus Message Dispatch Tests
+#
+# Bus messages reach their handlers only through the polling threads:
+# bus.add_signal_watch() + bus.connect() needs a GLib main loop, which kbox
+# never runs, so signal-based delivery silently did nothing. These tests post
+# real messages and assert the handlers run.
+# =========================================================================
+
+
+def _get_glib_error(message):
+    """Build a GError suitable for Gst.Message.new_warning/new_error."""
+    GLib = _get_glib()
+    Gst = _get_gst()
+    return GLib.Error.new_literal(Gst.StreamError.quark(), message, Gst.StreamError.FAILED)
+
+
+def _quiesce_bus(controller, pipeline):
+    """Stop polling and empty a bus, so a test owns what it posts next.
+
+    Stopping the poll thread first means it cannot race the test for the
+    message -- which is also what keeps these tests free of sleeps and timing
+    assumptions. Pipelines queue state-changed and stream-start messages of
+    their own, so the bus is cleared too.
+    """
+    controller._stop_bus_polling()
+    bus = pipeline.get_bus()
+    while bus.pop() is not None:
+        pass
+    return bus
+
+
+def _drain_and_dispatch(bus, dispatch):
+    """Dispatch every queued message the way the poll loop does."""
+    count = 0
+    while True:
+        msg = bus.pop()
+        if msg is None:
+            return count
+        dispatch(bus, msg)
+        count += 1
+
+
+def test_display_bus_warning_reaches_handler(controller, caplog):
+    """A WARNING on the display pipeline's bus is logged.
+
+    Regression: the display pipeline's handlers were installed with a signal
+    watch and so never fired -- a failure on the pipeline holding the screen
+    was completely silent.
+    """
+    Gst = _get_gst()
+    pipeline = controller.display_pipeline
+    assert pipeline is not None
+    bus = _quiesce_bus(controller, pipeline)
+
+    error = _get_glib_error("display warning under test")
+    bus.post(Gst.Message.new_warning(pipeline, error, "debug info for display warning"))
+
+    with caplog.at_level(logging.WARNING, logger="kbox.streaming"):
+        assert _drain_and_dispatch(bus, controller._dispatch_display_message) == 1
+
+    assert "Display pipeline warning" in caplog.text
+    assert "display warning under test" in caplog.text
+
+
+def test_display_bus_error_reaches_handler(controller, caplog):
+    """An ERROR on the display pipeline's bus is logged."""
+    Gst = _get_gst()
+    pipeline = controller.display_pipeline
+    assert pipeline is not None
+    bus = _quiesce_bus(controller, pipeline)
+
+    error = _get_glib_error("display error under test")
+    bus.post(Gst.Message.new_error(pipeline, error, "debug info for display error"))
+
+    with caplog.at_level(logging.ERROR, logger="kbox.streaming"):
+        assert _drain_and_dispatch(bus, controller._dispatch_display_message) == 1
+
+    assert "Display pipeline error" in caplog.text
+    assert "display error under test" in caplog.text
+
+
+def test_playbin_bus_warning_reaches_handler(controller, caplog):
+    """A WARNING on playbin's bus reaches _on_warning.
+
+    WARNING was not dispatched at all before, so the audio-device escalation
+    below could never fire.
+    """
+    Gst = _get_gst()
+    bus = _quiesce_bus(controller, controller.playbin)
+
+    error = _get_glib_error("Could not open audio device for playback")
+    bus.post(Gst.Message.new_warning(controller.playbin, error, "debug info for audio warning"))
+
+    with caplog.at_level(logging.DEBUG, logger="kbox.streaming"):
+        assert _drain_and_dispatch(bus, controller._dispatch_playbin_message) == 1
+
+    assert "GStreamer warning" in caplog.text
+    # The escalation check for audio-device misconfiguration.
+    assert "CRITICAL: Audio device error detected" in caplog.text
+
+
+def test_both_buses_are_polled(controller):
+    """Polling covers playbin's bus and the display pipeline's bus."""
+    names = {thread.name for thread in controller._bus_poll_threads}
+
+    assert names == {"GstBusPoll", "GstDisplayBusPoll"}
+    assert all(thread.is_alive() for thread in controller._bus_poll_threads)
+
+
+def test_stop_bus_polling_joins_every_thread(controller):
+    """Shutdown tears down both poll threads and forgets them."""
+    threads = list(controller._bus_poll_threads)
+    assert threads
+
+    controller._stop_bus_polling()
+
+    assert controller._bus_poll_running is False
+    assert controller._bus_poll_threads == []
+    for thread in threads:
+        assert not thread.is_alive(), f"{thread.name} did not exit"
