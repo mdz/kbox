@@ -134,10 +134,10 @@ class SearchSuggester:
         """
         Get completions for a partial query.
 
-        Anything that goes wrong with the endpoint — unreachable, timed out,
-        answering with something unrecognizable — yields an empty list, and
-        the search box falls back to its pre-autocomplete behavior. A bug in
-        this module is not caught and will propagate.
+        A call to Google that doesn't get through — unreachable, refused,
+        timed out — yields an empty list, and the search box falls back to
+        its pre-autocomplete behavior. Nothing else is swallowed: a reply we
+        can't parse, or a bug in this module, propagates.
 
         Args:
             query: What the guest has typed so far.
@@ -145,7 +145,11 @@ class SearchSuggester:
 
         Returns:
             Suggestion strings, deduplicated by the search they'd produce.
-            Empty if disabled, too short, failing, or backed off.
+            Empty if autocomplete is off, the query is too short, the call
+            failed, or the breaker is backed off.
+
+        Raises:
+            ValueError: if the endpoint's reply can't be parsed.
         """
         if not self.is_enabled():
             return []
@@ -166,11 +170,9 @@ class SearchSuggester:
         if suggestions is None:
             return []
 
-        # Past this point a failure is ours, not the endpoint's, so it is
-        # deliberately not caught: it should reach the log as a traceback
-        # rather than be miscounted as the endpoint misbehaving.  The route
-        # handler turns it into a 500, which the search box already treats
-        # as "no suggestions".
+        # That None was the only swallowed failure in this module: the call
+        # to Google did not get through.  Everything from here raises, as
+        # does a reply _parse could not read.
         suggestions = self._deduplicate(suggestions)
         self._store(key, suggestions)
         self._record_success()
