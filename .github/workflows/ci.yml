@@ -8,8 +8,20 @@ on:
   merge_group:
 
 jobs:
+  # Runner images are pinned to a release rather than tracking `ubuntu-latest`.
+  # GitHub publishes no rolling arm64 alias (there is no `ubuntu-latest-arm`,
+  # only version-pinned labels), so the arm leg must name a release. Leaving
+  # amd64 on `ubuntu-latest` therefore let the two architectures drift apart
+  # silently when `ubuntu-latest` rolled from 24.04 to 26.04. Bump these labels
+  # together, in their own PR, so the move is deliberate and reviewable.
+  #
+  # The test matrix runs pytest inside the Docker image (debian:stable-slim), so
+  # the runner's Ubuntu release affects only the kernel and Docker daemon, not
+  # the userspace under test. The host release matters most to `e2e`, which
+  # installs Playwright directly on the runner.
+
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -23,7 +35,7 @@ jobs:
         run: uv run ruff format --check .
 
   typecheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -40,7 +52,7 @@ jobs:
       matrix:
         include:
           - platform: amd64
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04
           - platform: arm64
             runs-on: ubuntu-24.04-arm
     runs-on: ${{ matrix.runs-on }}
@@ -62,7 +74,7 @@ jobs:
         run: docker run --rm kbox-test uv run pytest -v
 
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
