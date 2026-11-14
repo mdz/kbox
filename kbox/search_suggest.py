@@ -185,7 +185,13 @@ class SearchSuggester:
             return suggestions
         except Exception as e:
             # Undocumented endpoint: treat every failure mode the same way.
-            self.logger.debug("Suggestion fetch failed for %r: %s", key, e)
+            #
+            # Warning, not debug: this is the signal that the endpoint has
+            # changed, gone away, or started refusing us, and the guest sees
+            # nothing at all when it happens. It is bounded — the breaker
+            # opens after FAILURE_THRESHOLD of these and goes quiet for the
+            # cooldown — so it cannot flood the log during a party.
+            self.logger.warning("Suggestion fetch failed for %r: %s", key, e)
             self._record_failure()
             return []
         finally:
@@ -334,7 +340,9 @@ class SearchSuggester:
             self._consecutive_failures += 1
             if self._consecutive_failures >= FAILURE_THRESHOLD:
                 self._breaker_open_until = self._now() + BREAKER_COOLDOWN_SECONDS
-                self.logger.info(
+                # At least as loud as the individual failures above: giving up
+                # on suggestions entirely for a while is the bigger event.
+                self.logger.warning(
                     "Search suggestions unavailable after %d consecutive failures; "
                     "backing off for %.0fs",
                     self._consecutive_failures,

@@ -356,7 +356,10 @@ wifi with ten phones on the same AP is a different proposition.
 
 - **Check:** latency from the Pi itself, during a party rather than idle.
 - **Watch for:** the 2s request timeout being hit, and the breaker opening on
-  ordinary wifi flakiness rather than a real upstream problem.
+  ordinary wifi flakiness rather than a real upstream problem. Both log at
+  WARNING (`Suggestion fetch failed` and `Search suggestions unavailable`), so
+  they show up without turning on debug logging — the guest sees nothing when
+  this happens, so the log is the only signal.
 - **If it trips spuriously:** raise the threshold, or count timeouts
   separately from hard failures.
 
