@@ -328,13 +328,29 @@ export async function confirmAddToQueue() {
 // how the search box behaved before autocomplete existed.
 // ===========================================================================
 
-// Thumb-typing on a phone leaves gaps of roughly 200-350ms between keys, so
-// a 200ms debounce fired on nearly every keystroke - about 15 requests to
-// type "bohemian rhapsody", for a list that is already ~90% accurate by the
-// fifth character. 350ms sits above that typing rhythm, so it fires on
-// deliberate pauses instead, while staying under the ~500ms where a dropdown
-// starts to feel like it is lagging behind the keyboard.
+// A debounce alone behaves as a cliff, not a dial: it fires on every
+// keystroke when the gap between keys exceeds it, and not once until typing
+// stops when the gap is shorter. Measured by typing "bohemian rhapsody" at
+// several cadences with a 350ms debounce and no cap:
+//
+//     120ms/key -> 1 request, dropdown after 2.3s   (i.e. only at the end)
+//     250ms/key -> 1 request, dropdown after 4.4s
+//     350ms/key -> 15 requests, dropdown after 1.1s
+//
+// Phone thumb-typing lands at 200-350ms between keys, straddling that edge,
+// so the feature would behave completely differently for two guests typing
+// at slightly different speeds — and for the faster one it would do nothing
+// until they had already finished typing.
+//
+// So: debounce for the quiet period after typing stops, plus a maximum wait
+// that forces a request during continuous typing. Responsiveness then comes
+// from the cap and no longer depends on how fast the guest types.
 const SUGGEST_DEBOUNCE_MS = 350;
+
+// Longest a guest can keep typing without seeing the list refresh. Low
+// enough to feel live, high enough to cost a few requests per query rather
+// than one per keystroke.
+const SUGGEST_MAX_WAIT_MS = 600;
 
 // Matches MIN_SUGGEST_QUERY_LENGTH on the server, which enforces it and
 // documents how the number was arrived at.
@@ -342,6 +358,8 @@ const SUGGEST_MIN_CHARS = 3;
 
 let _suggestTimer = null;
 let _suggestAbort = null;
+// When the last request actually went out, for the maximum-wait cap.
+let _lastSuggestFetchAt = 0;
 let _suggestions = [];
 let _activeSuggestion = -1;
 
@@ -371,6 +389,9 @@ export function closeSuggestions() {
     list.classList.add('hidden');
     _suggestions = [];
     _activeSuggestion = -1;
+    // Starting a fresh query should get its first list immediately rather
+    // than waiting out a cap left over from the previous one.
+    _lastSuggestFetchAt = 0;
 
     const input = document.getElementById('search-input');
     input.setAttribute('aria-expanded', 'false');
@@ -479,6 +500,8 @@ function acceptSuggestion(index) {
 }
 
 async function fetchSuggestions(query) {
+    _lastSuggestFetchAt = Date.now();
+
     // Abort the previous request so a slow early response can't land after
     // a faster later one and repopulate the list with stale text.
     if (_suggestAbort) {
@@ -525,6 +548,13 @@ function onSearchInput() {
 
     if (query.length < SUGGEST_MIN_CHARS) {
         closeSuggestions();
+        return;
+    }
+
+    // Still typing, but it's been long enough since the last list — refresh
+    // now instead of waiting for a pause that a steady typist never takes.
+    if (Date.now() - _lastSuggestFetchAt >= SUGGEST_MAX_WAIT_MS) {
+        fetchSuggestions(query);
         return;
     }
 
