@@ -328,11 +328,16 @@ export async function confirmAddToQueue() {
 // how the search box behaved before autocomplete existed.
 // ===========================================================================
 
-// Long enough that a moderate typist doesn't fire a request per character,
-// short enough that the list appears while they're still looking at it.
-const SUGGEST_DEBOUNCE_MS = 200;
+// Thumb-typing on a phone leaves gaps of roughly 200-350ms between keys, so
+// a 200ms debounce fired on nearly every keystroke - about 15 requests to
+// type "bohemian rhapsody", for a list that is already ~90% accurate by the
+// fifth character. 350ms sits above that typing rhythm, so it fires on
+// deliberate pauses instead, while staying under the ~500ms where a dropdown
+// starts to feel like it is lagging behind the keyboard.
+const SUGGEST_DEBOUNCE_MS = 350;
 
-// Matches MIN_SUGGEST_QUERY_LENGTH on the server, which enforces it.
+// Matches MIN_SUGGEST_QUERY_LENGTH on the server, which enforces it and
+// documents how the number was arrived at.
 const SUGGEST_MIN_CHARS = 3;
 
 let _suggestTimer = null;

@@ -21,8 +21,10 @@ this feature existed.  Autocomplete is a convenience, never a dependency.
 Requests are proxied through the server rather than made from the browser:
 the endpoint sends no CORS headers, and this keeps guests' partial queries
 off their own network connections.  That does mean every guest's typing
-leaves from one IP, so the cache and the circuit breaker below are what keep
-a party of twenty from looking like a scraper.
+leaves from one IP, though the volume is small: ten guests adding four songs
+each, at roughly five requests per query once debounced, is a few hundred
+requests spread over an evening.  The cache and breaker below are cheap
+insurance against pathological repeats, not load-shedding.
 """
 
 from __future__ import annotations
@@ -50,8 +52,12 @@ SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
 # worse than no suggestion: by the time it arrives the query has moved on.
 REQUEST_TIMEOUT_SECONDS = 2.0
 
-# How long a prefix's suggestions stay fresh.  Guests at one party search for
-# overlapping things, so even a short TTL collapses most of the load.
+# How long a prefix's suggestions stay fresh.  This is not here to deduplicate
+# across guests - at five to ten people, song choices barely overlap, and two
+# of them typing the same full query in five minutes is rare.  What it absorbs
+# is one guest backtracking: deleting a few characters and retyping them,
+# correcting a typo, or searching the same thing twice.  Those prefixes repeat
+# immediately, and suggestions for them don't change within a party.
 CACHE_TTL_SECONDS = 300.0
 
 # Bounded so a long party can't grow the cache without limit.  Entries are
@@ -100,8 +106,11 @@ class SearchSuggester:
         self._lock = threading.Lock()
         # prefix -> (expires_at, suggestions)
         self._cache: Dict[str, Tuple[float, List[str]]] = {}
-        # Prefixes with a request in flight, so concurrent typers asking for
-        # the same thing make one upstream call instead of N.
+        # Prefixes with a request in flight.  Two guests typing the same
+        # prefix in the same instant is rare at party scale; this is really
+        # here for the repeated-client case, such as a phone reloading the
+        # page or retrying, where the same prefix can arrive several times
+        # before the first answer lands.
         self._in_flight: Dict[str, threading.Event] = {}
 
         self._consecutive_failures = 0
