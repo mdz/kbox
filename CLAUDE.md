@@ -87,6 +87,16 @@ testing), see [docs/development/browser-automation-notes.md](docs/development/br
 covers native `confirm()` dialogs being silently auto-declined, search form quirks, and
 the operator-auth vs. controls-unlock distinction.
 
+## Changing Search Autocomplete
+
+Before changing `kbox/search_suggest.py`, the suggestion handling in
+`kbox/web/static/js/search.js`, or `karaoke_search_query()`, see
+[docs/development/search-autocomplete.md](docs/development/search-autocomplete.md) —
+covers why the YouTube Data API can't serve suggestions (no endpoint, and
+`search.list` is capped at 100 calls/day), where the minimum query length and
+debounce numbers came from (both measured), why the cache is not what makes this
+affordable, and the questions still open until it's tested on real phones.
+
 ## Changing the GStreamer Pipeline
 
 Before changing anything in `kbox/streaming.py`, see

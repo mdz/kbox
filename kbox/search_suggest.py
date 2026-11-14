@@ -1,6 +1,9 @@
 """
 Search-box autocomplete for kbox.
 
+Design, measurements and open questions:
+docs/development/search-autocomplete.md
+
 Wraps Google's undocumented query-suggestion endpoint — the one that powers
 YouTube's own search box — to offer completions while a guest types.
 
