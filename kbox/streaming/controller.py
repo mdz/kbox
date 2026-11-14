@@ -79,8 +79,9 @@ class StreamingController:
         # showing. Mutually exclusive with playbin: only one may feed at once.
         self.still_image = StillImageFeeder(self.DISPLAY_CHANNEL, self.INTERSTITIAL_FRAMERATE)
 
-        # Polls playbin's bus for EOS/errors (set by _create_persistent_pipeline)
-        self.bus_watcher: Optional[BusWatcher] = None
+        # Poll threads delivering bus messages, one per bus (set by
+        # _create_persistent_pipeline)
+        self.bus_watchers: list[BusWatcher] = []
 
         # Interstitial state
         self._is_interstitial = False  # True when displaying interstitial (not a song)
@@ -180,21 +181,11 @@ class StreamingController:
         )
         self.playbin.set_property("video-sink", self.video_bin)
 
-        # Connect bus handlers for EOS, errors, and warnings
-        bus = self.playbin.get_bus()
-        bus.add_signal_watch()
-        bus.connect("message::eos", self._on_eos)
-        bus.connect("message::error", self._on_error)
-        bus.connect("message::warning", self._on_warning)
-
-        # Start bus polling thread for EOS/error handling
-        # (signal watch requires GLib main loop which may not be running)
-        self.bus_watcher = BusWatcher(
-            bus_provider=lambda: self.playbin.get_bus() if self.playbin else None,
-            on_eos=self._on_eos,
-            on_error=self._on_error,
-        )
-        self.bus_watcher.start()
+        # Bus messages are delivered by polling threads, not by
+        # bus.add_signal_watch() + bus.connect(): a signal watch only fires
+        # from a GLib main loop, and kbox never runs one. Both this bus and
+        # the display pipeline's are polled -- see _start_bus_polling().
+        self._start_bus_polling()
 
         # Start in READY state (idle, no output)
         ret = self.playbin.set_state(Gst.State.READY)
@@ -432,8 +423,7 @@ class StreamingController:
         self.overlays.cancel_notification_timer()
 
         # Stop bus polling first
-        if self.bus_watcher:
-            self.bus_watcher.stop()
+        self._stop_bus_polling()
 
         self.still_image.stop()
 
@@ -471,9 +461,7 @@ class StreamingController:
         current_file_backup = self.current_file
 
         # Stop bus polling
-        if self.bus_watcher:
-            self.bus_watcher.stop()
-            self.bus_watcher = None
+        self._stop_bus_polling()
 
         self.still_image.stop()
 
@@ -775,6 +763,55 @@ class StreamingController:
         warn_str = str(warn).lower()
         if "unknown pcm" in warn_str or "could not open audio device" in warn_str:
             self.logger.error("CRITICAL: Audio device error detected - %s", warn)
+
+    # =========================================================================
+    # Bus Polling (for environments without GLib main loop)
+    # =========================================================================
+
+    def _dispatch_playbin_message(self, bus, msg):
+        """Route one message from playbin's bus to its handler."""
+        Gst = _get_gst()
+        if msg.type == Gst.MessageType.EOS:
+            self._on_eos(bus, msg)
+        elif msg.type == Gst.MessageType.ERROR:
+            self._on_error(bus, msg)
+        elif msg.type == Gst.MessageType.WARNING:
+            self._on_warning(bus, msg)
+
+    def _start_bus_polling(self):
+        """
+        Start the threads that deliver bus messages.
+
+        One thread per bus (playbin's and the display pipeline's), so neither
+        bus's latency depends on the other. Polling is the only delivery path:
+        bus.add_signal_watch() needs a GLib main loop and kbox does not run
+        one, so a connected signal handler would never fire.
+
+        Each watcher's bus provider returns None once its pipeline is gone,
+        which is how teardown ends the loop rather than racing it.
+        """
+        self.bus_watchers = [
+            BusWatcher(
+                "GstBusPoll",
+                lambda: self.playbin.get_bus() if self.playbin else None,
+                self._dispatch_playbin_message,
+            ),
+            BusWatcher(
+                "GstDisplayBusPoll",
+                lambda: self.display.bus() if self.display else None,
+                lambda bus, msg: self.display.dispatch_bus_message(bus, msg)
+                if self.display
+                else None,
+            ),
+        ]
+        for watcher in self.bus_watchers:
+            watcher.start()
+
+    def _stop_bus_polling(self):
+        """Stop the bus polling threads."""
+        for watcher in self.bus_watchers:
+            watcher.stop()
+        self.bus_watchers = []
 
     # =========================================================================
     # Testing Support

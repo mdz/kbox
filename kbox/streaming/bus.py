@@ -1,12 +1,14 @@
 """
-A thread that polls a GStreamer bus for EOS and error messages.
+Threads that deliver GStreamer bus messages to their handlers.
 
-Needed because the signal watch on playbin's bus only fires from a GLib main
-loop, which kbox does not run.
+Polling is the only delivery path: bus.add_signal_watch() dispatches from a
+GLib main loop, and kbox does not run one (there is no GLib.MainLoop anywhere
+in the tree; the app's event loop is uvicorn's), so a connected signal handler
+would never fire. See docs/development/gstreamer-pipeline.md.
 
-BusWatcher owns the thread and nothing else. What EOS and errors *mean* is
-policy that belongs to whoever is playing, so it arrives here as two
-callables -- the honest boundary for a thread is its lifecycle.
+BusWatcher owns the thread and nothing else. What a message *means* is policy
+belonging to whoever owns the bus, so it arrives here as a dispatch callable
+-- the honest boundary for a thread is its lifecycle.
 """
 
 import logging
@@ -21,52 +23,64 @@ POLL_TIMEOUT_MS = 100
 
 
 class BusWatcher:
-    """Polls a bus on its own thread, dispatching EOS and errors to callbacks."""
+    """Polls one bus on its own thread, handing each message to `dispatch`."""
 
     def __init__(
         self,
+        name: str,
         bus_provider: Callable[[], Any],
-        on_eos: Callable[[Any, Any], None],
-        on_error: Callable[[Any, Any], None],
+        dispatch: Callable[[Any, Any], None],
     ):
         """
         Args:
+            name: thread name, and what a failed dispatch is logged against
             bus_provider: called to get the bus to poll; returning None means
                 there is nothing left to poll and the thread should finish.
-                (That is how the watcher notices the pipeline being torn down
-                underneath it.)
-            on_eos: called with (bus, message) for each EOS message
-            on_error: called with (bus, message) for each error message
+                That is how the watcher notices its pipeline being torn down
+                underneath it -- teardown clears the attribute, and the bus of
+                a NULL-state pipeline is of no further use.
+            dispatch: called with (bus, message) for each message
         """
+        self.name = name
         self._bus_provider = bus_provider
-        self._on_eos = on_eos
-        self._on_error = on_error
+        self._dispatch = dispatch
         self.logger = logging.getLogger(__name__)
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
+    @property
+    def running(self) -> bool:
+        """False once stop() has been called."""
+        return self._running
+
+    def is_alive(self) -> bool:
+        """True while the polling thread is still running."""
+        return self._thread is not None and self._thread.is_alive()
+
     def start(self):
         """Start the polling thread."""
         self._running = True
-        self._thread = threading.Thread(target=self._poll, daemon=True, name="GstBusPoll")
+        self._thread = threading.Thread(target=self._poll, daemon=True, name=self.name)
         self._thread.start()
 
     def _poll(self):
         Gst = _get_gst()
-        bus = self._bus_provider()
-        if bus is None:
-            return
-        while self._running and self._bus_provider() is not None:
-            msg = bus.timed_pop(POLL_TIMEOUT_MS * Gst.MSECOND)
+        while self._running:
+            # Re-read the bus each pass, so teardown ends the loop rather
+            # than racing it.
+            bus = self._bus_provider()
+            if bus is None:
+                return
+            msg = bus.timed_pop(POLL_TIMEOUT_MS * Gst.MSECOND)  # 100ms timeout
             if msg:
-                if msg.type == Gst.MessageType.EOS:
-                    self._on_eos(bus, msg)
-                elif msg.type == Gst.MessageType.ERROR:
-                    self._on_error(bus, msg)
+                try:
+                    self._dispatch(bus, msg)
+                except Exception:
+                    self.logger.exception("Error handling bus message on %s", self.name)
 
     def stop(self):
-        """Stop the bus polling thread."""
+        """Stop the polling thread and wait briefly for it to exit."""
         self._running = False
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=1)

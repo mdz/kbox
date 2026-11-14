@@ -17,7 +17,7 @@ The package splits that into pieces that each own their own state:
 """
 
 from .controller import StreamingController
-from .gst import _get_gst
+from .gst import _get_glib, _get_gst
 from .pipelines import _render_caps_string
 
-__all__ = ["StreamingController", "_get_gst", "_render_caps_string"]
+__all__ = ["StreamingController", "_get_glib", "_get_gst", "_render_caps_string"]

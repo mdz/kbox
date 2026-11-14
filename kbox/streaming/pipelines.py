@@ -231,13 +231,12 @@ class DisplayPipeline:
 
         self.pipeline = pipeline
 
-        # Watch this pipeline's bus. Without it a failure here is completely
-        # silent: the app logs a clean startup and the screen just shows
-        # whatever the console was showing.
-        bus = pipeline.get_bus()
-        bus.add_signal_watch()
-        bus.connect("message::error", self._on_error)
-        bus.connect("message::warning", self._on_warning)
+        # This pipeline's bus is polled alongside playbin's by
+        # StreamingController._start_bus_polling(), which the caller starts
+        # once this pipeline exists -- dispatch_bus_message below is what it
+        # routes through. Without that a failure here is completely silent:
+        # the app logs a clean startup and the screen just shows whatever the
+        # console was showing.
 
         # READY opens the DRM device, which is what makes kmssink able to
         # report the connector's mode.
@@ -303,6 +302,18 @@ class DisplayPipeline:
         self.pipeline.get_state(5 * Gst.SECOND)
         self.pipeline = None
         self.display_size = None
+
+    def bus(self):
+        """This pipeline's bus, or None once it has been torn down."""
+        return self.pipeline.get_bus() if self.pipeline else None
+
+    def dispatch_bus_message(self, bus, msg):
+        """Route one message from this pipeline's bus to its handler."""
+        Gst = _get_gst()
+        if msg.type == Gst.MessageType.ERROR:
+            self._on_error(bus, msg)
+        elif msg.type == Gst.MessageType.WARNING:
+            self._on_warning(bus, msg)
 
     def _on_error(self, bus, message):
         """Log errors from the display pipeline, which are otherwise silent."""
