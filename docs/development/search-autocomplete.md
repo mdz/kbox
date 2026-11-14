@@ -215,7 +215,7 @@ It makes no difference anywhere it could:
 So there is nothing to fix, and `/api/search` deliberately passes the guest's
 text through unchanged rather than folding it.
 
-## Cache, single-flight, breaker
+## Cache and breaker
 
 These are **cheap insurance against pathological repeats, not load-shedding**.
 Ten guests adding four songs each, at roughly six requests per query, is a few
@@ -227,15 +227,36 @@ holding back a flood.
   the same thing twice. It is explicitly *not* cross-guest deduplication: at
   five to ten people choosing karaoke songs, full queries barely overlap, and
   claiming otherwise was wrong when this feature was first written.
-- **Single-flight**: for the repeated-client case, such as a phone reloading
-  or retrying before the first answer lands. Two guests hitting the same
-  prefix in the same instant is rare at party scale.
 - **Circuit breaker** (3 consecutive failures → 2 minute backoff): if the
   endpoint has started refusing us, backing off is politer and faster than
-  letting every keystroke time out.
+  letting every keystroke time out. Unreachability and unreadable replies
+  count; a legitimately empty answer does not.
 
 Failures are deliberately **not** cached — a transient blip should not poison
 a prefix for five minutes. The breaker is what stops the retries.
+
+### There was single-flight here; it was removed
+
+An earlier version held an `Event` per in-flight prefix so that concurrent
+callers asking for the same one made a single upstream request. It was about
+forty lines, and it never fired.
+
+For it to do anything, two requests for the *same* normalized prefix had to
+arrive inside the same ~65ms request window, with nothing cached. Guests type
+different songs; a guest's own client aborts its previous request and the next
+one carries a different prefix. And the cache subsumes nearly all of what was
+left — the first answer for a prefix is cached for five minutes, so a second
+guest reaching the same prefix a second later hits the cache, not the
+in-flight slot. Only a collision inside that one request window would have
+been caught.
+
+Against never firing, it carried a waiter path with its own timeout, and a
+requirement that every exit release the slot — a constraint that had to be
+reasoned about again the moment the exception handling was narrowed. Two
+concurrent fetches of one prefix cost one extra HTTP request and resolve
+themselves. That is the better trade.
+
+Do not add it back without a measurement showing collisions actually happen.
 
 The clock and the HTTP fetcher are both injectable, which is how expiry and
 breaker behavior are tested without sleeping.

@@ -247,17 +247,6 @@ class TestFailureHandling:
         with pytest.raises(ZeroDivisionError):
             suggester.suggest("abc")
 
-    def test_a_propagating_bug_still_releases_the_in_flight_slot(self, clock):
-        """Otherwise one defect would wedge that prefix for every later
-        caller, which would wait out the timeout and get nothing."""
-        suggester = make_suggester(RecordingFetcher(suggest_response("abc", ["x"])), clock)
-        suggester._deduplicate = lambda _: 1 / 0
-
-        with pytest.raises(ZeroDivisionError):
-            suggester.suggest("abc")
-
-        assert suggester._in_flight == {}
-
     def test_breaker_opens_after_repeated_failures(self, clock):
         fetcher = RecordingFetcher(error=OSError("down"))
         suggester = make_suggester(fetcher, clock)

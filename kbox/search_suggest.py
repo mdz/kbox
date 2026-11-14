@@ -31,7 +31,7 @@ Requests are proxied through the server rather than made from the browser:
 the endpoint sends no CORS headers, and this keeps guests' partial queries
 off their own network connections.  That does mean every guest's typing
 leaves from one IP, though the volume is small: ten guests adding four songs
-each, at roughly five requests per query once debounced, is a few hundred
+each, at roughly six requests per query once debounced, is a few hundred
 requests spread over an evening.  The cache and breaker below are cheap
 insurance against pathological repeats, not load-shedding.
 """
@@ -89,7 +89,9 @@ class SearchSuggester:
     Fetches query completions, with caching and a circuit breaker.
 
     Thread-safe: FastAPI serves requests from a thread pool, and a party is
-    several people typing at once.
+    several people typing at once.  The lock covers the cache and the breaker
+    counters; concurrent callers asking for the same uncached prefix simply
+    both fetch it, which costs one extra request and is not worth preventing.
     """
 
     def __init__(
@@ -116,12 +118,6 @@ class SearchSuggester:
         self._lock = threading.Lock()
         # prefix -> (expires_at, suggestions)
         self._cache: Dict[str, Tuple[float, List[str]]] = {}
-        # Prefixes with a request in flight.  Two guests typing the same
-        # prefix in the same instant is rare at party scale; this is really
-        # here for the repeated-client case, such as a phone reloading the
-        # page or retrying, where the same prefix can arrive several times
-        # before the first answer lands.
-        self._in_flight: Dict[str, threading.Event] = {}
 
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
@@ -166,41 +162,23 @@ class SearchSuggester:
             self.logger.debug("Suggestion breaker open, skipping fetch for %r", key)
             return []
 
-        suggestions = self._fetch_deduplicated(key)
+        suggestions = self._fetch_and_parse(key)
+        if suggestions is None:
+            return []
+
+        # Past this point a failure is ours, not the endpoint's, so it is
+        # deliberately not caught: it should reach the log as a traceback
+        # rather than be miscounted as the endpoint misbehaving.  The route
+        # handler turns it into a 500, which the search box already treats
+        # as "no suggestions".
+        suggestions = self._deduplicate(suggestions)
+        self._store(key, suggestions)
+        self._record_success()
         return suggestions[:max_results]
 
     # =====================================================================
     # Fetching
     # =====================================================================
-
-    def _fetch_deduplicated(self, key: str) -> List[str]:
-        """Fetch (or wait for an in-flight fetch of) one prefix."""
-        waiter = self._claim_or_wait(key)
-        if waiter is not None:
-            # Another thread is already fetching this prefix.  Wait for it
-            # and read its result out of the cache rather than duplicating
-            # the request.  The timeout is a backstop: if the owner thread
-            # dies without signalling, we return empty rather than hang.
-            waiter.wait(timeout=REQUEST_TIMEOUT_SECONDS + 0.5)
-            cached = self._get_cached(key)
-            return cached if cached is not None else []
-
-        try:
-            suggestions = self._fetch_and_parse(key)
-            if suggestions is None:
-                return []
-
-            # Past this point a failure is ours, not the endpoint's, so it is
-            # deliberately not caught: it should reach the log as a traceback
-            # rather than be miscounted as the endpoint misbehaving. The
-            # endpoint handler turns it into a 500, which the search box
-            # already treats as "no suggestions".
-            suggestions = self._deduplicate(suggestions)
-            self._store(key, suggestions)
-            self._record_success()
-            return suggestions
-        finally:
-            self._release(key)
 
     def _fetch_and_parse(self, key: str) -> Optional[List[str]]:
         """
@@ -304,32 +282,6 @@ class SearchSuggester:
             seen.add(fingerprint)
             unique.append(suggestion)
         return unique
-
-    # =====================================================================
-    # Single-flight
-    # =====================================================================
-
-    def _claim_or_wait(self, key: str) -> Optional[threading.Event]:
-        """
-        Claim the right to fetch a prefix, or get the event to wait on.
-
-        Returns:
-            None if the caller now owns the fetch, otherwise an Event that
-            the owning thread will set when it's done.
-        """
-        with self._lock:
-            existing = self._in_flight.get(key)
-            if existing is not None:
-                return existing
-            self._in_flight[key] = threading.Event()
-            return None
-
-    def _release(self, key: str) -> None:
-        """Signal waiters that this prefix's fetch has finished."""
-        with self._lock:
-            event = self._in_flight.pop(key, None)
-        if event is not None:
-            event.set()
 
     # =====================================================================
     # Cache
