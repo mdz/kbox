@@ -57,11 +57,23 @@ YouTube for.
 data wrapped in a JSONP callback that would need stripping.
 
 It is undocumented, unsupported, and carries no stability promise. **Therefore
-everything fails quiet**: any error, timeout, malformed response, or operator
-switching the feature off produces an empty list, which leaves the search box
-behaving exactly as it did before autocomplete existed. Autocomplete is a
-convenience, never a dependency. Nothing in this feature may ever surface an
-error to a guest.
+everything fails quiet**: an unreachable endpoint, a timeout, a malformed
+response, or an operator switching the feature off produces an empty list,
+which leaves the search box behaving exactly as it did before autocomplete
+existed. Autocomplete is a convenience, never a dependency. Nothing in this
+feature may ever surface an error to a guest.
+
+**That guard stops at the endpoint.** It wraps the HTTP call and parsing the
+reply, not the code around them. A defect in kbox — a bad dedupe, a broken
+cache write — propagates, because catching it would hide the bug and spend
+the circuit breaker on ourselves, and because "the endpoint is failing" and
+"we are broken" want different responses. The guest is still protected: the
+route handler turns the exception into a 500, which the search box already
+treats as "no suggestions", while the traceback reaches the log.
+
+A legitimately empty answer is not a failure. The endpoint having nothing to
+suggest is cached like any other result; only unreachability and
+unrecognizable replies count against the breaker.
 
 Requests are proxied through the server, not made from the browser: the
 endpoint sends no CORS headers, and proxying keeps guests' partial queries off

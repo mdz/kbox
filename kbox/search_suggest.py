@@ -17,9 +17,15 @@ biased towards karaoke: YouTube's completions for "bohemian rha" include
 
 The tradeoff is that the endpoint is undocumented and unsupported.  Google
 can change or block it without notice, and no published rate limit exists.
-Everything here is therefore built to fail quietly: any error returns no
+Everything here is therefore built to fail quietly: an endpoint that is
+unreachable, slow, or answering with something unrecognizable returns no
 suggestions, which leaves the search box behaving exactly as it did before
 this feature existed.  Autocomplete is a convenience, never a dependency.
+
+That guard is deliberately narrow, covering the network call and parsing the
+reply and nothing else.  A defect in this module is not an endpoint failure
+and is not caught: swallowing it would hide the bug and spend the circuit
+breaker on ourselves.
 
 Requests are proxied through the server rather than made from the browser:
 the endpoint sends no CORS headers, and this keeps guests' partial queries
@@ -32,6 +38,7 @@ insurance against pathological repeats, not load-shedding.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import threading
@@ -131,8 +138,10 @@ class SearchSuggester:
         """
         Get completions for a partial query.
 
-        Never raises: a failure of any kind yields an empty list, and the
-        search box falls back to its pre-autocomplete behavior.
+        Anything that goes wrong with the endpoint — unreachable, timed out,
+        answering with something unrecognizable — yields an empty list, and
+        the search box falls back to its pre-autocomplete behavior. A bug in
+        this module is not caught and will propagate.
 
         Args:
             query: What the guest has typed so far.
@@ -177,25 +186,56 @@ class SearchSuggester:
             return cached if cached is not None else []
 
         try:
-            raw = self._fetch(key)
-            suggestions = self._parse(raw)
+            suggestions = self._fetch_and_parse(key)
+            if suggestions is None:
+                return []
+
+            # Past this point a failure is ours, not the endpoint's, so it is
+            # deliberately not caught: it should reach the log as a traceback
+            # rather than be miscounted as the endpoint misbehaving. The
+            # endpoint handler turns it into a 500, which the search box
+            # already treats as "no suggestions".
             suggestions = self._deduplicate(suggestions)
             self._store(key, suggestions)
             self._record_success()
             return suggestions
-        except Exception as e:
-            # Undocumented endpoint: treat every failure mode the same way.
-            #
-            # Warning, not debug: this is the signal that the endpoint has
-            # changed, gone away, or started refusing us, and the guest sees
-            # nothing at all when it happens. It is bounded — the breaker
-            # opens after FAILURE_THRESHOLD of these and goes quiet for the
-            # cooldown — so it cannot flood the log during a party.
-            self.logger.warning("Suggestion fetch failed for %r: %s", key, e)
-            self._record_failure()
-            return []
         finally:
             self._release(key)
+
+    def _fetch_and_parse(self, key: str) -> Optional[List[str]]:
+        """
+        Ask the endpoint for one prefix.
+
+        Returns:
+            The suggestion strings, or None if the endpoint could not be
+            reached or its answer could not be understood. An empty list is a
+            real answer — the endpoint had nothing — and is cached as one.
+
+        Failures are logged at warning rather than debug because a guest sees
+        nothing at all when this happens: no dropdown is indistinguishable
+        from having nothing to suggest, so the log is the only signal that the
+        endpoint has changed, gone away, or started refusing us. It cannot
+        flood: the breaker opens after FAILURE_THRESHOLD of these and stays
+        shut for the cooldown.
+        """
+        try:
+            raw = self._fetch(key)
+        except (OSError, http.client.HTTPException) as e:
+            # OSError covers the whole urllib family worth catching here:
+            # URLError, HTTPError, socket timeouts, connection resets, DNS.
+            self.logger.warning("Suggestion fetch failed for %r: %s", key, e)
+            self._record_failure()
+            return None
+
+        try:
+            return self._parse(raw)
+        except ValueError as e:
+            # Malformed JSON or a shape we don't recognize. Counts as a
+            # failure: the endpoint is undocumented, so a changed format is
+            # exactly the kind of breakage the breaker should back off from.
+            self.logger.warning("Suggestion response for %r was unusable: %s", key, e)
+            self._record_failure()
+            return None
 
     def _http_get(self, query: str) -> str:
         """Perform the suggestion request and return the response body."""
@@ -219,17 +259,27 @@ class SearchSuggester:
         Pull the suggestion strings out of the response.
 
         The body is a JSON array shaped [query, [suggestions...], ...].
-        Anything that doesn't match that shape is treated as no suggestions
-        rather than an error — the endpoint's format is not a contract.
+
+        Raises:
+            ValueError: if the body isn't JSON, or isn't that shape. The
+                endpoint's format is not a contract, so this is expected
+                breakage rather than a bug — but it is breakage, and the
+                caller counts it against the circuit breaker instead of
+                quietly caching an empty result for five minutes.
         """
         data = json.loads(raw)
+
         if not isinstance(data, list) or len(data) < 2:
-            return []
+            raise ValueError(
+                f"expected a JSON array of at least 2 elements, got {type(data).__name__}"
+            )
 
         suggestions = data[1]
         if not isinstance(suggestions, list):
-            return []
+            raise ValueError(f"expected suggestions at index 1, got {type(suggestions).__name__}")
 
+        # Non-string or blank entries are dropped rather than raising: an odd
+        # entry in an otherwise good list is not a format change.
         return [s for s in suggestions if isinstance(s, str) and s.strip()]
 
     @staticmethod

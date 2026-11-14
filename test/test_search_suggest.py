@@ -8,7 +8,10 @@ was today.  The clock is injected for the same reason timing is never slept
 on here - expiry is exercised by moving a fake clock, not by waiting.
 """
 
+import http.client
 import json
+import socket
+import urllib.error
 
 import pytest
 
@@ -95,9 +98,30 @@ class TestParsing:
         assert suggester.suggest("bohemian rha") == []
 
     def test_unexpected_shape_yields_nothing(self, clock):
-        """A response that isn't [query, [suggestions]] is not an error."""
+        """A response that isn't [query, [suggestions]] means the format has
+        changed under us — handled, but counted as a failure rather than
+        cached as a legitimately empty answer."""
         suggester = make_suggester(RecordingFetcher(json.dumps({"suggestions": []})), clock)
         assert suggester.suggest("bohemian rha") == []
+
+    def test_an_unusable_response_counts_against_the_breaker(self, clock):
+        fetcher = RecordingFetcher("not json at all")
+        suggester = make_suggester(fetcher, clock)
+
+        for _ in range(FAILURE_THRESHOLD):
+            suggester.suggest(f"abc{_}")
+        suggester.suggest("abcd")
+
+        assert len(fetcher.calls) == FAILURE_THRESHOLD
+
+    def test_a_legitimately_empty_answer_is_cached(self, clock):
+        """Nothing to suggest is a real answer, not a failure."""
+        fetcher = RecordingFetcher(suggest_response("zzzz", []))
+        suggester = make_suggester(fetcher, clock)
+
+        assert suggester.suggest("zzzz") == []
+        assert suggester.suggest("zzzz") == []
+        assert len(fetcher.calls) == 1
 
     def test_non_string_entries_are_dropped(self, clock):
         body = json.dumps(["q", ["real suggestion", 42, None, "  ", "another"], [], {}])
@@ -196,19 +220,43 @@ class TestCaching:
 
 
 class TestFailureHandling:
-    """Every failure mode degrades to "no suggestions"."""
+    """Endpoint failures degrade to "no suggestions"; our bugs do not."""
 
     @pytest.mark.parametrize(
         "error",
         [
-            OSError("connection refused"),
+            urllib.error.URLError("name resolution failed"),
+            urllib.error.HTTPError("http://x", 503, "Service Unavailable", {}, None),
+            socket.timeout("timed out"),
             TimeoutError("timed out"),
-            ValueError("garbage"),
+            ConnectionResetError("reset by peer"),
+            http.client.RemoteDisconnected("closed without response"),
         ],
     )
-    def test_errors_are_swallowed(self, clock, error):
+    def test_endpoint_errors_are_swallowed(self, clock, error):
+        """The ways an undocumented HTTP endpoint can fail on us."""
         suggester = make_suggester(RecordingFetcher(error=error), clock)
         assert suggester.suggest("abc") == []
+
+    def test_a_bug_in_our_own_code_is_not_swallowed(self, clock):
+        """Only the endpoint is guarded, so defects surface instead of
+        masquerading as the endpoint misbehaving and tripping the breaker."""
+        suggester = make_suggester(RecordingFetcher(suggest_response("abc", ["x"])), clock)
+        suggester._deduplicate = lambda _: 1 / 0
+
+        with pytest.raises(ZeroDivisionError):
+            suggester.suggest("abc")
+
+    def test_a_propagating_bug_still_releases_the_in_flight_slot(self, clock):
+        """Otherwise one defect would wedge that prefix for every later
+        caller, which would wait out the timeout and get nothing."""
+        suggester = make_suggester(RecordingFetcher(suggest_response("abc", ["x"])), clock)
+        suggester._deduplicate = lambda _: 1 / 0
+
+        with pytest.raises(ZeroDivisionError):
+            suggester.suggest("abc")
+
+        assert suggester._in_flight == {}
 
     def test_breaker_opens_after_repeated_failures(self, clock):
         fetcher = RecordingFetcher(error=OSError("down"))
