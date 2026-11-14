@@ -6,6 +6,7 @@ playback, video_library, suggestion_engine). Mirrors the component wiring in
 test_api.py's app_components fixture so the two suites can't drift apart.
 """
 
+import json
 from unittest.mock import Mock
 
 from kbox.config_manager import ConfigManager
@@ -14,6 +15,7 @@ from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
 from kbox.playback import PlaybackController, PlaybackState
 from kbox.queue import QueueManager
+from kbox.search_suggest import SearchSuggester
 from kbox.suggestions import SuggestionEngine, SuggestionError
 from kbox.user import UserManager
 from kbox.video_library import VideoLibrary
@@ -99,6 +101,41 @@ def _mock_suggestions():
     return engine
 
 
+class FakeSuggestFetcher:
+    """Stands in for the HTTP call to Google's suggestion endpoint.
+
+    This is the lowest seam in the feature — SearchSuggester takes `fetch` as
+    a constructor argument precisely so the only genuinely external boundary
+    can be replaced. Substituting here leaves the whole server path running
+    for real: the route, the minimum-length gate, caching, the breaker,
+    karaoke normalization, deduplication and JSON encoding, plus the
+    browser-side parsing of all of it.
+
+    The alternative — intercepting /api/search/suggest in the browser — mocks
+    kbox's own API, so none of that runs and the response contract ends up
+    hand-written in the test. Reach for that only to produce conditions this
+    cannot, such as a request that never arrives.
+
+    Set `suggestions` to choose what Google "returns"; set `body` to send
+    something malformed; set `error` to make the call itself fail.
+    """
+
+    def __init__(self, suggestions=None):
+        self.suggestions = list(suggestions or [])
+        self.body = None
+        self.error = None
+        self.calls = []
+
+    def __call__(self, query):
+        self.calls.append(query)
+        if self.error is not None:
+            raise self.error
+        if self.body is not None:
+            return self.body
+        # The endpoint's real shape: [query, [suggestions], [], {}]
+        return json.dumps([query, self.suggestions, [], {}])
+
+
 def build_test_app(
     db_path,
     cache_dir,
@@ -108,6 +145,7 @@ def build_test_app(
     playback=None,
     streaming=None,
     suggestion_engine=None,
+    suggest_fetch=None,
 ):
     """Real DB + managers, mocked externals.
 
@@ -117,6 +155,10 @@ def build_test_app(
     video_library defaults to a mock with has_provider=False so the content
     monitor thread never touches SQLite — eliminates teardown races in E2E
     tests. Pass a custom mock with has_provider=True to test content-prep flows.
+
+    suggest_fetch replaces the call to Google inside the real SearchSuggester.
+    It defaults to a FakeSuggestFetcher with nothing to suggest, so no test
+    reaches the network just by typing in the search box.
     """
     db = Database(db_path=db_path)
     config = ConfigManager(db)
@@ -150,4 +192,11 @@ def build_test_app(
         access_token=access_token,
         session_secret="test-secret",
     )
+
+    # create_app builds its own suggester; swap in one that can't reach the
+    # network. Everything else about it is the production object.
+    app.state.search_suggester = SearchSuggester(
+        config, fetch=suggest_fetch if suggest_fetch is not None else FakeSuggestFetcher()
+    )
+
     return app, db, queue

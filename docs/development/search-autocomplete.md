@@ -314,6 +314,32 @@ breaker behavior are tested without sleeping.
 frontend through `window.kboxConfig`, so switching it off means no requests
 are made at all, not merely a hidden dropdown.
 
+## Where the tests cut
+
+Google's endpoint is replaced at the lowest seam — the `fetch` callable
+`SearchSuggester` takes as a constructor argument — in both the unit tests
+and e2e, via the `suggest_fetcher` fixture. Everything above it runs for
+real: the route, the minimum-length gate, caching, the breaker,
+normalization, deduplication, JSON encoding, and the browser's parsing of all
+of it.
+
+The tempting alternative is to intercept `/api/search/suggest` in the browser
+with `page.route`. That mocks kbox's own API rather than the third party, so
+none of the server path runs, and the response contract ends up hand-written
+in the fixture — a third copy alongside the route and `search.js`. Rename the
+`suggestions` key and every test would still pass while the feature is dead.
+(Verified: with the current arrangement, renaming it fails e2e.)
+
+Browser interception is still right for conditions the server cannot produce,
+and two tests use it deliberately: a request that never arrives
+(`route.abort()`, a phone losing its connection to kbox) and a 500, which is
+how a reply kbox can no longer parse reaches the browser.
+
+One pattern worth keeping: a test asserting that the client does **not**
+request something must observe requests (`page.on("request", ...)`), not an
+absent dropdown. An empty answer hides the dropdown too, so the weaker
+assertion passes with the gate deleted — which it did, until it was checked.
+
 ## Open questions for real-device testing
 
 Everything above was verified in Playwright on Chromium and WebKit at phone
