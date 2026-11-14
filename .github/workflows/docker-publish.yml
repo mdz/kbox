@@ -9,13 +9,15 @@ env:
   IMAGE_NAME: mdzz/kbox
 
 jobs:
+  # Runner images are pinned deliberately; see the note in ci.yml. There is no
+  # rolling arm64 alias, so bump these labels together in an explicit PR.
   build:
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             slug: amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
@@ -57,7 +59,7 @@ jobs:
           retention-days: 1
 
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
 
     steps:
