@@ -19,6 +19,11 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-playwright>=0.5",
+    # Floor, not a pin: 1.61 is the first release that knows how to install
+    # browser dependencies on Ubuntu 26.04, which is what GitHub's
+    # ubuntu-latest runner became. Older versions fail outright with
+    # "Playwright does not support chromium on ubuntu26.04-x64".
+    "playwright>=1.61",
     "httpx>=0.27",
     "ruff>=0.8",
     "mypy>=1.13",
