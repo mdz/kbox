@@ -393,12 +393,34 @@ content is mostly a lyric highlight sweeping over a low-detail background.
 Measure sustained frame rate, not CPU share. Count buffers reaching the sink
 against a realtime clock over a fixed interval.
 
-### The display pipeline needs its own bus watch
+### The display pipeline needs its own bus watch, and a watch means polling
 
-It is a separate `GstPipeline`, so it has a separate bus. Without a watch on
-it, a failure is completely silent: the app logs a clean startup, every
-component reports success, and the screen shows the console. There is a watch
-on it now — do not remove it.
+It is a separate `GstPipeline`, so it has a separate bus. Without something
+reading that bus, a failure is completely silent: the app logs a clean startup,
+every component reports success, and the screen shows the console.
+
+`bus.add_signal_watch()` plus `bus.connect("message::error", ...)` looks like
+the obvious way to get that, and it is what the code did for a long time — but
+it never delivered a single message. A signal watch dispatches from a GLib main
+loop, and kbox does not run one (there is no `GLib.MainLoop` anywhere in the
+tree; the app's event loop is uvicorn's). The handlers were installed, looked
+right in review, and were dead code. EOS and errors on *playbin's* bus still
+worked, which hid the problem, because those came from a separate polling
+thread rather than from the signal watch.
+
+So both buses are drained by polling threads instead
+(`_start_bus_polling()` / `_start_bus_poller()` in `kbox/streaming.py`): one for
+playbin's bus, one for the display pipeline's, each doing
+`bus.timed_pop(100ms)` and routing EOS, ERROR and WARNING to the handlers.
+The `add_signal_watch()` / `connect()` calls are gone, deliberately — leaving
+them in implied a delivery path that does not exist. If you add another
+pipeline with a bus worth watching, give it a poller; do not reach for a signal
+watch unless you are also introducing a main loop, which is a much larger
+change to how the app runs.
+
+`_stop_bus_polling()` clears the shared run flag and joins every poll thread,
+and each loop re-reads its pipeline attribute every pass so that teardown
+setting `self.playbin = None` ends the loop rather than crashing it.
 
 ## Running the GStreamer tests
 
