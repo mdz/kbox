@@ -7,7 +7,14 @@
         {% endif %}
         <div id="replace-target-banner" class="replace-target-banner hidden"></div>
         <form id="search-form" onsubmit="search(); return false;" action="javascript:void(0);">
-            <input type="text" id="search-input" placeholder="Search for a song..." />
+            <div class="search-input-wrap">
+                <input type="text" id="search-input" placeholder="Search for a song..."
+                       autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+                       role="combobox" aria-expanded="false" aria-autocomplete="list"
+                       aria-controls="search-suggestions" />
+                <ul id="search-suggestions" class="search-suggestions hidden"
+                    role="listbox" aria-label="Search suggestions"></ul>
+            </div>
             <button type="submit" id="search-button">Search</button>
         </form>
         <div id="suggest-button-container">

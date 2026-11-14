@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import yt_dlp
 
-from .video_library import VideoProvider
+from .video_library import VideoProvider, karaoke_search_query
 
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
@@ -70,7 +70,8 @@ class YtDlpClient(VideoProvider):
 
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
         """
-        Search YouTube, automatically appending "karaoke" to the query.
+        Search YouTube, normalizing the query so it carries exactly one
+        "karaoke" token (see karaoke_search_query).
 
         Uses extract_flat for fast results (~1-2s) at the cost of missing
         some fields like full description.
@@ -82,7 +83,7 @@ class YtDlpClient(VideoProvider):
         Returns:
             List of video result dicts.
         """
-        search_query = f"{query} karaoke"
+        search_query = karaoke_search_query(query)
         self.logger.debug("Searching YouTube via yt-dlp: %s", search_query)
 
         ydl_opts = {

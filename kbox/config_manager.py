@@ -21,6 +21,7 @@ CONFIG_GROUPS = {
     "security": {"label": "Security", "order": 5},
     "api": {"label": "API & Storage", "order": 6},
     "queue": {"label": "Queue", "order": 7},
+    "search": {"label": "Search", "order": 8},
 }
 
 # Placeholder returned for secret-shaped values instead of the real value
@@ -219,6 +220,12 @@ CONFIG_SCHEMA = {
         "description": "Show a soft confirmation when a guest adds a song while they already have one queued — a gentle 'give everyone a turn' reminder, not a hard block.",
         "control": "checkbox",
     },
+    "search_suggestions_enabled": {
+        "group": "search",
+        "label": "Search Autocomplete",
+        "description": "Suggest completions while typing in the search box, using YouTube's own suggestions. Turn off to keep guests' partial searches off the network; search itself is unaffected either way.",
+        "control": "checkbox",
+    },
 }
 
 
@@ -279,6 +286,8 @@ class ConfigManager:
         # Queue
         "long_song_warning_minutes": "5",  # Warn when adding songs longer than N minutes (0 = disabled)
         "duplicate_singer_nudge_enabled": "true",  # Soft nudge when a guest already has an unplayed song queued
+        # Search
+        "search_suggestions_enabled": "true",  # Autocomplete the search box from YouTube's suggestions
         # Internal (not in CONFIG_SCHEMA, not shown in UI)
         "skip_trailing_silence_enabled": "true",  # Advance early when trailing silence is detected
     }

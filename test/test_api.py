@@ -710,6 +710,58 @@ class TestVideoSearchEndpoints:
         finally:
             conn.close()
 
+    def test_suggest(self, client):
+        """GET /api/search/suggest - autocomplete the search box."""
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester,
+            "suggest",
+            return_value=["bohemian rhapsody", "bohemian rhapsody piano"],
+        ):
+            response = client.get("/api/search/suggest?q=bohemian")
+
+        assert response.status_code == 200
+        assert response.json()["suggestions"] == [
+            "bohemian rhapsody",
+            "bohemian rhapsody piano",
+        ]
+
+    def test_suggest_ignores_short_queries(self, client):
+        """One or two characters match everything - don't bother upstream."""
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester, "suggest"
+        ) as mock_suggest:
+            response = client.get("/api/search/suggest?q=bo")
+
+        assert response.status_code == 200
+        assert response.json()["suggestions"] == []
+        mock_suggest.assert_not_called()
+
+    def test_suggest_degrades_quietly(self, client):
+        """An unavailable upstream is an empty list, never an error."""
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester, "suggest", return_value=[]
+        ):
+            response = client.get("/api/search/suggest?q=bohemian")
+
+        assert response.status_code == 200
+        assert response.json()["suggestions"] == []
+
+    def test_suggest_does_not_log_search_events(self, client, app_components, alice):
+        """Keystroke prefixes would drown out real searches in the event log."""
+        set_user(client, ALICE_ID, "Alice")
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester, "suggest", return_value=["bohemian rhapsody"]
+        ):
+            client.get("/api/search/suggest?q=bohemian")
+
+        conn = app_components["history"].database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM user_events WHERE event_type = 'search'")
+            assert cursor.fetchone()["count"] == 0
+        finally:
+            conn.close()
+
     def test_search_no_event_for_anonymous_user(self, client, app_components):
         """Search works without logging when user is not authenticated."""
         response = client.get("/api/search?q=test")

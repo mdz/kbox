@@ -217,6 +217,60 @@
             font-size: 18px;
         }
 
+        /* Autocomplete dropdown.  Anchored to the input rather than placed
+           in flow so it overlays the results below instead of shoving them
+           down on every keystroke. */
+        .search-input-wrap {
+            position: relative;
+        }
+
+        .search-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 50;
+            margin: -2px 0 0 0;
+            padding: 4px;
+            list-style: none;
+            background: #2b2b2b;
+            border: 1px solid #555;
+            border-radius: 4px;
+            max-height: 45vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .search-suggestion {
+            padding: 14px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #aaa;
+            font-size: 17px;
+            /* Keep a tap from selecting the text instead of the row. */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .search-suggestion:hover,
+        .search-suggestion[aria-selected="true"] {
+            background: #4a9eff;
+            color: #fff;
+        }
+
+        /* The part the guest has already typed stays dim; the completion is
+           what they're choosing between, so that's what stands out. */
+        .search-suggestion-completion {
+            color: #e0e0e0;
+            font-weight: 600;
+        }
+
+        .search-suggestion:hover .search-suggestion-completion,
+        .search-suggestion[aria-selected="true"] .search-suggestion-completion {
+            color: #fff;
+        }
+
         .party-theme {
             background: #3a3a3a;
             border-left: 3px solid #4a9eff;
@@ -964,6 +1018,7 @@
         window.kboxConfig = {
             longSongWarningMinutes: {{ long_song_warning_minutes }},
             duplicateSingerNudgeEnabled: {{ duplicate_singer_nudge_enabled | tojson }},
+            searchSuggestionsEnabled: {{ search_suggestions_enabled | tojson }},
         };
     </script>
     <script type="module" src="/static/{{ static_version }}/js/app.js"></script>

@@ -31,8 +31,25 @@ the **Search** button explicitly.
 
 ## Search queries auto-append "karaoke"
 
-The search backend appends "karaoke" to your query automatically — don't include it
-yourself (e.g. search `Bohemian Rhapsody`, not `Bohemian Rhapsody karaoke`).
+The search backend appends "karaoke" to your query automatically. Including it yourself
+is harmless — the query is normalized so exactly one "karaoke" survives, wherever you
+put it — but it's redundant, so prefer `Bohemian Rhapsody`.
+
+## An autocomplete dropdown opens while you type
+
+Typing three or more characters into the search box opens a suggestion list
+(`#search-suggestions`) anchored under the input, which overlays whatever is beneath it.
+Two consequences for automation:
+
+- A click aimed at something just below the search box may hit a suggestion instead.
+  Press Escape, or click the **Search** button (which closes the dropdown), before
+  interacting with elements further down the page.
+- Setting the input's value directly via JavaScript does **not** open the dropdown, since
+  no `input` event fires. That's usually what you want — use it to avoid the overlay
+  entirely.
+
+The feature degrades to nothing when the suggestion endpoint is unreachable, so on a
+sandboxed network you may never see a dropdown at all.
 
 ## Element refs go stale fast — the queue polls aggressively
 

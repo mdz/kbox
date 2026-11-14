@@ -100,6 +100,10 @@ let _searchInFlight = false;
 export async function search() {
     if (_searchInFlight) return;
 
+    // Whatever triggered the search (button, Enter, accepted suggestion),
+    // the dropdown has served its purpose.
+    closeSuggestions();
+
     const query = document.getElementById('search-input').value;
 
     if (!query) {
@@ -312,14 +316,256 @@ export async function confirmAddToQueue() {
     }
 }
 
+// ===========================================================================
+// Search box autocomplete
+//
+// Suggestions come from /api/search/suggest, which proxies YouTube's own
+// query completions.  They are query strings, not videos: choosing one fills
+// the box and runs a normal search.
+//
+// The whole feature is best-effort.  Any failure - disabled by the operator,
+// upstream down, request aborted - results in no dropdown, which is exactly
+// how the search box behaved before autocomplete existed.
+// ===========================================================================
+
+// Long enough that a moderate typist doesn't fire a request per character,
+// short enough that the list appears while they're still looking at it.
+const SUGGEST_DEBOUNCE_MS = 200;
+
+// Matches MIN_SUGGEST_QUERY_LENGTH on the server, which enforces it.
+const SUGGEST_MIN_CHARS = 3;
+
+let _suggestTimer = null;
+let _suggestAbort = null;
+let _suggestions = [];
+let _activeSuggestion = -1;
+
+function suggestionsEnabled() {
+    return window.kboxConfig?.searchSuggestionsEnabled !== false;
+}
+
+function suggestionListEl() {
+    return document.getElementById('search-suggestions');
+}
+
+// Hide the dropdown and forget its state.  Safe to call at any time.
+export function closeSuggestions() {
+    const list = suggestionListEl();
+    if (!list) return;
+
+    if (_suggestTimer) {
+        clearTimeout(_suggestTimer);
+        _suggestTimer = null;
+    }
+    if (_suggestAbort) {
+        _suggestAbort.abort();
+        _suggestAbort = null;
+    }
+
+    list.innerHTML = '';
+    list.classList.add('hidden');
+    _suggestions = [];
+    _activeSuggestion = -1;
+
+    const input = document.getElementById('search-input');
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+}
+
+// Render one row, splitting it into the text already typed and the part
+// being offered.  Built from text nodes rather than innerHTML: these strings
+// come from an external service and land next to a tap target.
+function renderSuggestionRow(suggestion, index, typed) {
+    const row = document.createElement('li');
+    row.className = 'search-suggestion';
+    row.id = `search-suggestion-${index}`;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', 'false');
+
+    const matchesTyped = suggestion.toLowerCase().startsWith(typed.toLowerCase());
+    if (matchesTyped) {
+        row.appendChild(document.createTextNode(suggestion.slice(0, typed.length)));
+        const completion = document.createElement('span');
+        completion.className = 'search-suggestion-completion';
+        completion.textContent = suggestion.slice(typed.length);
+        row.appendChild(completion);
+    } else {
+        // Not a prefix extension (the endpoint corrects spelling, so this
+        // happens) - emphasize the whole thing rather than a wrong split.
+        const completion = document.createElement('span');
+        completion.className = 'search-suggestion-completion';
+        completion.textContent = suggestion;
+        row.appendChild(completion);
+    }
+
+    // mousedown, not click: the input's blur handler closes the dropdown,
+    // and blur beats click. preventDefault also keeps focus in the box so
+    // the mobile keyboard doesn't flicker shut.
+    row.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        acceptSuggestion(index);
+    });
+
+    return row;
+}
+
+function renderSuggestions(suggestions, typed) {
+    const list = suggestionListEl();
+    const input = document.getElementById('search-input');
+
+    _suggestions = suggestions;
+    _activeSuggestion = -1;
+    list.innerHTML = '';
+
+    if (!suggestions.length) {
+        closeSuggestions();
+        return;
+    }
+
+    suggestions.forEach((suggestion, index) => {
+        list.appendChild(renderSuggestionRow(suggestion, index, typed));
+    });
+
+    list.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+    input.removeAttribute('aria-activedescendant');
+}
+
+// Move the highlight. Wraps around, and stepping past either end returns to
+// the raw typed text so there's always a way back out of the list.
+function moveActiveSuggestion(delta) {
+    if (!_suggestions.length) return;
+
+    const list = suggestionListEl();
+    const input = document.getElementById('search-input');
+    const rows = list.querySelectorAll('.search-suggestion');
+
+    if (_activeSuggestion >= 0 && rows[_activeSuggestion]) {
+        rows[_activeSuggestion].setAttribute('aria-selected', 'false');
+    }
+
+    _activeSuggestion += delta;
+    if (_activeSuggestion < -1) {
+        _activeSuggestion = _suggestions.length - 1;
+    } else if (_activeSuggestion >= _suggestions.length) {
+        _activeSuggestion = -1;
+    }
+
+    if (_activeSuggestion === -1) {
+        input.removeAttribute('aria-activedescendant');
+        return;
+    }
+
+    const active = rows[_activeSuggestion];
+    active.setAttribute('aria-selected', 'true');
+    active.scrollIntoView({ block: 'nearest' });
+    input.setAttribute('aria-activedescendant', active.id);
+}
+
+// Put a suggestion in the box and search for it.
+function acceptSuggestion(index) {
+    const suggestion = _suggestions[index];
+    if (suggestion === undefined) return;
+
+    const input = document.getElementById('search-input');
+    input.value = suggestion;
+    closeSuggestions();
+    search();
+}
+
+async function fetchSuggestions(query) {
+    // Abort the previous request so a slow early response can't land after
+    // a faster later one and repopulate the list with stale text.
+    if (_suggestAbort) {
+        _suggestAbort.abort();
+    }
+    const controller = new AbortController();
+    _suggestAbort = controller;
+
+    try {
+        const response = await fetch(
+            `/api/search/suggest?q=${encodeURIComponent(query)}`,
+            { signal: controller.signal }
+        );
+        if (!response.ok) {
+            closeSuggestions();
+            return;
+        }
+
+        const data = await response.json();
+        const input = document.getElementById('search-input');
+
+        // The box may have moved on while this was in flight.
+        if (input.value.trim() !== query) return;
+
+        renderSuggestions(data.suggestions || [], query);
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            console.debug('Suggestion fetch failed:', e);
+            closeSuggestions();
+        }
+    } finally {
+        if (_suggestAbort === controller) {
+            _suggestAbort = null;
+        }
+    }
+}
+
+function onSearchInput() {
+    if (!suggestionsEnabled()) return;
+
+    const query = document.getElementById('search-input').value.trim();
+
+    if (_suggestTimer) clearTimeout(_suggestTimer);
+
+    if (query.length < SUGGEST_MIN_CHARS) {
+        closeSuggestions();
+        return;
+    }
+
+    _suggestTimer = setTimeout(() => {
+        _suggestTimer = null;
+        fetchSuggestions(query);
+    }, SUGGEST_DEBOUNCE_MS);
+}
+
+function onSearchKeydown(e) {
+    const open = _suggestions.length > 0;
+
+    if (e.key === 'ArrowDown' && open) {
+        e.preventDefault();
+        moveActiveSuggestion(1);
+    } else if (e.key === 'ArrowUp' && open) {
+        e.preventDefault();
+        moveActiveSuggestion(-1);
+    } else if (e.key === 'Escape') {
+        closeSuggestions();
+    } else if (e.key === 'Enter') {
+        if (open && _activeSuggestion >= 0) {
+            // preventDefault here also suppresses the keypress handler
+            // below, so the search doesn't run twice.
+            e.preventDefault();
+            acceptSuggestion(_activeSuggestion);
+        } else {
+            closeSuggestions();
+        }
+    }
+}
+
 // Set up search input handlers
 export function setupSearchHandlers() {
+    const input = document.getElementById('search-input');
+
     // Add Enter key support for search input
-    document.getElementById('search-input').addEventListener('keypress', function(e) {
+    input.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             search();
         }
     });
+
+    input.addEventListener('input', onSearchInput);
+    input.addEventListener('keydown', onSearchKeydown);
+    input.addEventListener('blur', closeSuggestions);
 
     // iOS Safari fix: add touchend handler for search button
     // This helps when the keyboard is open and click events don't fire properly
