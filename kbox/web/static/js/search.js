@@ -354,7 +354,7 @@ const SUGGEST_MAX_WAIT_MS = 600;
 
 // Matches MIN_SUGGEST_QUERY_LENGTH on the server, which enforces it and
 // documents how the number was arrived at.
-const SUGGEST_MIN_CHARS = 3;
+const SUGGEST_MIN_CHARS = 4;
 
 let _suggestTimer = null;
 let _suggestAbort = null;

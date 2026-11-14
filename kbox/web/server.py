@@ -32,17 +32,26 @@ logger = logging.getLogger(__name__)
 # libs like httpx/litellm); opt this logger in on its own.
 logger.setLevel(logging.DEBUG)
 
-# Measured against the live endpoint over 30 karaoke standards, asking at
-# every prefix length and checking whether the song the guest was after was
-# already on offer:
+# Measured against the live endpoint, asking at every prefix length whether
+# the song the guest was actually after was already on offer. Replayed over
+# 185 real searches from user_events:
 #
-#     1 char    3%      2 chars  17%      3 chars  75%
-#     4 chars  83%      5 chars  89%      then flat at ~90%
+#     1 char   2%     2 chars   2%     3 chars  15%     4 chars  29%
+#     5 chars 44%     6 chars  52%     8 chars  62%    11 chars  83%
 #
-# The knee is sharp and sits at 3. Below it a request is almost always wasted
-# and the dropdown is pure noise over a mobile keyboard; above it the curve is
-# flat, so waiting longer costs keystrokes without buying accuracy.
-MIN_SUGGEST_QUERY_LENGTH = 3
+# There is no knee to land on - it is a ramp - so this number is a judgement
+# about where a dropdown stops being noise, not a measurement. 4 is roughly
+# where the hit rate doubles off the floor, while still serving the real
+# four-character queries in the corpus ("Mary", "cure", "River"), which a
+# higher threshold would shut out entirely.
+#
+# An earlier version of this comment claimed a sharp knee at 3 characters and
+# a 75% hit rate. That came from replaying 30 karaoke standards - the most
+# searched songs on earth, which is precisely what a popularity-ranked
+# suggestion endpoint is best at. Real queries are artist-plus-title, partial,
+# misspelled and often obscure. Do not re-tune this against a corpus of
+# well-known songs; see docs/development/search-autocomplete.md.
+MIN_SUGGEST_QUERY_LENGTH = 4
 
 
 class _ClockTolerantTimestampSigner(itsdangerous.TimestampSigner):

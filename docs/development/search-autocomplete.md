@@ -69,22 +69,47 @@ their own connections.
 
 ## The numbers
 
-### Minimum query length: 3 characters
+### Minimum query length: 4 characters
 
-Measured, not guessed. Thirty karaoke standards were replayed against the live
-endpoint at every prefix length, checking whether the song the guest was
-heading for was already on offer after kbox's own dedupe:
+Measured by replaying queries against the live endpoint at every prefix
+length, asking whether the song the guest was heading for was already on offer
+after kbox's own dedupe.
 
-| prefix length | 1 | 2 | **3** | 4 | 5 | 6+ |
-|---|---|---|---|---|---|---|
-| intended query already offered | 3% | 17% | **75%** | 83% | 89% | ~90% |
+**Read the second row, not the first.** The first is what you get from a
+corpus of 30 karaoke standards — the most-searched songs on earth, which is
+exactly what a popularity-ranked suggestion endpoint is best at. The second is
+185 real searches pulled from `user_events` on the production Pi.
 
-The knee is sharp. Below three characters almost every request is wasted and
-the dropdown is noise covering content on a phone; above it the curve is flat,
-so making guests type more costs keystrokes without buying accuracy.
+| prefix length | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 11 |
+|---|---|---|---|---|---|---|---|---|
+| 30 standards | 3% | 17% | 75% | 83% | 89% | 85% | 89% | 94% |
+| **185 real queries** | **2%** | **2%** | **15%** | **29%** | **44%** | **52%** | **62%** | **83%** |
 
-Accepting at the first hit saves **9.5 characters of typing on average**, max
-23. That number is the case for the feature existing.
+The sharp knee at three characters was an artifact of corpus selection, and
+the original version of this document asserted it as fact. On real queries
+there is no knee at all — it is a gradual ramp that does not pass half until
+six characters, and plateaus around 80% rather than 90%.
+
+So this threshold is a **judgement about where a dropdown stops being noise,
+not a measurement**. Four is roughly where the hit rate doubles off the floor,
+while still serving the genuine four-character queries in the corpus ("Mary",
+"cure", "River", "Dream"), which a higher threshold would shut out entirely.
+Raising it to six would be defensible on the curve alone; it would also mean
+the shortest queries never get help.
+
+Two things that do survive the real data:
+
+- When a suggestion does land, it saves **9.1 characters of typing on
+  average** (9.5 on the standards). The payoff is real, it just arrives later
+  in the word than the synthetic corpus implied.
+- **18% of real queries are never offered at any prefix length.** Obscure and
+  independent material simply isn't in YouTube's suggestion index. For roughly
+  one guest in five the dropdown never helps, and that is not a bug to fix.
+
+Why real queries behave so differently: they are artist-plus-title
+("<artist> <song>"), partial titles, frequently misspelled, sometimes
+non-English, and often obscure. Median 15 characters, 3 words. **Do not
+re-tune this against a corpus of well-known songs.**
 
 The server enforces the gate (`MIN_SUGGEST_QUERY_LENGTH`) and the client
 mirrors it (`SUGGEST_MIN_CHARS`), so a stale page cannot bypass it.
@@ -162,6 +187,21 @@ browser-automation notes used to tell humans to work around.
 
 Edge case worth keeping: a query of only `karaoke` strips to nothing, so it
 returns `karaoke` rather than a leading space and an empty search.
+
+### Case is not worth normalizing
+
+Guests type mixed case — 247 of 267 logged searches had at least one capital.
+It makes no difference anywhere it could:
+
+- The **suggestion endpoint** returns byte-identical lists for `bohemian rha`,
+  `Bohemian Rha` and `BOHEMIAN RHA` (4 of 4 probes).
+- **YouTube search** likewise: `harvest moon karaoke`, `HARVEST MOON KARAOKE`
+  and `HaRvEsT mOoN kArAoKe` return the same ranked results.
+- The **cache and dedupe keys** are already casefolded, so `Harvest Moon` and
+  `harvest moon` share a cache entry and collapse to one suggestion row.
+
+So there is nothing to fix, and `/api/search` deliberately passes the guest's
+text through unchanged rather than folding it.
 
 ## Cache, single-flight, breaker
 
@@ -327,10 +367,9 @@ throttling; ten phones for four hours is not the same test.
 
 ## Revisiting the numbers with real data
 
-`user_events` logs every completed search as `event_type='search'` with the
-query text and result count. That is the right corpus for re-running the
-threshold study on queries guests actually typed, rather than the thirty
-standards used above:
+The threshold curve above has already been re-run this way once, and it
+changed the answer. `user_events` logs every completed search as
+`event_type='search'` with the query text and result count:
 
 ```sql
 SELECT json_extract(data_json, '$.query')        AS q,
@@ -342,7 +381,16 @@ WHERE event_type = 'search';
 Note what it cannot answer: only completed searches are logged, never
 keystrokes, so it can sharpen the prefix curve but says nothing about typing
 cadence. The debounce and maximum wait stay judgement calls until someone
-instruments real typing.
+instruments real typing. It also carries no `user_id` in the extract above, so
+a repeated query cannot be told apart from one guest retrying — which is
+exactly the distinction the cache rationale turns on. Pull `user_id` too if
+that question matters.
 
-`result_count` is worth a look on its own — queries that returned nothing are
-a separate quality signal from queries that were slow to type.
+Expect the data to need cleaning: the first extract was roughly a quarter
+repeats, and included seeded test traffic ("Test", "Hello", "Happy Birthday",
+and a block of standards used for smoke-testing) that has to come out before
+the numbers mean anything.
+
+`result_count` is worth a look on its own — 50 of 267 searches returned fewer
+than ten results, one as few as three. Queries that come back thin are a
+different quality problem from queries that are slow to type.
