@@ -31,16 +31,22 @@ def mock_config_manager():
 
 def test_streaming_controller_no_gstreamer(mock_config_manager, monkeypatch):
     """StreamingController sets _gst_missing=True and no-ops when GStreamer is absent."""
-    import kbox.streaming as streaming_mod
+    from kbox.streaming import controller as controller_mod
+    from kbox.streaming import gst as gst_mod
 
-    monkeypatch.setattr(streaming_mod, "_gst_available", None)
-    monkeypatch.setattr(streaming_mod, "_Gst", None)
+    # Reset the real cache so monkeypatch restores it afterwards.
+    monkeypatch.setattr(gst_mod, "_gst_available", None)
+    monkeypatch.setattr(gst_mod, "_Gst", None)
 
     def fake_get_gst():
-        streaming_mod._gst_available = False
+        gst_mod._gst_available = False
         return None
 
-    monkeypatch.setattr(streaming_mod, "_get_gst", fake_get_gst)
+    # StreamingController binds _get_gst into its own module namespace at
+    # import time, so that binding is what has to be replaced -- not the
+    # package's re-exported attribute, which internal callers never go
+    # through.
+    monkeypatch.setattr(controller_mod, "_get_gst", fake_get_gst)
 
     from kbox.streaming import StreamingController
 

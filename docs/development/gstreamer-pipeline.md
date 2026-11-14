@@ -3,7 +3,7 @@
 How kbox gets audio and video onto a screen, why it is arranged this way, and
 the things that look like they should work but do not.
 
-Read this before changing anything in `kbox/streaming.py`. Most of the notes
+Read this before changing anything in `kbox/streaming/`. Most of the notes
 below exist because something plausible was tried, shipped, and had to be
 measured on real hardware before it became obvious it was wrong.
 
@@ -247,8 +247,8 @@ change turns out not to be enough.
 
 The display pipeline is on the hot path for every frame.
 `test/test_pipeline_benchmark.py` measures the stages, building its pipelines
-from the same `StreamingController` methods the app uses (see the file's
-docstring) so it can't quietly drift from what actually runs:
+from the same `kbox.streaming.elements` factory functions the app uses (see
+the file's docstring) so it can't quietly drift from what actually runs:
 
 ```bash
 # on the Pi, inside the container — the only numbers that mean anything
