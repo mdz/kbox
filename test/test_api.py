@@ -746,6 +746,21 @@ class TestVideoSearchEndpoints:
         assert response.status_code == 200
         assert response.json()["suggestions"] == []
 
+    def test_suggest_does_not_hide_a_broken_parser(self, client):
+        """A reply the suggester can't read must not look like "no results".
+
+        The route lets it raise, so the failure lands in the log as a 500
+        instead of silently disabling autocomplete. The search box treats a
+        500 the same as an empty list, so guests still see nothing broken.
+        """
+        with unittest.mock.patch.object(
+            client.app.state.search_suggester,
+            "suggest",
+            side_effect=ValueError("unexpected response shape"),
+        ):
+            with pytest.raises(ValueError):
+                client.get("/api/search/suggest?q=bohemian")
+
     def test_suggest_does_not_log_search_events(self, client, app_components, alice):
         """Keystroke prefixes would drown out real searches in the event log."""
         set_user(client, ALICE_ID, "Alice")

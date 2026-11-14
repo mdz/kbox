@@ -63,17 +63,40 @@ which leaves the search box behaving exactly as it did before autocomplete
 existed. Autocomplete is a convenience, never a dependency. Nothing in this
 feature may ever surface an error to a guest.
 
-**That guard stops at the endpoint.** It wraps the HTTP call and parsing the
-reply, not the code around them. A defect in kbox — a bad dedupe, a broken
-cache write — propagates, because catching it would hide the bug and spend
-the circuit breaker on ourselves, and because "the endpoint is failing" and
-"we are broken" want different responses. The guest is still protected: the
-route handler turns the exception into a 500, which the search box already
-treats as "no suggestions", while the traceback reaches the log.
+**That guard stops at the call to Google**, and it is the only `try` in the
+feature. It wraps `self._fetch(key)` and nothing else, catching `OSError`
+(the whole urllib family worth catching: `URLError`, `HTTPError`, timeouts,
+resets, DNS) and `http.client.HTTPException`.
 
-A legitimately empty answer is not a failure. The endpoint having nothing to
-suggest is cached like any other result; only unreachability and
-unrecognizable replies count against the breaker.
+Everything else raises:
+
+| what happened | result |
+|---|---|
+| can't reach Google, timeout, HTTP error | empty list, warning logged, counts against the breaker |
+| Google had nothing to suggest | empty list, cached like any answer |
+| reply isn't JSON, isn't the right shape, or holds no readable entry | **ValueError**, traceback in the log, route 500s |
+| bug in our own code | **propagates**, traceback in the log, route 500s |
+
+The distinction that matters: **unavailable and broken are not the same
+thing.** An endpoint we can't reach is transient, so we go quiet and back
+off. An endpoint we *can* reach whose format has changed means the feature is
+dead until someone fixes the parser — and the one thing that must not happen
+is for it to look like "no suggestions for that prefix", which is how a
+feature stops working without anyone noticing. That is why parsing is not
+guarded and why `_parse` raises rather than returning `[]`.
+
+Guests are protected either way: the route 500s, and the search box treats a
+500 exactly like an empty list. Nobody at the party sees an error. The
+difference is entirely in whether the log says anything.
+
+The same rule applies to the subtle case. `_parse` drops a single unreadable
+entry from an otherwise good list — one odd item is not a format change — but
+raises if *nothing* in a non-empty list is readable, because that is a format
+change wearing the costume of an empty result.
+
+And in the browser: a non-ok response and a malformed body are
+`console.error`, not `console.debug`. A guest sees an absent dropdown either
+way, so the console is the only place it is visible at all.
 
 Requests are proxied through the server, not made from the browser: the
 endpoint sends no CORS headers, and proxying keeps guests' partial queries off

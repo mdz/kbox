@@ -127,6 +127,9 @@ export async function search() {
 
         renderResultsList(resultsDiv, data.results);
     } catch (e) {
+        // The guest gets a message either way; without this the cause was
+        // discarded entirely.
+        console.error('Search failed:', e);
         resultsDiv.innerHTML = '<div class="error">Error searching</div>';
     } finally {
         _searchInFlight = false;
@@ -516,6 +519,12 @@ async function fetchSuggestions(query) {
             { signal: controller.signal }
         );
         if (!response.ok) {
+            // The server answers 200 with an empty list for every expected
+            // case - disabled, too short, Google unreachable. A non-ok here
+            // means something it could not handle, such as a reply it could
+            // no longer parse, so say so rather than looking like "nothing
+            // to suggest".
+            console.error(`Suggestions unavailable: HTTP ${response.status}`);
             closeSuggestions();
             return;
         }
@@ -526,10 +535,18 @@ async function fetchSuggestions(query) {
         // The box may have moved on while this was in flight.
         if (input.value.trim() !== query) return;
 
-        renderSuggestions(data.suggestions || [], query);
+        if (!Array.isArray(data.suggestions)) {
+            console.error('Suggestions response had no suggestions array:', data);
+            closeSuggestions();
+            return;
+        }
+
+        renderSuggestions(data.suggestions, query);
     } catch (e) {
         if (e.name !== 'AbortError') {
-            console.debug('Suggestion fetch failed:', e);
+            // Not debug: a guest sees an absent dropdown either way, so the
+            // console is the only place this is visible at all.
+            console.error('Suggestion fetch failed:', e);
             closeSuggestions();
         }
     } finally {

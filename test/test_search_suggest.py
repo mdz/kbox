@@ -93,26 +93,35 @@ class TestParsing:
             "bohemian rhapsody piano",
         ]
 
-    def test_malformed_json_yields_nothing(self, clock):
-        suggester = make_suggester(RecordingFetcher("not json at all"), clock)
-        assert suggester.suggest("bohemian rha") == []
+    @pytest.mark.parametrize(
+        "body, because",
+        [
+            ("not json at all", "not JSON"),
+            ('{"suggestions": []}', "an object, not an array"),
+            ("[]", "too few elements"),
+            ('["query"]', "no suggestions element"),
+            ('["query", "not a list"]', "suggestions is not a list"),
+            ('["query", [{"v": "x"}, 42]]', "no entry is a readable string"),
+        ],
+    )
+    def test_an_unreadable_reply_raises(self, clock, body, because):
+        """A reply we can't parse means the undocumented format changed.
 
-    def test_unexpected_shape_yields_nothing(self, clock):
-        """A response that isn't [query, [suggestions]] means the format has
-        changed under us — handled, but counted as a failure rather than
-        cached as a legitimately empty answer."""
-        suggester = make_suggester(RecordingFetcher(json.dumps({"suggestions": []})), clock)
-        assert suggester.suggest("bohemian rha") == []
+        It must not come back as an empty list: that is indistinguishable
+        from "nothing to suggest for that prefix", which is how a feature
+        stops working without anyone noticing.
+        """
+        suggester = make_suggester(RecordingFetcher(body), clock)
 
-    def test_an_unusable_response_counts_against_the_breaker(self, clock):
-        fetcher = RecordingFetcher("not json at all")
-        suggester = make_suggester(fetcher, clock)
+        with pytest.raises(ValueError):
+            suggester.suggest("bohemian rha")
 
-        for _ in range(FAILURE_THRESHOLD):
-            suggester.suggest(f"abc{_}")
-        suggester.suggest("abcd")
+    def test_one_odd_entry_is_dropped_quietly(self, clock):
+        """A single unreadable entry beside good ones is not a format change."""
+        body = json.dumps(["q", ["good one", 42, None, "another"], [], {}])
+        suggester = make_suggester(RecordingFetcher(body), clock)
 
-        assert len(fetcher.calls) == FAILURE_THRESHOLD
+        assert suggester.suggest("q") == ["good one", "another"]
 
     def test_a_legitimately_empty_answer_is_cached(self, clock):
         """Nothing to suggest is a real answer, not a failure."""
@@ -123,11 +132,17 @@ class TestParsing:
         assert suggester.suggest("zzzz") == []
         assert len(fetcher.calls) == 1
 
-    def test_non_string_entries_are_dropped(self, clock):
-        body = json.dumps(["q", ["real suggestion", 42, None, "  ", "another"], [], {}])
-        suggester = make_suggester(RecordingFetcher(body), clock)
+    def test_an_unreadable_reply_does_not_touch_the_breaker(self, clock):
+        """The breaker is for an endpoint we can't reach. One we can reach,
+        that has changed shape, is a different problem and backing off would
+        only make it quieter."""
+        suggester = make_suggester(RecordingFetcher("not json at all"), clock)
 
-        assert suggester.suggest("q") == ["real suggestion", "another"]
+        for _ in range(FAILURE_THRESHOLD + 2):
+            with pytest.raises(ValueError):
+                suggester.suggest("abc")
+
+        assert not suggester._breaker_is_open()
 
     def test_max_results_caps_the_list(self, clock):
         body = suggest_response("q", [f"suggestion {i}" for i in range(20)])

@@ -185,16 +185,20 @@ class SearchSuggester:
         Ask the endpoint for one prefix.
 
         Returns:
-            The suggestion strings, or None if the endpoint could not be
-            reached or its answer could not be understood. An empty list is a
-            real answer — the endpoint had nothing — and is cached as one.
+            The suggestion strings, or None if the call to Google failed. An
+            empty list is a real answer — the endpoint had nothing — and is
+            cached as one.
 
-        Failures are logged at warning rather than debug because a guest sees
-        nothing at all when this happens: no dropdown is indistinguishable
-        from having nothing to suggest, so the log is the only signal that the
-        endpoint has changed, gone away, or started refusing us. It cannot
-        flood: the breaker opens after FAILURE_THRESHOLD of these and stays
-        shut for the cooldown.
+        Raises:
+            ValueError: if the reply cannot be parsed. Not swallowed; see the
+                comment below.
+
+        Transport failures are logged at warning rather than debug because a
+        guest sees nothing at all when this happens: no dropdown is
+        indistinguishable from having nothing to suggest, so the log is the
+        only signal that the endpoint has gone away or started refusing us.
+        It cannot flood: the breaker opens after FAILURE_THRESHOLD of these
+        and stays shut for the cooldown.
         """
         try:
             raw = self._fetch(key)
@@ -205,15 +209,14 @@ class SearchSuggester:
             self._record_failure()
             return None
 
-        try:
-            return self._parse(raw)
-        except ValueError as e:
-            # Malformed JSON or a shape we don't recognize. Counts as a
-            # failure: the endpoint is undocumented, so a changed format is
-            # exactly the kind of breakage the breaker should back off from.
-            self.logger.warning("Suggestion response for %r was unusable: %s", key, e)
-            self._record_failure()
-            return None
+        # Parsing is deliberately NOT guarded. A reply we cannot read means
+        # the undocumented format has changed under us — the feature is
+        # broken, not merely unavailable, and the two want different
+        # responses. Backing off and returning an empty list would leave it
+        # dead and quiet; letting ValueError out puts a traceback naming the
+        # offending body in the log, 500s the route, and the search box
+        # already treats that as "no suggestions" for the guest.
+        return self._parse(raw)
 
     def _http_get(self, query: str) -> str:
         """Perform the suggestion request and return the response body."""
@@ -239,26 +242,40 @@ class SearchSuggester:
         The body is a JSON array shaped [query, [suggestions...], ...].
 
         Raises:
-            ValueError: if the body isn't JSON, or isn't that shape. The
-                endpoint's format is not a contract, so this is expected
-                breakage rather than a bug — but it is breakage, and the
-                caller counts it against the circuit breaker instead of
-                quietly caching an empty result for five minutes.
+            ValueError: if the body isn't JSON, isn't that shape, or holds
+                entries we can't read. The endpoint's format is not a
+                contract, so a change here is expected breakage rather than a
+                bug — but it is breakage, and it must be loud. Returning an
+                empty list for any of these would be indistinguishable from
+                "no suggestions for that prefix", which is how a feature dies
+                silently.
         """
         data = json.loads(raw)
 
         if not isinstance(data, list) or len(data) < 2:
             raise ValueError(
-                f"expected a JSON array of at least 2 elements, got {type(data).__name__}"
+                f"expected a JSON array of at least 2 elements, "
+                f"got {type(data).__name__} {raw[:120]!r}"
             )
 
         suggestions = data[1]
         if not isinstance(suggestions, list):
-            raise ValueError(f"expected suggestions at index 1, got {type(suggestions).__name__}")
+            raise ValueError(
+                f"expected suggestions at index 1, got {type(suggestions).__name__} {raw[:120]!r}"
+            )
 
-        # Non-string or blank entries are dropped rather than raising: an odd
-        # entry in an otherwise good list is not a format change.
-        return [s for s in suggestions if isinstance(s, str) and s.strip()]
+        usable = [s for s in suggestions if isinstance(s, str) and s.strip()]
+
+        # One odd entry in an otherwise good list is not a format change, so
+        # it is dropped quietly. Every entry being unreadable is a format
+        # change wearing the costume of an empty result — the exact failure
+        # that would otherwise look like "nothing to suggest" forever.
+        if suggestions and not usable:
+            raise ValueError(
+                f"none of the {len(suggestions)} entries were usable strings: {raw[:120]!r}"
+            )
+
+        return usable
 
     @staticmethod
     def _deduplicate(suggestions: List[str]) -> List[str]:

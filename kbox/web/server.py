@@ -838,10 +838,16 @@ def create_app(
         """
         Autocomplete the search box.
 
-        Returns an empty list rather than an error whenever suggestions
-        can't be produced — disabled by the operator, upstream unavailable,
-        query too short.  The search box treats "no suggestions" as the
-        normal case, so a failure here is invisible to guests.
+        Returns an empty list for the cases that are not errors: disabled by
+        the operator, query too short, or Google unreachable (which the
+        suggester logs and backs off from).  The search box treats "no
+        suggestions" as the normal case, so none of those reach a guest.
+
+        Anything else — a reply we cannot parse, a bug in the suggester —
+        is deliberately left to raise, producing a 500 and a traceback in the
+        log.  The search box treats a 500 the same as an empty list, so the
+        guest still sees nothing broken, but the failure is on the record
+        rather than silently disabling the feature.
 
         Deliberately not recorded as a user event: a search event is logged
         when someone actually searches, and logging every keystroke prefix
