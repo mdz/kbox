@@ -17,14 +17,13 @@ from support.app_factory import (
     _mock_streaming,
     _mock_suggestions,
     _mock_video_library,
-    wire_mock_upcoming,
 )
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackState
+from kbox.playback import PlaybackState, UpcomingItem
 from kbox.queue import QueueManager
 from kbox.suggestions import SuggestionError
 from kbox.user import UserManager
@@ -98,7 +97,6 @@ def app_components(
 
     user_manager = UserManager(temp_db)
     queue_manager = QueueManager(temp_db, video_library=mock_video_library)
-    wire_mock_upcoming(mock_playback, queue_manager)
     history_manager = HistoryManager(temp_db)
     favorites_manager = FavoritesManager(temp_db)
 
@@ -203,36 +201,38 @@ class TestQueueEndpoints:
         assert data["status"] == "added"
         assert "id" in data
 
-    def test_add_song_returns_queue_slot(self, client, alice):
-        """POST /api/queue reports the new item's position and estimated wait."""
+    def test_add_and_replace_return_queue_slot(self, client, alice, app_components):
+        """POST /api/queue and replace report the item's slot from get_upcoming()."""
+        queue_mgr = app_components["queue"]
+        playback = app_components["playback"]
         set_user(client, ALICE_ID, "Alice")
 
-        def add(video_id, duration):
-            r = client.post(
-                "/api/queue",
-                json={
-                    "user_id": ALICE_ID,
-                    "video_id": video_id,
-                    "title": video_id,
-                    "duration_seconds": duration,
-                    "pitch_semitones": 0,
-                },
-            )
-            assert r.status_code == 200
-            return r.json()
-
-        assert add("youtube:a", 200)["slot"] == {"position": 1, "estimated_seconds": 0}
-        assert add("youtube:b", 300)["slot"] == {"position": 2, "estimated_seconds": 200}
-        third = add("youtube:c", 100)
-        assert third["slot"] == {"position": 3, "estimated_seconds": 500}
-
-        # Replacing keeps the item's slot
+        # Every queued song is upcoming at position 3, 10 minutes out
+        playback.get_upcoming.side_effect = lambda: [
+            UpcomingItem(item, 3, 600) for item in queue_mgr.get_queue()
+        ]
         r = client.post(
-            f"/api/queue/{third['id']}/replace",
-            json={"video_id": "youtube:d", "title": "d", "duration_seconds": 50},
+            "/api/queue",
+            json={"user_id": ALICE_ID, "video_id": "youtube:a", "title": "a"},
         )
         assert r.status_code == 200
-        assert r.json()["slot"] == {"position": 3, "estimated_seconds": 500}
+        item_id = r.json()["id"]
+        assert r.json()["slot"] == {"position": 3, "estimated_seconds": 600}
+
+        r = client.post(
+            f"/api/queue/{item_id}/replace", json={"video_id": "youtube:b", "title": "b"}
+        )
+        assert r.status_code == 200
+        assert r.json()["slot"] == {"position": 3, "estimated_seconds": 600}
+
+        # Not upcoming (e.g. already played): no slot
+        playback.get_upcoming.side_effect = None
+        playback.get_upcoming.return_value = []
+        r = client.post(
+            f"/api/queue/{item_id}/replace", json={"video_id": "youtube:c", "title": "c"}
+        )
+        assert r.status_code == 200
+        assert r.json()["slot"] is None
 
     def test_add_song_not_authenticated(self, client):
         """POST /api/queue - unauthenticated request returns 401."""
@@ -278,12 +278,17 @@ class TestQueueEndpoints:
             user=bob, video_id="youtube:s2", title="Song 2", duration_seconds=180
         )
 
+        app_components["playback"].get_upcoming.return_value = [
+            UpcomingItem(queue_mgr.get_item(id1), 1, 0),
+            UpcomingItem(queue_mgr.get_item(id2), 2, 120),
+        ]
+
         response = client.get("/api/queue")
         data = response.json()
 
         assert not data["queue"][0]["is_played"]
         assert not data["queue"][1]["is_played"]
-        # Next song is the first item (no cursor, so all are upcoming)
+        # Next song and queue depth come from the upcoming songs
         assert data["next_song"]["id"] == id1
         assert data["queue_depth_count"] == 2
         assert data["queue_depth_seconds"] == 300
@@ -305,6 +310,7 @@ class TestQueueEndpoints:
 
         # Cursor on song 2 — song 1 is played, songs 2 and 3 are not
         playback.get_cursor.return_value = id2
+        playback.get_upcoming.return_value = [UpcomingItem(queue_mgr.get_item(id3), 1, 0)]
 
         response = client.get("/api/queue")
         data = response.json()
@@ -377,23 +383,20 @@ class TestQueueEndpoints:
             user=bob, video_id="youtube:s3", title="Song 3", duration_seconds=200
         )
 
-        # Alice is playing song 1, 30 seconds in
-        playback.get_cursor.return_value = id1
-        playback.get_status.return_value = {
-            "state": "playing",
-            "current_song": {"id": id1, "duration_seconds": 120},
-            "position_seconds": 30,
-            "duration_seconds": 120,
-        }
+        # Alice is playing song 1; Charlie's song is next, then Bob's
+        playback.get_upcoming.return_value = [
+            UpcomingItem(queue_mgr.get_item(id2), 1, 90),
+            UpcomingItem(queue_mgr.get_item(id3), 2, 270),
+        ]
 
         # Bob asks: his song is after Charlie's, so 1 song away
         set_user(client, BOB_ID, "Bob")
-        response = client.get("/api/queue")
-        data = response.json()
+        data = client.get("/api/queue").json()
+        assert data["my_next_turn"] == {"songs_away": 1, "estimated_seconds": 270}
 
-        assert data["my_next_turn"]["songs_away"] == 1
-        # Time remaining: (120 - 30) + 180 = 270
-        assert data["my_next_turn"]["estimated_seconds"] == 270
+        # Once Bob is up next, the Up Next banner already says so
+        playback.get_upcoming.return_value = [UpcomingItem(queue_mgr.get_item(id3), 1, 30)]
+        assert client.get("/api/queue").json()["my_next_turn"] is None
 
     def test_remove_song_as_owner(self, client, alice):
         """DELETE /api/queue/{id} - owner can remove their song."""
