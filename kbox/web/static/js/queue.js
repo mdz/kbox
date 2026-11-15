@@ -10,7 +10,7 @@ import {
     currentSelectionTarget, setCurrentSelectionTarget
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
-import { escapeHtml, statusLabel } from './utils.js';
+import { escapeHtml } from './utils.js';
 import { updatePitchDisplay, updatePitchButtons } from './pitch.js';
 import { showToast } from './toast.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
@@ -383,6 +383,14 @@ function handleAuthExpired() {
     }
 }
 
+// Guest-friendly labels for content_status values (see QueueManager.STATUS_*)
+const STATUS_LABELS = {
+    pending: 'Getting ready…',
+    preparing: 'Getting ready…',
+    ready: 'Ready',
+    error: 'Problem',
+};
+
 // Load queue
 export async function loadQueue() {
     if (authExpired) return;
@@ -411,8 +419,7 @@ export async function loadQueue() {
         renderNowPlaying(statusData);
 
         // Render Up Next section (backend provides next_song and my_next_turn - single source of truth)
-        const myUpcoming = currentQueue.find(i => !!userId && i.user_id === userId && !i.is_current && !i.is_played);
-        renderUpNext(statusData, queueData.next_song, queueData.my_next_turn, myUpcoming ? myUpcoming.content_status : null);
+        renderUpNext(statusData, queueData.next_song, queueData.my_next_turn);
 
         // Render Clear Queue button (operator only)
         const clearQueueContainer = document.getElementById('clear-queue-button-container');
@@ -454,7 +461,7 @@ export async function loadQueue() {
             div.className = classes.join(' ');
 
             const statusClass = `status-${escapeHtml(item.content_status)}`;
-            const statusLabel = escapeHtml(statusLabel(item.content_status));
+            const statusLabel = escapeHtml(STATUS_LABELS[item.content_status] || item.content_status);
             const duration = item.duration_seconds || 0;
             const durationStr = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
 

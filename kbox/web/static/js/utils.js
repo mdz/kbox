@@ -26,16 +26,3 @@ export function escapeHtml(text) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
-
-// Guest-friendly labels for queue item content_status values
-// (see QueueManager.STATUS_*). Shared by the queue rows and the turn bar.
-const STATUS_LABELS = {
-    pending: 'Getting ready…',
-    preparing: 'Getting ready…',
-    ready: 'Ready',
-    error: 'Download failed',
-};
-
-export function statusLabel(contentStatus) {
-    return STATUS_LABELS[contentStatus] || contentStatus;
-}

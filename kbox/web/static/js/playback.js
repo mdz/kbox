@@ -4,7 +4,6 @@
 
 import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
-import { statusLabel } from './utils.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock, pitchLockLabel } from './controls.js';
 
@@ -331,26 +330,7 @@ function formatEta(secs) {
 
 // Pure: decide what the guest should be told about their turn.
 // level: 'none' | 'later' | 'next' | 'playing' | 'idle-first'
-// myItemStatus: content_status of the guest's next own unplayed song (or null).
-export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId, myItemStatus = null) {
-    const status = computeTurnTurn(statusData, nextSong, myNextTurn, myUserId);
-    if (status.level === 'playing') return status;
-    if (myItemStatus === 'error') {
-        // A failed download needs the guest to act, so it overrides the ETA.
-        return {
-            level: 'problem',
-            text: "⚠️ Your song failed to download · tap it below to fix",
-            title: '⚠️ Song problem – kbox',
-        };
-    }
-    if (status.level !== 'none' && myItemStatus && myItemStatus !== 'ready') {
-        const label = statusLabel(myItemStatus).replace('…', '').toLowerCase();
-        return { ...status, text: `${status.text} · ${label}…` };
-    }
-    return status;
-}
-
-function computeTurnTurn(statusData, nextSong, myNextTurn, myUserId) {
+export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId) {
     const currentSong = statusData && statusData.current_song;
     if (currentSong && currentSong.user_id === myUserId) {
         return { level: 'playing', text: "🎤 You're on! Sing it!", title: "🎤 You're singing! – kbox" };
@@ -386,10 +366,6 @@ function applyTurnStatus(status) {
         bar.hidden = status.level === 'none';
     }
     document.body.classList.toggle('has-turn-bar', status.level !== 'none');
-    // The bar can wrap to two lines on narrow phones; keep sticky elements below it.
-    if (bar && !bar.hidden) {
-        document.documentElement.style.setProperty('--turn-bar-h', `${bar.offsetHeight}px`);
-    }
     document.title = status.title;
 
     // Vibrate once on the transition into being the immediate next singer
@@ -403,6 +379,6 @@ function applyTurnStatus(status) {
 // nextSong and myNextTurn are provided by the backend (single source of truth).
 // (This replaced the mid-page "Up Next" box: the display and the queue list
 // already show who is singing next.)
-export function renderUpNext(statusData, nextSong, myNextTurn, myItemStatus = null) {
-    applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId, myItemStatus));
+export function renderUpNext(statusData, nextSong, myNextTurn) {
+    applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId));
 }
