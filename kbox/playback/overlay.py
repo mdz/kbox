@@ -2,41 +2,48 @@
 The on-screen overlay text: who is singing now, who is up next, and
 transient notifications that interrupt them.
 
-OverlayCoordinator owns the base text, the hide timer and the lock that
-serialises the two. It takes the streaming controller, so it can equally
+OverlayCoordinator owns the base text and the deadline of the notification
+currently covering it. It takes the streaming controller, so it can equally
 well be constructed with a stub that only implements set_overlay_text.
 
-LOCK ORDERING: this object's lock is the INNER lock. PlaybackController's
-playback lock is the OUTER one, and code holding it may call in here. The
-reverse must NEVER happen: nothing executed while holding the lock below may
-call back into a method that takes the playback lock. The timer callback is
-the one piece of code here that runs on a thread of its own, and it only
-touches overlay state, which is what keeps that one-directional.
+It has no lock and no thread of its own. Every call comes from
+PlaybackController under the playback lock, and an expired notification is
+cleared by the playback monitor's tick calling expire_notification(), so a
+notification lasts until the first tick after its deadline.
 """
 
 import logging
-import threading
-from typing import Optional
+import time
+from typing import Callable, Optional
 
 
 class OverlayCoordinator:
-    """Keeps a persistent overlay text, with transient notifications over it."""
+    """Keeps a persistent overlay text, with transient notifications over it.
 
-    def __init__(self, streaming_controller):
+    Not thread-safe by itself: callers must serialise access (the playback
+    lock does).
+    """
+
+    def __init__(
+        self,
+        streaming_controller,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         """
         Args:
             streaming_controller: StreamingController instance; only
                 set_overlay_text() is used.
+            clock: Monotonic clock in seconds. Injected so tests can move
+                time forward without sleeping.
         """
         self.streaming_controller = streaming_controller
         self.logger = logging.getLogger(__name__)
+        self._clock = clock
 
         self._base_overlay_text = ""  # Persistent overlay (current singer, up next, etc.)
-        self._notification_timer: Optional[threading.Timer] = None
-        # INNER lock - see the lock-ordering note in the module docstring.
-        # May be acquired while the playback lock is held; must never be held
-        # while acquiring the playback lock.
-        self._notification_lock = threading.Lock()
+        # When the active notification should give way to the base text, on
+        # self._clock's timeline; None while no notification is showing.
+        self._notification_deadline: Optional[float] = None
 
     @property
     def base_text(self) -> str:
@@ -53,37 +60,37 @@ class OverlayCoordinator:
         Args:
             text: The base overlay text, or empty string to clear
         """
-        with self._notification_lock:
-            self._base_overlay_text = text
-            # Only update display if no notification is active
-            if self._notification_timer is None:
-                self.streaming_controller.set_overlay_text(text)
+        self._base_overlay_text = text
+        # Only update display if no notification is active
+        if self._notification_deadline is None:
+            self.streaming_controller.set_overlay_text(text)
 
     def show_notification(self, text: str, duration_seconds: float = 5.0):
         """
-        Show a transient notification that auto-hides and restores the base overlay.
+        Show a transient notification over the base overlay.
+
+        It stays up until expire_notification() is called at or after
+        duration_seconds from now. A second notification replaces the first,
+        and its deadline replaces the first's.
 
         Args:
             text: Notification text to display
             duration_seconds: How long to show the notification (default 5s)
         """
-        with self._notification_lock:
-            # Cancel any pending timer
-            if self._notification_timer:
-                self._notification_timer.cancel()
-                self._notification_timer = None
+        self._notification_deadline = self._clock() + duration_seconds
+        self.streaming_controller.set_overlay_text(text)
+        self.logger.info("Showing notification: %s", text)
 
-            # Show the notification
-            self.streaming_controller.set_overlay_text(text)
-            self.logger.info("Showing notification: %s", text)
+    def expire_notification(self):
+        """Restore the base overlay if the active notification's time is up.
 
-            # Schedule restoration of base overlay
-            def restore_base_overlay():
-                with self._notification_lock:
-                    self._notification_timer = None
-                    self.streaming_controller.set_overlay_text(self._base_overlay_text)
-                    self.logger.debug("Restored base overlay: %s", self._base_overlay_text)
-
-            self._notification_timer = threading.Timer(duration_seconds, restore_base_overlay)
-            self._notification_timer.daemon = True
-            self._notification_timer.start()
+        Safe to call at any time; does nothing when no notification is
+        showing or the current one has not yet reached its deadline.
+        """
+        if self._notification_deadline is None:
+            return
+        if self._clock() < self._notification_deadline:
+            return
+        self._notification_deadline = None
+        self.streaming_controller.set_overlay_text(self._base_overlay_text)
+        self.logger.debug("Restored base overlay: %s", self._base_overlay_text)

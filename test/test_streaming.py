@@ -1369,7 +1369,7 @@ def _quiesce_bus(controller, pipeline):
     assumptions. Pipelines queue state-changed and stream-start messages of
     their own, so the bus is cleared too.
     """
-    controller._stop_bus_polling()
+    controller.stop_bus_polling()
     bus = pipeline.get_bus()
     while bus.pop() is not None:
         pass
@@ -1459,7 +1459,7 @@ def test_stop_bus_polling_joins_every_thread(controller):
     watchers = list(controller.bus_watchers)
     assert watchers
 
-    controller._stop_bus_polling()
+    controller.stop_bus_polling()
 
     assert all(watcher.running is False for watcher in watchers)
     assert controller.bus_watchers == []

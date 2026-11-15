@@ -5,11 +5,11 @@ Every test here builds its subject on its own -- no PlaybackController, no
 queue manager, no GStreamer. That is the point: if one of these needed a
 controller to exist, the boundary would be wrong.
 
-No timing-dependent assertions: the notification hide timer is patched so
-its callback can be invoked directly.
+No timing-dependent assertions: the overlay coordinator is given a fake
+clock, so notification expiry is driven by moving it forward.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from kbox.playback.cursor import QueueCursor
 from kbox.playback.overlay import OverlayCoordinator
@@ -28,61 +28,101 @@ class TestOverlayCoordinator:
         streaming.set_overlay_text.assert_called_once_with("Now singing: Alice")
 
     def test_notification_restores_base_overlay(self):
-        """A notification hides the base text, and the timer brings it back.
+        """A notification hides the base text, and expiring it brings it back.
 
         This is the same regression this guards at the controller level (the
         overlay going blank after a notification instead of returning to the
-        current singer), checked without waiting on a real timer.
+        current singer), checked with a fake clock instead of waiting.
         """
         streaming = Mock()
-        coordinator = OverlayCoordinator(streaming)
+        now = [100.0]
+        coordinator = OverlayCoordinator(streaming, clock=lambda: now[0])
         coordinator.set_base("Now singing: Alice")
         streaming.reset_mock()
 
-        with patch("kbox.playback.overlay.threading.Timer") as timer_cls:
-            coordinator.show_notification("Bob added a song", duration_seconds=5.0)
-            streaming.set_overlay_text.assert_called_once_with("Bob added a song")
-            restore = timer_cls.call_args[0][1]
-
+        coordinator.show_notification("Bob added a song", duration_seconds=5.0)
+        streaming.set_overlay_text.assert_called_once_with("Bob added a song")
         streaming.reset_mock()
-        restore()
+
+        now[0] = 105.0
+        coordinator.expire_notification()
 
         streaming.set_overlay_text.assert_called_once_with("Now singing: Alice")
+
+    def test_expire_before_deadline_keeps_notification(self):
+        streaming = Mock()
+        now = [100.0]
+        coordinator = OverlayCoordinator(streaming, clock=lambda: now[0])
+        coordinator.show_notification("Bob added a song", duration_seconds=5.0)
+        streaming.reset_mock()
+
+        now[0] = 104.9
+        coordinator.expire_notification()
+
+        streaming.set_overlay_text.assert_not_called()
+
+    def test_expire_without_notification_does_nothing(self):
+        streaming = Mock()
+        coordinator = OverlayCoordinator(streaming, clock=lambda: 0.0)
+        coordinator.set_base("Now singing: Alice")
+        streaming.reset_mock()
+
+        coordinator.expire_notification()
+
+        streaming.set_overlay_text.assert_not_called()
+
+    def test_expiry_happens_once(self):
+        streaming = Mock()
+        now = [100.0]
+        coordinator = OverlayCoordinator(streaming, clock=lambda: now[0])
+        coordinator.show_notification("Bob added a song", duration_seconds=5.0)
+        now[0] = 200.0
+        coordinator.expire_notification()
+        streaming.reset_mock()
+
+        coordinator.expire_notification()
+
+        streaming.set_overlay_text.assert_not_called()
 
     def test_set_base_during_notification_does_not_interrupt_it(self):
         """Changing the base text while a notification shows is deferred to it."""
         streaming = Mock()
-        coordinator = OverlayCoordinator(streaming)
+        now = [100.0]
+        coordinator = OverlayCoordinator(streaming, clock=lambda: now[0])
 
-        with patch("kbox.playback.overlay.threading.Timer") as timer_cls:
-            coordinator.show_notification("Bob added a song", duration_seconds=5.0)
-            restore = timer_cls.call_args[0][1]
-            streaming.reset_mock()
+        coordinator.show_notification("Bob added a song", duration_seconds=5.0)
+        streaming.reset_mock()
 
-            coordinator.set_base("Up next: Carol")
+        coordinator.set_base("Up next: Carol")
 
         # The notification is still on screen
         streaming.set_overlay_text.assert_not_called()
         assert coordinator.base_text == "Up next: Carol"
 
-        restore()
+        now[0] = 105.0
+        coordinator.expire_notification()
         streaming.set_overlay_text.assert_called_once_with("Up next: Carol")
 
-    def test_second_notification_cancels_the_first_timer(self):
+    def test_second_notification_replaces_the_first_deadline(self):
         streaming = Mock()
-        coordinator = OverlayCoordinator(streaming)
+        now = [100.0]
+        coordinator = OverlayCoordinator(streaming, clock=lambda: now[0])
+        coordinator.set_base("Now singing: Alice")
 
-        with patch("kbox.playback.overlay.threading.Timer") as timer_cls:
-            first_timer = Mock()
-            second_timer = Mock()
-            timer_cls.side_effect = [first_timer, second_timer]
-
-            coordinator.show_notification("first", duration_seconds=5.0)
-            coordinator.show_notification("second", duration_seconds=5.0)
-
-        first_timer.cancel.assert_called_once()
-        second_timer.cancel.assert_not_called()
+        coordinator.show_notification("first", duration_seconds=5.0)
+        now[0] = 103.0
+        coordinator.show_notification("second", duration_seconds=5.0)
         streaming.set_overlay_text.assert_called_with("second")
+        streaming.reset_mock()
+
+        # Past the first deadline, but not the second's
+        now[0] = 106.0
+        coordinator.expire_notification()
+        streaming.set_overlay_text.assert_not_called()
+
+        now[0] = 108.0
+        coordinator.expire_notification()
+        streaming.set_overlay_text.assert_called_once_with("Now singing: Alice")
 
 
 class TestQueueCursor:

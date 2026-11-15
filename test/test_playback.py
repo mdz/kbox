@@ -17,6 +17,7 @@ from kbox.playback import (
     song_tuning,
     upcoming_songs,
 )
+from kbox.playback.overlay import OverlayCoordinator
 from kbox.queue import QueueManager
 
 
@@ -1233,35 +1234,81 @@ def test_transition_waits_for_not_ready_next_song(
     mock_streaming_controller.display_image.assert_called_once()
 
 
+def _use_fake_overlay_clock(controller, streaming_controller, start=100.0):
+    """Give the controller an OverlayCoordinator on a fake clock.
+
+    Returns a one-element list holding the current time; assign to [0] to
+    move time forward.
+    """
+    now = [start]
+    controller._overlay = OverlayCoordinator(streaming_controller, clock=lambda: now[0])
+    return now
+
+
 def test_notification_restores_base_overlay(
     playback_controller, mock_queue_manager, mock_streaming_controller
 ):
-    """Test that show_notification() restores the base overlay after the notification expires.
+    """Test that the monitor tick restores the base overlay once a notification expires.
 
     This is a regression test for the bug where the overlay would go blank
     after a notification instead of returning to showing the current singer.
     """
-    import time
+    now = _use_fake_overlay_clock(playback_controller, mock_streaming_controller)
 
     # Set up a base overlay (simulating "Now singing: Alice")
     playback_controller._overlay.set_base("Now singing: Alice")
-
-    # Verify base overlay was set
-    mock_streaming_controller.set_overlay_text.assert_called_with("Now singing: Alice")
     mock_streaming_controller.reset_mock()
 
-    # Show a notification with a short duration
-    playback_controller.show_notification("Bob added a song", duration_seconds=0.1)
-
-    # Notification should be shown
+    playback_controller.show_notification("Bob added a song", duration_seconds=5.0)
     mock_streaming_controller.set_overlay_text.assert_called_with("Bob added a song")
     mock_streaming_controller.reset_mock()
 
-    # Wait for notification to expire
-    time.sleep(0.2)
+    # A tick before the deadline leaves the notification up
+    now[0] = 104.0
+    playback_controller._on_monitor_tick()
+    mock_streaming_controller.set_overlay_text.assert_not_called()
 
-    # Base overlay should be restored
+    # The first tick after it restores the base overlay
+    now[0] = 106.0
+    playback_controller._on_monitor_tick()
     mock_streaming_controller.set_overlay_text.assert_called_with("Now singing: Alice")
+
+
+@pytest.mark.parametrize(
+    "state", [PlaybackState.IDLE, PlaybackState.STOPPED, PlaybackState.TRANSITION]
+)
+def test_monitor_tick_expires_notification_when_not_playing(
+    playback_controller, mock_queue_manager, mock_streaming_controller, state
+):
+    """A notification shown over an interstitial screen must clear too, not
+    only one shown during a song."""
+    now = _use_fake_overlay_clock(playback_controller, mock_streaming_controller)
+    playback_controller.state = state
+    mock_queue_manager.get_song_at_offset.return_value = None
+
+    playback_controller.show_notification("Bob added a song", duration_seconds=5.0)
+    mock_streaming_controller.reset_mock()
+
+    now[0] = 106.0
+    playback_controller._on_monitor_tick()
+
+    mock_streaming_controller.set_overlay_text.assert_called_once_with("")
+
+
+def test_show_notification_holds_playback_lock(playback_controller, mock_streaming_controller):
+    """show_notification() is called from web request threads; the overlay
+    coordinator has no lock of its own, so it must run under the playback lock."""
+
+    def set_overlay_text_checks_lock(text):
+        assert playback_controller._lock_owner == threading.get_ident(), (
+            "set_overlay_text() was called without the playback lock"
+        )
+
+    mock_streaming_controller.set_overlay_text.side_effect = set_overlay_text_checks_lock
+
+    playback_controller.show_notification("Bob added a song")
+
+    mock_streaming_controller.set_overlay_text.assert_called_once_with("Bob added a song")
 
 
 def test_single_song_does_not_loop_after_playing(
