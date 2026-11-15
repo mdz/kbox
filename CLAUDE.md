@@ -75,11 +75,18 @@ run, push and let CI run.
 A failing hook blocks the commit, so a commit that succeeds has already
 passed ruff and mypy. Re-running them to confirm is wasted work.
 
-**Local pytest is a weak signal on a dev machine, not just redundant.** A
-macOS host generally has no working GStreamer, so a large block of tests
-fail on missing host libraries and tell you nothing about your change. The
-Docker test job in CI is the authoritative run, because it is the only one
-where the GStreamer pipeline actually exists.
+**The Docker test job in CI is the authoritative run**, because it is the
+only one where the GStreamer pipeline actually exists on the hardware kbox
+targets.
+
+A full local run on a macOS dev machine does pass, though — see
+[docs/development/macos-setup.md](docs/development/macos-setup.md) for the
+setup that gets there (Homebrew GStreamer plus a one-time
+`native/gst-signalsmith-pitch/build.sh`). It is still not the gate: it uses
+fakesinks and mocks, so it verifies logic rather than the real pipeline. If
+a large block of GStreamer tests fails locally with PyGObject typelib
+errors, that is the macOS environment setup, not your change — that doc has
+the diagnosis.
 
 Targeted local runs are still fine while iterating on something specific —
 `uv run pytest test/test_queue.py -k reorder` to watch one test, or to read a

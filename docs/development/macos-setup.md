@@ -111,9 +111,14 @@ uv run pytest                   # should be fully green once step 4 is done
 
 ## Pre-push hook
 
-`.pre-commit-config.yaml` has a `pytest` hook at `stages: [pre-push]`. Once
-the suite is green locally, wire it up with:
+`.pre-commit-config.yaml` has a `pytest` hook at `stages: [pre-push]`, and
+sets `default_install_hook_types: [pre-commit, pre-push]`, so both hook
+types get wired by:
 
 ```bash
-uv run pre-commit install --hook-type pre-push
+pre-commit install
 ```
+
+That hook was previously left uninstalled because a full local `uv run
+pytest` failed on this platform. Once the setup above is done it passes, so
+installing it no longer blocks pushes.
