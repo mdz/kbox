@@ -10,6 +10,7 @@ import {
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue, updateReplaceTargetBanner } from './queue.js';
+import { showToast } from './toast.js';
 import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
 
 // Note: window.fetch is patched in auth.js to retry once on a 401/403 to
@@ -224,6 +225,15 @@ export function cancelAddToQueue() {
 
 // Confirm and add (or replace) a song in the queue.
 // Same guardrails and submit path either way - only the endpoint/payload differ.
+// slot is {position, estimated_seconds} from the add/replace response.
+function positionSuffix(slot) {
+    if (!slot) return '';
+    if (slot.position === 1) return ' — you\'re up next';
+    const minutes = Math.round(slot.estimated_seconds / 60);
+    const wait = minutes < 1 ? 'less than a minute' : `about ${minutes} min`;
+    return ` — #${slot.position} in the queue, ${wait}`;
+}
+
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
 
@@ -271,7 +281,7 @@ export async function confirmAddToQueue() {
     } else {
         const pitchInput = document.getElementById('add-song-pitch-input');
         if (!pitchInput) {
-            alert('Pitch control not initialized');
+            showToast('Pitch control not initialized', {error: true});
             return;
         }
         url = '/api/queue';
@@ -298,10 +308,14 @@ export async function confirmAddToQueue() {
             modal.style.display = 'none';
             document.getElementById('search-input').value = '';
             document.getElementById('search-results').innerHTML = '';
+            const title = currentVideoToAdd.title;
+            const slot = (await response.json()).slot;
             loadQueue();
             setCurrentVideoToAdd(null);
             setCurrentSelectionTarget(null);
             updateReplaceTargetBanner();
+            const verb = replacing ? 'Replaced with' : 'Added';
+            showToast(`✓ ${verb} ${title}${positionSuffix(slot)}`);
         } else {
             // Try to get error detail from response
             let errorMessage = replacing ? 'Error replacing song' : 'Error adding song to queue';
@@ -313,10 +327,10 @@ export async function confirmAddToQueue() {
             } catch (parseError) {
                 // Ignore parse errors, use default message
             }
-            alert(errorMessage);
+            showToast(errorMessage, {error: true});
         }
     } catch (e) {
-        alert(replacing ? 'Error replacing song' : 'Error adding song to queue');
+        showToast(replacing ? 'Error replacing song' : 'Error adding song to queue', {error: true});
     }
 }
 

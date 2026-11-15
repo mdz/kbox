@@ -48,6 +48,35 @@
         .wordmark-k { color: #b06bff; }
         .wordmark-box { color: #ff3fa4; }
 
+        .toast {
+            position: fixed;
+            left: 50%;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            transform: translateX(-50%);
+            width: max-content;
+            max-width: calc(100vw - 32px);
+            box-sizing: border-box;
+            padding: 12px 18px;
+            border-radius: 12px;
+            background: #1f7a3d;
+            color: #fff;
+            font-size: 16px;
+            line-height: 1.35;
+            text-align: center;
+            overflow-wrap: anywhere;
+            cursor: pointer;
+            z-index: 2000;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .toast.toast-error {
+            background: #b3261e;
+        }
+
+        .toast.hidden {
+            display: none;
+        }
+
         .history-button {
             position: fixed;
             top: 15px;

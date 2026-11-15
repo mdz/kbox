@@ -49,6 +49,7 @@ def _mock_playback():
         "duration_seconds": 0,
     }
     playback.get_cursor.return_value = None
+    playback.get_upcoming.return_value = []
     playback.move_to_next.return_value = True
     playback.move_to_end.return_value = True
     playback.move_down.return_value = True

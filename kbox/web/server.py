@@ -480,11 +480,11 @@ def create_app(
         status = playback.get_status()
         current_song = status.get("current_song")
         current_song_id = current_song.get("id") if current_song else None
-        position_seconds = status.get("position_seconds") or 0
         cursor_id = playback.get_cursor()
 
-        # Find cursor index — everything before it is "played"
+        # Everything before the cursor is "played"
         cursor_idx = next((i for i, item in enumerate(queue_items) if item.id == cursor_id), None)
+        upcoming = playback.get_upcoming()
 
         # Serialize queue items for the frontend
         queue = []
@@ -501,14 +501,10 @@ def create_app(
             item_dict["is_played"] = cursor_idx is not None and i < cursor_idx
             queue.append(item_dict)
 
-        # Upcoming items: everything after the cursor (or the whole list if no cursor)
-        upcoming_start = (cursor_idx + 1) if cursor_idx is not None else 0
-        upcoming = queue_items[upcoming_start:]
-
         # Next song
         next_song = None
         if upcoming:
-            s = upcoming[0]
+            s = upcoming[0].item
             next_song = {
                 "id": s.id,
                 "user_id": s.user_id,
@@ -521,20 +517,16 @@ def create_app(
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            current_duration = (current_song.get("duration_seconds") or 0) if current_song else 0
-            time_until = max(0, current_duration - position_seconds) if current_song else 0
-            for songs_away, item in enumerate(upcoming):
-                if item.user_id == current_user_id:
-                    my_next_turn = {
-                        "estimated_seconds": int(time_until),
-                        "songs_away": songs_away,
-                    }
-                    break
-                time_until += item.metadata.duration_seconds or 0
+            mine = next((u for u in upcoming if u.item.user_id == current_user_id), None)
+            if mine:
+                my_next_turn = {
+                    "estimated_seconds": mine.wait_seconds,
+                    "songs_away": mine.position - 1,
+                }
 
         # Queue depth: count and total duration of upcoming items
         queue_depth_count = len(upcoming)
-        queue_depth_seconds = sum(item.metadata.duration_seconds or 0 for item in upcoming)
+        queue_depth_seconds = sum(u.item.metadata.duration_seconds or 0 for u in upcoming)
 
         return {
             "queue": queue,
@@ -560,15 +552,23 @@ def create_app(
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
 
+    def queue_slot(playback: PlaybackController, item_id: int):
+        """Position and estimated wait of an upcoming queue item, or None if
+        it isn't upcoming (e.g. already played)."""
+        for u in playback.get_upcoming():
+            if u.item.id == item_id:
+                return {"position": u.position, "estimated_seconds": u.wait_seconds}
+        return None
+
     @app.post("/api/queue")
     def add_song(
         request_data: AddSongRequest,
-        request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         user_mgr: UserManager = Depends(get_user_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
         current_user_id: str = Depends(require_user),
     ):
-        """Add song to queue."""
+        """Add song to queue. Responds with the new item's queue slot."""
         try:
             # Get user from session, not the request body — the session is
             # the source of truth for which self-declared identity this
@@ -591,13 +591,13 @@ def create_app(
             )
 
             # Show overlay notification
-            playback = request.app.state.playback_controller
-            if playback:
-                playback.show_notification(
-                    f"{user.display_name} added a song", duration_seconds=5.0
-                )
+            playback.show_notification(f"{user.display_name} added a song", duration_seconds=5.0)
 
-            return {"id": item_id, "status": "added"}
+            return {
+                "id": item_id,
+                "status": "added",
+                "slot": queue_slot(playback, item_id),
+            }
         except HTTPException:
             raise  # Let HTTP exceptions pass through
         except Exception as e:
@@ -669,7 +669,7 @@ def create_app(
         ):
             raise HTTPException(status_code=404, detail="Queue item not found")
 
-        return {"status": "replaced"}
+        return {"status": "replaced", "slot": queue_slot(playback, item_id)}
 
     @app.patch("/api/queue/{item_id}/position")
     def reorder_song(

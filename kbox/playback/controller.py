@@ -11,12 +11,13 @@ import logging
 import threading
 from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from ..database import ConfigRepository
 from ..models import QueueItem
 from ..queue import QueueManager
 from . import history_policy, song_tuning, status
+from .upcoming import UpcomingItem, upcoming_songs
 
 
 class PlaybackState(Enum):
@@ -210,6 +211,20 @@ class PlaybackController:
     def get_cursor(self) -> Optional[int]:
         """Get the current cursor song ID."""
         return self._cursor_song_id
+
+    def get_upcoming(self) -> List[UpcomingItem]:
+        """Songs after the cursor, with estimated start times (see upcoming_songs)."""
+        with self._locked():
+            state = self.state
+            current_song_id = self.current_song_id
+
+        position = None
+        if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+            position = self.streaming_controller.get_position()
+
+        return upcoming_songs(
+            self.queue_manager.get_queue(), self.get_cursor(), current_song_id, position
+        )
 
     def clear_cursor(self) -> None:
         """Clear the queue cursor (e.g., when queue is cleared)."""

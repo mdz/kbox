@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from kbox.models import QueueItem, SongMetadata, SongSettings
-from kbox.playback import PlaybackController, PlaybackState, song_tuning
+from kbox.playback import PlaybackController, PlaybackState, song_tuning, upcoming_songs
 from kbox.queue import QueueManager
 
 
@@ -617,6 +617,51 @@ def test_get_status(playback_controller, mock_queue_manager):
     assert isinstance(status["current_song"], dict)
     assert status["current_song"]["id"] == 1
     assert status["current_song"]["title"] == "Test Song"
+
+
+def test_upcoming_songs():
+    """Songs after the cursor, with cumulative wait estimates."""
+    s1 = create_mock_queue_item(id=1, position=1, duration_seconds=100)
+    s2 = create_mock_queue_item(id=2, position=2, duration_seconds=200)
+    s3 = create_mock_queue_item(id=3, position=3, duration_seconds=300)
+    queue = [s1, s2, s3]
+
+    def summary(upcoming):
+        return [(u.item.id, u.position, u.wait_seconds) for u in upcoming]
+
+    # Nothing played or playing: whole queue is upcoming
+    assert summary(upcoming_songs(queue, None, None, None)) == [
+        (1, 1, 0),
+        (2, 2, 100),
+        (3, 3, 300),
+    ]
+
+    # Song 1 playing, 60s in: songs 2 and 3 wait for its remaining 40s
+    assert summary(upcoming_songs(queue, 1, 1, 60)) == [(2, 1, 40), (3, 2, 240)]
+
+    # Song 1 finished (cursor still on it, nothing playing): no remaining time
+    assert summary(upcoming_songs(queue, 1, None, None)) == [(2, 1, 0), (3, 2, 200)]
+
+    # Cursor on the last song: nothing upcoming
+    assert upcoming_songs(queue, 3, 3, 0) == []
+
+    # Cursor song no longer in the queue: whole queue is upcoming
+    assert [u.item.id for u in upcoming_songs(queue, 99, None, None)] == [1, 2, 3]
+
+
+def test_get_upcoming(playback_controller, mock_queue_manager, mock_streaming_controller):
+    """get_upcoming() combines the queue with the cursor and playback position."""
+    s1 = create_mock_queue_item(id=1, position=1, duration_seconds=100)
+    s2 = create_mock_queue_item(id=2, position=2, duration_seconds=200)
+    mock_queue_manager.get_queue.return_value = [s1, s2]
+    playback_controller.set_cursor(1)
+    playback_controller.current_song_id = 1
+    playback_controller.state = PlaybackState.PLAYING
+    mock_streaming_controller.get_position.return_value = 30
+
+    upcoming = playback_controller.get_upcoming()
+
+    assert [(u.item.id, u.position, u.wait_seconds) for u in upcoming] == [(2, 1, 70)]
 
 
 def test_get_status_does_not_hold_lock_during_io(
