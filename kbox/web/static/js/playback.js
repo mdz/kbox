@@ -6,6 +6,7 @@ import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock } from './controls.js';
+import { escapeHtml } from './utils.js';
 
 // Track the currently displayed song to detect song changes
 let currentDisplayedSongId = null;
@@ -323,6 +324,63 @@ export function renderNowPlaying(statusData) {
     }
 }
 
+// --- Turn alert (sticky status bar, tab title, vibration) ---
+
+const BASE_TITLE = document.title;
+let lastTurnLevel = 'none';
+
+function formatEta(secs) {
+    const mins = Math.max(1, Math.round(secs / 60));
+    return `~${mins} min`;
+}
+
+// Pure: decide what the guest should be told about their turn.
+// level: 'none' | 'later' | 'next' | 'playing' | 'idle-first'
+export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId) {
+    const currentSong = statusData && statusData.current_song;
+    if (currentSong && currentSong.user_id === myUserId) {
+        return { level: 'playing', text: "🎤 You're on! Sing it!", title: "🎤 You're singing! – kbox" };
+    }
+    if (nextSong && nextSong.user_id === myUserId) {
+        if (!currentSong) {
+            return {
+                level: 'idle-first',
+                text: "🎤 You're first — waiting for the host to start",
+                title: "🎤 You're first – kbox",
+            };
+        }
+        return { level: 'next', text: "🎤 You're next! Head to the mic", title: "🎤 You're next! – kbox" };
+    }
+    if (myNextTurn) {
+        const n = myNextTurn.songs_away;
+        const songs = n === 1 ? '1 song' : `${n} songs`;
+        const eta = myNextTurn.estimated_seconds > 0 ? ` (${formatEta(myNextTurn.estimated_seconds)})` : '';
+        return {
+            level: 'later',
+            text: `🎤 You're up in ${songs}${eta}`,
+            title: `🎤 Up in ${n} – kbox`,
+        };
+    }
+    return { level: 'none', text: '', title: BASE_TITLE };
+}
+
+function applyTurnStatus(status) {
+    const bar = document.getElementById('turn-bar');
+    if (bar) {
+        bar.textContent = status.text;
+        bar.className = `turn-bar turn-${status.level}`;
+        bar.hidden = status.level === 'none';
+    }
+    document.body.classList.toggle('has-turn-bar', status.level !== 'none');
+    document.title = status.title;
+
+    // Vibrate once on the transition into being the immediate next singer
+    if (status.level === 'next' && lastTurnLevel !== 'next' && typeof navigator.vibrate === 'function') {
+        try { navigator.vibrate([200, 100, 200]); } catch (e) { /* ignore */ }
+    }
+    lastTurnLevel = status.level;
+}
+
 // Render Up Next section
 // nextSong and myNextTurn are provided by the backend (single source of truth)
 export function renderUpNext(statusData, nextSong, myNextTurn) {
@@ -331,6 +389,8 @@ export function renderUpNext(statusData, nextSong, myNextTurn) {
     if (!section || !content) return;
 
     section.style.display = 'block';
+
+    applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId));
 
     const currentSong = statusData.current_song;
 
@@ -357,11 +417,13 @@ export function renderUpNext(statusData, nextSong, myNextTurn) {
 
     // Build main "Up Next" message
     let html = '';
-    if (!currentSong) {
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong></span>`;
+    if (!currentSong && isNextYou) {
+        html = `<span style="font-size: 1.1em;">🎤 <strong style="${nameStyle}">You're first</strong> — waiting for the host to start</span>`;
+    } else if (!currentSong) {
+        html = `<span style="font-size: 1.1em;">Up Next: <strong style="${nameStyle}">${escapeHtml(nextSong.user_name)}</strong></span>`;
     } else {
         const timeStr = formatTime(currentRemaining);
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong> in ${timeStr}</span>`;
+        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : escapeHtml(nextSong.user_name)}</strong> in ${timeStr}</span>`;
     }
 
     // Show when the current user's next song is coming up
