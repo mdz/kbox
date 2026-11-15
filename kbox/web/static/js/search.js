@@ -138,6 +138,43 @@ export async function search() {
     }
 }
 
+// Soft warnings shown in the add-song modal. None of these block: the
+// confirm button just becomes "... anyway". The duplicate-singer nudge doesn't
+// apply when replacing an existing entry in place (see #88) - that's
+// correcting a mistake, not queueing a second turn.
+function computeAddWarnings(video, replacing) {
+    const warnings = [];
+
+    const duplicate = currentQueue?.find(item => item.video_id === video.id);
+    if (duplicate) {
+        warnings.push(duplicate.is_played
+            ? 'This song was already performed tonight.'
+            : 'This song is already in the queue.');
+    }
+
+    const warningMinutes = window.kboxConfig?.longSongWarningMinutes || 0;
+    const durationSeconds = video.duration_seconds || 0;
+    if (warningMinutes > 0 && durationSeconds > warningMinutes * 60) {
+        const mins = Math.floor(durationSeconds / 60);
+        const secs = String(Math.round(durationSeconds) % 60).padStart(2, '0');
+        warnings.push(`This song is ${mins}:${secs} long.`);
+    }
+
+    if (!replacing && window.kboxConfig?.duplicateSingerNudgeEnabled) {
+        if (currentQueue?.some(item => item.user_id === userId && !item.is_played)) {
+            warnings.push('You already have a song queued.');
+        }
+    }
+
+    return warnings;
+}
+
+function renderWarningsHtml(warnings) {
+    return warnings.map(w =>
+        `<div class="add-song-warning" style="color: #ffb347; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 179, 71, 0.1); border-radius: 6px; text-align: center;">&#x26A0;&#xFE0F; ${escapeHtml(w)}</div>`
+    ).join('');
+}
+
 // Show add song confirmation modal
 export async function showAddSongModal(video) {
     if (!userName) {
@@ -186,6 +223,12 @@ export async function showAddSongModal(video) {
             const songStr = queueDepthCount === 1 ? '1 song' : `${queueDepthCount} songs`;
             additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">&#x23F3; ${songStr} ahead (${timeStr})</div>`;
         }
+    }
+
+    const warnings = computeAddWarnings(video, currentSelectionTarget);
+    additionalControls += renderWarningsHtml(warnings);
+    if (warnings.length) {
+        confirmBtn.textContent = currentSelectionTarget ? 'Replace anyway' : 'Add anyway';
     }
 
     // Use reusable song settings component with saved pitch.
@@ -238,36 +281,6 @@ export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
 
     const replacing = currentSelectionTarget;
-
-    // Warn if song was already added tonight (queued or already played)
-    const duplicate = currentQueue?.find(item => item.video_id === currentVideoToAdd.id);
-    if (duplicate) {
-        const msg = duplicate.is_played
-            ? `"${currentVideoToAdd.title}" was already performed tonight. Add it again?`
-            : `"${currentVideoToAdd.title}" is already in the queue. Add it again?`;
-        if (!confirm(msg)) {
-            return;
-        }
-    }
-
-    // Warn if song exceeds the long song threshold
-    const warningMinutes = window.kboxConfig?.longSongWarningMinutes || 0;
-    const durationSeconds = currentVideoToAdd.duration_seconds || 0;
-    if (warningMinutes > 0 && durationSeconds > warningMinutes * 60) {
-        if (!confirm(`This song is ${Math.floor(durationSeconds / 60)}:${String(Math.round(durationSeconds) % 60).padStart(2, '0')} long. Are you sure you want to add it?`)) {
-            return;
-        }
-    }
-
-    // Soft etiquette nudge: give everyone a turn. Doesn't apply when
-    // replacing an existing entry in place (see #88) — that's correcting
-    // a mistake, not queueing a second turn.
-    if (!replacing && window.kboxConfig?.duplicateSingerNudgeEnabled) {
-        const alreadyQueued = currentQueue?.some(item => item.user_id === userId && !item.is_played);
-        if (alreadyQueued && !confirm('You already have a song queued. Add another anyway?')) {
-            return;
-        }
-    }
 
     let url, body;
     if (replacing) {

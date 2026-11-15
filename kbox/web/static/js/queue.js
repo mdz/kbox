@@ -11,6 +11,8 @@ import {
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { escapeHtml } from './utils.js';
+import { updatePitchDisplay, updatePitchButtons } from './pitch.js';
+import { showToast } from './toast.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
 
 // Check if playback controls are open
@@ -28,6 +30,9 @@ export function showEditQueueItemModal(item) {
     if (!canEdit) return;
 
     setCurrentQueueItemToEdit(item);
+    lastSavedPitch = { itemId: item.id, value: item.pitch_semitones || 0 };
+    pendingPitch = null;
+    resetRemoveConfirm();
 
     // Use reusable song settings component
     const additionalControls = !canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : '';
@@ -98,46 +103,71 @@ export function showEditQueueItemModal(item) {
 
 // Cancel editing queue item
 export function cancelEditQueueItem() {
+    // Flush before clearing currentQueueItemToEdit; the PATCH uses the
+    // captured item id so it still lands.
+    if (pendingPitch) flushPitch();
+    resetRemoveConfirm();
     const modal = document.getElementById('edit-queue-item-modal');
     modal.classList.add('hidden');
     modal.style.display = 'none';
     setCurrentQueueItemToEdit(null);
 }
 
-// Save queue item pitch
-export async function saveQueueItemPitch() {
+// Pitch edits apply immediately (like the now-playing control and like
+// Replace/Remove), so the dialog has no Save step. Taps are debounced into one
+// PATCH; closing the dialog flushes any pending change.
+const PITCH_DEBOUNCE_MS = 400;
+let pitchTimer = null;
+let pendingPitch = null;      // {itemId, value} not yet sent
+let lastSavedPitch = null;    // {itemId, value} last value the server has
+
+export function queueEditPitchChanged() {
     if (!currentQueueItemToEdit) return;
+    const input = document.getElementById('edit-queue-item-pitch-input');
+    if (!input) return;
+    pendingPitch = { itemId: currentQueueItemToEdit.id, value: parseInt(input.value) || 0 };
+    clearTimeout(pitchTimer);
+    pitchTimer = setTimeout(flushPitch, PITCH_DEBOUNCE_MS);
+}
 
-    // Check permissions
-    const canEdit = isOperator || (userId && currentQueueItemToEdit.user_id === userId);
-    if (!canEdit) {
-        alert('You can only edit songs you added');
-        return;
-    }
-
-    const pitchInput = document.getElementById('edit-queue-item-pitch-input');
-    const pitchSemitones = parseInt(pitchInput.value) || 0;
+async function flushPitch() {
+    clearTimeout(pitchTimer);
+    pitchTimer = null;
+    const pending = pendingPitch;
+    pendingPitch = null;
+    if (!pending) return;
+    if (lastSavedPitch && lastSavedPitch.itemId === pending.itemId && lastSavedPitch.value === pending.value) return;
 
     try {
-        const response = await fetch(`/api/queue/${currentQueueItemToEdit.id}`, {
+        const response = await fetch(`/api/queue/${pending.itemId}`, {
             method: 'PATCH',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                pitch_semitones: pitchSemitones,
-                user_id: userId
-            })
+            body: JSON.stringify({ pitch_semitones: pending.value, user_id: userId })
         });
-
         if (response.ok) {
-            cancelEditQueueItem();
+            lastSavedPitch = pending;
             loadQueue();
         } else {
-            const error = await response.json();
-            alert('Error: ' + error.detail);
+            const error = await response.json().catch(() => ({}));
+            showToast('Could not change pitch: ' + (error.detail || 'unknown error'), {error: true});
+            revertPitchDisplay(pending.itemId);
         }
     } catch (e) {
-        alert('Error updating pitch');
+        showToast('Could not change pitch', {error: true});
+        revertPitchDisplay(pending.itemId);
     }
+}
+
+// Put the dialog back to the last value the server accepted, if still open.
+function revertPitchDisplay(itemId) {
+    if (!currentQueueItemToEdit || currentQueueItemToEdit.id !== itemId) return;
+    const value = (lastSavedPitch && lastSavedPitch.itemId === itemId)
+        ? lastSavedPitch.value
+        : (currentQueueItemToEdit.pitch_semitones || 0);
+    const input = document.getElementById('edit-queue-item-pitch-input');
+    if (input) input.value = value;
+    updatePitchDisplay('edit-queue-item-pitch-display', value);
+    updatePitchButtons('edit-queue-item', value);
 }
 
 // Jump to song (operator only) - immediately start playing the song at its current queue position
@@ -237,15 +267,32 @@ export function updateReplaceTargetBanner() {
     }
 }
 
+const REMOVE_CONFIRM_MS = 4000;
+let removeArmed = false;
+let removeTimer = null;
+
+function resetRemoveConfirm() {
+    removeArmed = false;
+    clearTimeout(removeTimer);
+    removeTimer = null;
+    const btn = document.getElementById('remove-queue-item-button');
+    if (btn) btn.textContent = 'Remove from Queue';
+}
+
 // Remove from queue (works for song owner or operator)
 export async function removeQueueItem() {
     if (!currentQueueItemToEdit) return;
 
-    // Use extracted song name if available, otherwise title
-    const displayName = (currentQueueItemToEdit.artist && currentQueueItemToEdit.song_name)
-        ? `${currentQueueItemToEdit.song_name} by ${currentQueueItemToEdit.artist}`
-        : currentQueueItemToEdit.title;
-    if (!confirm(`Remove "${displayName}" from queue?`)) return;
+    // Two-step confirm instead of a native confirm(): first tap arms the
+    // button, a second tap within a few seconds removes.
+    const btn = document.getElementById('remove-queue-item-button');
+    if (!removeArmed) {
+        removeArmed = true;
+        if (btn) btn.textContent = 'Tap again to remove';
+        removeTimer = setTimeout(resetRemoveConfirm, REMOVE_CONFIRM_MS);
+        return;
+    }
+    resetRemoveConfirm();
 
     try {
         // Always pass user_id - server allows if operator OR if user owns the song
@@ -255,10 +302,10 @@ export async function removeQueueItem() {
             loadQueue();
         } else {
             const error = await response.json();
-            alert('Error: ' + error.detail);
+            showToast('Could not remove song: ' + (error.detail || 'unknown error'), {error: true});
         }
     } catch (e) {
-        alert('Error removing song');
+        showToast('Could not remove song', {error: true});
     }
 }
 

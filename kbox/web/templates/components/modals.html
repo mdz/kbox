@@ -49,7 +49,7 @@
         <div id="edit-queue-item-owner-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
             <div style="display: flex; flex-direction: column; gap: 10px;">
                 <button onclick="replaceQueueItem()" style="width: 100%;">🔁 Replace Song</button>
-                <button onclick="removeQueueItem()" class="danger" style="width: 100%;">Remove from Queue</button>
+                <button onclick="removeQueueItem()" id="remove-queue-item-button" class="danger" style="width: 100%;">Remove from Queue</button>
             </div>
         </div>
         <!-- Operator-only options -->
@@ -64,8 +64,7 @@
             </div>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button onclick="saveQueueItemPitch()" style="flex: 1;">Save</button>
-            <button onclick="cancelEditQueueItem()" style="flex: 1; background: #444;">Cancel</button>
+            <button onclick="cancelEditQueueItem()" style="flex: 1;">Done</button>
         </div>
     </div>
 </div>
