@@ -15,6 +15,32 @@ from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Libraries preloaded by absolute path on macOS so that typelibs, which
+# dlopen by bare leaf name, resolve to Homebrew's copies. Leaf names are
+# the ones the typelibs reference (the fully-versioned soname), not the
+# shorter development symlinks beside them.
+#
+# glib's are required -- `import gi` cannot work without them, and the
+# failure without this preload is an opaque assertion inside gi/overrides.
+GLIB_PRELOAD_LIBRARIES = (
+    "libglib-2.0.0.dylib",
+    "libgobject-2.0.0.dylib",
+    "libgio-2.0.0.dylib",
+    "libgirepository-2.0.0.dylib",
+)
+
+# GStreamer's are best-effort: which exist varies with the formula, and a
+# missing one shows up later as a specific element-not-found error.
+GSTREAMER_PRELOAD_LIBRARIES = (
+    "libgstreamer-1.0.0.dylib",
+    "libgstbase-1.0.0.dylib",
+    "libgstaudio-1.0.0.dylib",
+    "libgstvideo-1.0.0.dylib",
+    "libgstapp-1.0.0.dylib",
+    "libgstpbutils-1.0.0.dylib",
+    "libgsttag-1.0.0.dylib",
+)
+
 
 def list_audio_output_devices() -> List[dict]:
     """
@@ -119,8 +145,24 @@ def configure_macos_gstreamer_env() -> None:
 
     Must run before anything imports `gi` or loads libgstreamer -- both this
     module's and streaming.py's GStreamer imports are lazy, so calling this
-    early in the process (e.g. the top of main(), or test module import) is
+    early in the process (e.g. the top of main(), or test/conftest.py) is
     enough.
+
+    How the pinning actually works, because the obvious approach does not:
+    GObject typelibs reference their shared libraries by bare leaf name
+    (`libgobject-2.0.0.dylib`), leaving dyld to find them. Setting
+    DYLD_LIBRARY_PATH from inside the process cannot help with that --
+    dyld reads the DYLD_* variables once, at process launch, so an
+    os.environ assignment here has no effect on any later dlopen. The
+    environment variable is still set, because child processes
+    (gst-plugin-scanner, gst-inspect) are launched fresh and do read it,
+    but it does nothing for this process.
+
+    What works in-process is loading the libraries from Homebrew by
+    absolute path, up front, with RTLD_GLOBAL. A bare-name dlopen then
+    resolves against the already-loaded image instead of searching, so the
+    typelibs get Homebrew's copy without dyld ever consulting a search
+    path. That is what _preload_homebrew_libraries() does.
 
     No-op on non-macOS platforms, or if the environment already looks
     configured (e.g. a previous call in this process).
@@ -159,9 +201,19 @@ def configure_macos_gstreamer_env() -> None:
         existing = os.environ.get(name)
         os.environ[name] = f"{value}:{existing}" if existing else value
 
-    # Libraries and GObject introspection data, from Homebrew.
+    # Set for child processes only (gst-plugin-scanner and friends, which
+    # dyld launches fresh). This does NOT affect dlopen in this process --
+    # see the docstring. _preload_homebrew_libraries() below is what pins
+    # the libraries here.
     prepend("DYLD_LIBRARY_PATH", f"{glib_prefix}/lib:{gstreamer_prefix}/lib")
-    prepend("GI_TYPELIB_PATH", f"{gstreamer_prefix}/share/gir-1.0")
+
+    # Compiled typelibs live in lib/girepository-1.0. share/gir-1.0 holds
+    # the .gir XML sources, which girepository cannot load -- pointing at
+    # it silently contributes nothing.
+    prepend(
+        "GI_TYPELIB_PATH",
+        f"{glib_prefix}/lib/girepository-1.0:{gstreamer_prefix}/lib/girepository-1.0",
+    )
 
     # Plugins. GST_PLUGIN_SYSTEM_PATH_1_0 is set rather than appended, so a
     # GStreamer.framework path already in the environment cannot pull
@@ -176,6 +228,107 @@ def configure_macos_gstreamer_env() -> None:
     os.environ["GST_REGISTRY_FORK"] = "no"
 
     os.environ["GST_DEBUG_NO_COLOR"] = "1"
+
+    _preload_homebrew_libraries(glib_prefix, gstreamer_prefix)
+    _verify_pygobject_usable()
+
+
+def _verify_pygobject_usable() -> None:
+    """
+    Import gi now, and turn a failure into a message that names the cause.
+
+    The environment is configured at this point, so if PyGObject still
+    cannot load, the remaining variable is usually the interpreter the venv
+    was built on. Measured on one machine, with byte-identical PyGObject
+    wheels and identical environments:
+
+        Homebrew python@3.14                  -> works
+        uv-managed standalone CPython 3.14.5  -> fails
+
+    PyGObject is a C extension that has to pair with Homebrew's glib, and
+    uv's managed interpreters are python-build-standalone builds, which do
+    not. uv prefers its own managed interpreter by default, so whether a
+    checkout works comes down to which interpreter `uv venv` happened to
+    pick -- and the untreated failure is dozens of `assert g_type !=
+    TYPE_NONE` assertions from inside gi/overrides, which name nothing
+    useful and read like a broken GStreamer install.
+
+    This check costs one `import gi` at startup to make that one line of
+    output instead.
+
+    Raises:
+        RuntimeError: if `import gi` fails after the environment is set up.
+    """
+    try:
+        import gi
+
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst  # noqa: F401
+    except Exception as e:
+        uv_managed = "uv/python" in sys.base_prefix or "uv\\python" in sys.base_prefix
+        hint = (
+            (
+                "This interpreter is uv-managed "
+                f"({sys.base_prefix}), which is the known cause: "
+                "python-build-standalone builds cannot load Homebrew's "
+                "PyGObject. Rebuild the venv on Homebrew's Python:\n"
+                "    brew install python@3.14\n"
+                "    uv venv --python $(brew --prefix python@3.14)/bin/python3.14\n"
+                "    uv sync --group dev"
+            )
+            if uv_managed
+            else (
+                "Check that Homebrew's glib, gobject-introspection and "
+                "gstreamer are installed, and that this venv's interpreter "
+                "can load Homebrew C extensions. See "
+                "docs/development/macos-setup.md"
+            )
+        )
+        raise RuntimeError(
+            f"GStreamer/PyGObject is configured for Homebrew but `import gi` "
+            f"still failed ({type(e).__name__}: {e}). {hint}"
+        ) from e
+
+
+def _preload_homebrew_libraries(glib_prefix: str, gstreamer_prefix: str) -> None:
+    """
+    Load Homebrew's glib/GStreamer libraries by absolute path, RTLD_GLOBAL.
+
+    Typelibs dlopen their libraries by bare leaf name. Once an image is
+    loaded, a bare-name dlopen resolves to it rather than searching, so
+    doing this before `import gi` is what actually pins the process to
+    Homebrew's copies -- DYLD_LIBRARY_PATH cannot, because dyld read it at
+    launch (see configure_macos_gstreamer_env).
+
+    The glib libraries are required: without them `import gi` fails with an
+    assertion from gi/overrides rather than anything that names the real
+    problem, which is a bad trade for anyone debugging it later. The
+    GStreamer ones are best-effort -- which of them exist varies with the
+    Homebrew formula, and a missing optional library surfaces later as a
+    specific "element not found" error, which is diagnosable on its own.
+
+    Raises:
+        RuntimeError: if a required glib library is missing or won't load.
+    """
+    required = [f"{glib_prefix}/lib/{name}" for name in GLIB_PRELOAD_LIBRARIES]
+    optional = [f"{gstreamer_prefix}/lib/{name}" for name in GSTREAMER_PRELOAD_LIBRARIES]
+
+    for path in required:
+        try:
+            ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+        except OSError as e:
+            raise RuntimeError(
+                f"Homebrew's glib is required on macOS but {path} could not "
+                f"be loaded ({e}). Run: brew install glib gobject-introspection"
+            ) from e
+
+    for path in optional:
+        try:
+            ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+        except OSError as e:
+            # Not fatal: see the docstring. Logged rather than swallowed so
+            # it is visible if a later failure turns out to trace back here.
+            logger.debug("Optional GStreamer library not preloaded: %s (%s)", path, e)
 
 
 def find_gstreamer_library() -> Optional[str]:

@@ -79,14 +79,17 @@ passed ruff and mypy. Re-running them to confirm is wasted work.
 only one where the GStreamer pipeline actually exists on the hardware kbox
 targets.
 
-A full local run on a macOS dev machine does pass, though — see
-[docs/development/macos-setup.md](docs/development/macos-setup.md) for the
-setup that gets there (Homebrew GStreamer plus a one-time
-`native/gst-signalsmith-pitch/build.sh`). It is still not the gate: it uses
-fakesinks and mocks, so it verifies logic rather than the real pipeline. If
-a large block of GStreamer tests fails locally with PyGObject typelib
-errors, that is the macOS environment setup, not your change — that doc has
-the diagnosis.
+A full local run on a macOS dev machine can pass, but only with the setup
+in [docs/development/macos-setup.md](docs/development/macos-setup.md) —
+Homebrew GStreamer, a venv built on **Homebrew's** Python rather than uv's
+managed interpreter, and a one-time
+`native/gst-signalsmith-pitch/build.sh`. Without the right interpreter a
+large block of GStreamer tests fails with PyGObject typelib errors that say
+nothing about your change; that is the environment, not your edit, and that
+doc has the diagnosis.
+
+Even when green it is not the gate: it uses fakesinks and mocks, so it
+verifies logic rather than the real pipeline.
 
 Targeted local runs are still fine while iterating on something specific —
 `uv run pytest test/test_queue.py -k reorder` to watch one test, or to read a
