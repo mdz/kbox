@@ -833,7 +833,8 @@
             top: 0;
             left: 0;
             right: 0;
-            height: 44px;
+            min-height: 44px;
+            box-sizing: border-box;
             z-index: 1100;
             display: flex;
             align-items: center;
@@ -841,6 +842,9 @@
             padding: 0 12px;
             font-weight: 600;
             font-size: 15px;
+            line-height: 1.25;
+            padding-top: 4px;
+            padding-bottom: 4px;
             text-align: center;
             background: #2a3a55;
             color: #fff;
@@ -849,8 +853,9 @@
         .turn-bar[hidden] { display: none; }
         .turn-bar.turn-next { background: #c77d00; font-size: 17px; }
         .turn-bar.turn-playing { background: #1f9d4c; font-size: 17px; }
+        .turn-bar.turn-problem { background: #c0392b; }
         .turn-bar.turn-idle-first { background: #6b4fa0; }
-        body.has-turn-bar { --turn-bar-h: 44px; padding-top: 54px; }
+        body.has-turn-bar { padding-top: calc(var(--turn-bar-h, 44px) + 10px); }
 
         .main-content {
             transition: opacity 0.3s ease;
