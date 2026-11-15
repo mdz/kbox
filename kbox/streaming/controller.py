@@ -76,9 +76,15 @@ class StreamingController:
         # somewhere to live even when GStreamer is missing entirely.
         self.overlays = OverlayController(None, None, config_manager)
 
-        # Feeds still images into the display bridge while an interstitial is
-        # showing. Mutually exclusive with playbin: only one may feed at once.
+        # Feeds a still picture into the display bridge: the interstitial
+        # image, or the last frame while paused. Mutually exclusive with
+        # playbin feeding it: only one may feed at once.
         self.still_image = StillImageFeeder(self.DISPLAY_CHANNEL, self.INTERSTITIAL_FRAMERATE)
+
+        # Most recent frame playbin sent across the bridge, as a Gst.Sample
+        # (buffer + caps), for pause() to hold on screen. Written from the
+        # streaming thread by _on_video_buffer; a plain attribute swap.
+        self._last_video_sample: Any = None
 
         # Poll threads delivering bus messages, one per bus (set by
         # _create_persistent_pipeline)
@@ -209,7 +215,7 @@ class StreamingController:
 
         # Create and attach custom video sink bin
         self.video_bin = elements.create_video_sink_bin(
-            self.DISPLAY_CHANNEL, self._on_source_caps_event
+            self.DISPLAY_CHANNEL, self._on_source_caps_event, self._on_video_buffer
         )
         self.playbin.set_property("video-sink", self.video_bin)
 
@@ -290,6 +296,21 @@ class StreamingController:
 
         return Gst.PadProbeReturn.OK
 
+    def _on_video_buffer(self, pad, info):
+        """
+        Remember the latest frame crossing into the display bridge, so pause()
+        can keep it on screen. A Gst.Sample only takes references to the
+        buffer and caps, so this costs next to nothing per frame.
+        """
+        Gst = _get_gst()
+
+        buf = info.get_buffer()
+        caps = pad.get_current_caps()
+        if buf is not None and caps is not None:
+            self._last_video_sample = Gst.Sample.new(buf, caps, None, None)
+
+        return Gst.PadProbeReturn.OK
+
     # =========================================================================
     # Playback Control
     # =========================================================================
@@ -341,6 +362,10 @@ class StreamingController:
             # renegotiation" trap in docs/development/gstreamer-pipeline.md.
             self.playbin.set_state(Gst.State.READY)
             self.logger.debug("load_file: after READY")
+
+            # Forget the previous song's last frame, so a pause before the new
+            # song shows anything cannot put the old one back on screen.
+            self._last_video_sample = None
 
             # Unmute audio (may have been muted for interstitial)
             self.playbin.set_property("mute", False)
@@ -400,6 +425,10 @@ class StreamingController:
             self.playbin.set_state(Gst.State.READY)
             self.logger.debug("stop_playback: after READY")
 
+            # Stopping while paused: drop the held frame along with the song.
+            self.still_image.stop()
+            self._last_video_sample = None
+
             self.state = "idle"
             self.current_file = None
             self.logger.info("Returned to idle state")
@@ -427,6 +456,16 @@ class StreamingController:
                     "Pause state change: ret=%s, state=%s, pending=%s", ret, state, pending
                 )
 
+            # A paused playbin stops feeding the display bridge, which then
+            # runs dry and shows black -- hold the last frame up ourselves.
+            # With no frame yet (paused before the song drew one) there is
+            # nothing to hold, and the screen goes black as it always did.
+            sample = self._last_video_sample
+            if sample is None:
+                self.logger.debug("No frame to hold on screen while paused")
+            elif not self.still_image.start_frame(sample):
+                self.logger.warning("Could not hold the last frame on screen while paused")
+
             self.state = "paused"
             self.logger.info("Playback paused")
 
@@ -439,6 +478,10 @@ class StreamingController:
             if self.state != "paused":
                 self.logger.warning("Cannot resume: not currently paused")
                 raise RuntimeError("Cannot resume: not currently paused")
+
+            # Stop feeding the held frame before playbin feeds real ones, or
+            # both would push to the bridge at once.
+            self.still_image.stop()
 
             Gst = _get_gst()
             ret = self.playbin.set_state(Gst.State.PLAYING)
@@ -659,8 +702,15 @@ class StreamingController:
                 self.logger.warning("Cannot seek: no active playback")
                 return False
 
+            paused = self.state == "paused"
+            if paused:
+                # A flush seek while paused prerolls a frame at the new
+                # position into the bridge. Stop holding the old one first,
+                # so the two never feed the bridge at once.
+                self.still_image.stop()
+
+            Gst = _get_gst()
             try:
-                Gst = _get_gst()
                 position_ns = position_seconds * Gst.SECOND
                 success = self.playbin.seek_simple(
                     Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
@@ -678,6 +728,14 @@ class StreamingController:
             except Exception as e:
                 self.logger.error("Error seeking: %s", e, exc_info=True)
                 return False
+            finally:
+                if paused:
+                    # Wait for the preroll, whose frame _on_video_buffer has
+                    # then cached, and hold that one up instead.
+                    self.playbin.get_state(5 * Gst.SECOND)
+                    sample = self._last_video_sample
+                    if sample is not None and not self.still_image.start_frame(sample):
+                        self.logger.warning("Could not hold the frame on screen after seeking")
 
     # =========================================================================
     # Overlay Control

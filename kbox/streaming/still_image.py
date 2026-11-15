@@ -1,5 +1,6 @@
 """
-Feeds a still image into the display bridge while an interstitial is showing.
+Feeds a still picture into the display bridge: an interstitial image, or the
+last video frame while playback is paused.
 
 Named still_image rather than interstitials because kbox/interstitials.py
 already exists -- that module generates the PNGs this one puts on screen.
@@ -13,10 +14,12 @@ from .gst import _get_gst
 
 class StillImageFeeder:
     """
-    Owns the pipeline that pushes one still image at the display bridge.
+    Owns the pipeline that pushes one still picture at the display bridge.
 
-    Mutually exclusive with playbin: only one of them may feed the bridge at
-    a time, which is the caller's job to arrange.
+    Mutually exclusive with playbin feeding the bridge: only one of them may
+    feed it at a time, which is the caller's job to arrange. A paused playbin
+    does not count as feeding -- it pushes one preroll frame and goes quiet,
+    which is why start_frame exists.
     """
 
     def __init__(self, channel: str, framerate: int):
@@ -84,8 +87,6 @@ class StillImageFeeder:
         if any step failed. Whether the caller is "showing an interstitial" is
         the caller's state, not this object's.
         """
-        Gst = _get_gst()
-
         self.stop()
 
         try:
@@ -94,22 +95,97 @@ class StillImageFeeder:
             self.logger.error("Failed to build interstitial pipeline: %s", e, exc_info=True)
             return False
 
-        ret = self.pipeline.set_state(Gst.State.PLAYING)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            self.logger.error("Failed to start interstitial playback")
+        return self._run()
+
+    def create_frame_pipeline(self, caps):
+        """
+        Build a pipeline that repeats one already-decoded frame into the
+        display bridge, the same way create_pipeline repeats an image file.
+
+        start_frame pushes the frame into the appsrc once the pipeline has
+        started: an appsrc refuses buffers before then.
+        """
+        Gst = _get_gst()
+
+        pipeline = Gst.parse_launch(
+            "appsrc name=asrc format=time ! imagefreeze "
+            f"! video/x-raw,framerate={self.framerate}/1 "
+            "! videoconvert ! intervideosink name=isink"
+        )
+        pipeline.get_by_name("asrc").set_property("caps", caps)
+        sink = pipeline.get_by_name("isink")
+        sink.set_property("channel", self.channel)
+        sink.set_property("sync", True)
+
+        return pipeline
+
+    def start_frame(self, sample) -> bool:
+        """
+        Build and start feeding the frame in `sample` (a Gst.Sample: buffer
+        plus the caps it was negotiated with), replacing anything running.
+
+        For holding the picture while playback is paused. playbin pushes one
+        preroll frame into the bridge across the PAUSED transition and then
+        stops, and intervideosrc serves a frame only a couple of times before
+        falling back to black (its "timeout" property does not hold one --
+        see docs/development/gstreamer-pipeline.md). Without this the screen
+        blanks to black behind the overlays a moment into every pause.
+
+        Returns True once the pipeline is PLAYING, False (having cleaned up)
+        if any step failed.
+        """
+        self.stop()
+
+        try:
+            self.pipeline = self.create_frame_pipeline(sample.get_caps())
+            # Pushed as-is, carrying the song's timestamp: imagefreeze
+            # timestamps every frame it emits itself, from the segment appsrc
+            # opens at 0, so the input timestamp never reaches the bridge.
+            # Do not try to reset it -- with the Debian/Raspberry Pi
+            # gst-python bindings even a fresh Buffer.copy() is not
+            # writable, and setting pts raises.
+            buf = sample.get_buffer()
+        except Exception as e:
+            self.logger.error("Failed to build pause frame pipeline: %s", e, exc_info=True)
             self.stop()
             return False
 
+        def push_frame():
+            appsrc = self.pipeline.get_by_name("asrc")
+            appsrc.emit("push-buffer", buf)
+            appsrc.emit("end-of-stream")
+
+        return self._run(after_start=push_frame)
+
+    def _run(self, after_start=None) -> bool:
+        """
+        Set the built pipeline PLAYING and wait for it to get there.
+
+        `after_start` runs between requesting the state change and waiting
+        on it: an appsrc-fed pipeline cannot preroll until it has data, and
+        cannot take data until it has started.
+        """
+        Gst = _get_gst()
+
+        ret = self.pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            self.logger.error("Failed to start still image pipeline")
+            self.stop()
+            return False
+
+        if after_start is not None:
+            after_start()
+
         ret, state, pending = self.pipeline.get_state(5 * Gst.SECOND)
         if ret == Gst.StateChangeReturn.FAILURE:
-            self.logger.error("Interstitial failed to reach PLAYING state")
+            self.logger.error("Still image pipeline failed to reach PLAYING state")
             self.stop()
             return False
 
         return True
 
     def stop(self):
-        """Tear down the interstitial pipeline if one is running."""
+        """Tear down the still image pipeline if one is running."""
         if not self.pipeline:
             return
 
@@ -118,6 +194,6 @@ class StillImageFeeder:
             self.pipeline.set_state(Gst.State.NULL)
             self.pipeline.get_state(5 * Gst.SECOND)
         except Exception as e:
-            self.logger.warning("Error stopping interstitial pipeline: %s", e)
+            self.logger.warning("Error stopping still image pipeline: %s", e)
         finally:
             self.pipeline = None
