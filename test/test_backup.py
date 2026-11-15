@@ -43,19 +43,19 @@ def test_secret_keys_cover_known_secrets():
     )
 
 
-def test_snapshot_scrubs_secrets_by_default(db_path, tmp_path):
+def test_snapshot_keeps_secrets_by_default(db_path, tmp_path):
     snap = create_snapshot(db_path, tmp_path / "backups")
     assert snap is not None
+    assert _config_keys(snap) == {"access_token", "llm_api_key", "web_port"}
+
+
+def test_snapshot_can_scrub_secrets(db_path, tmp_path):
+    snap = create_snapshot(db_path, tmp_path / "backups", scrub_secrets=True)
     assert _config_keys(snap) == {"web_port"}
     assert b"tok-secret" not in snap.read_bytes()
     assert b"key-secret" not in snap.read_bytes()
     # The live database is untouched.
     assert "access_token" in _config_keys(db_path)
-
-
-def test_snapshot_can_include_secrets(db_path, tmp_path):
-    snap = create_snapshot(db_path, tmp_path / "backups", include_secrets=True)
-    assert {"access_token", "llm_api_key"} <= _config_keys(snap)
 
 
 def test_snapshot_is_private(db_path, tmp_path):

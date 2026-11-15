@@ -6,12 +6,14 @@ online backup API so it is safe while the app is running. One is taken just
 before the queue is cleared (the ritual that ends a party), so each party
 leaves a point-in-time copy that is useful for debugging and recovery.
 
-Snapshots are written to ``<app data dir>/backups/``. By default the
-secret config rows (guest access token, session secret, API keys) are
-removed from the copy, so a snapshot can be stored off the device without
-carrying credentials. The app regenerates the token and session secret on
-next start; API keys must be re-entered after a restore. Snapshots still
-contain guest first names and play history, so keep them private.
+Snapshots are written to ``<app data dir>/backups/``. They are complete
+copies, so restoring one gives back a working install. That means they
+contain the guest access token, session secret and API keys (LLM, YouTube)
+as well as guest first names and play history: keep them private, and store
+them off-device only somewhere private. For a copy to share (say for
+debugging), ``--scrub-secrets`` removes the secret config rows; the app then
+regenerates the token and session secret on start, and API keys must be
+re-entered.
 
 Command line (run inside the container for a Docker install)::
 
@@ -78,7 +80,7 @@ def _same_content(a: Path, b: Path) -> bool:
 def create_snapshot(
     db_path: Path,
     backup_dir: Path,
-    include_secrets: bool = False,
+    scrub_secrets: bool = False,
     keep: int = DEFAULT_KEEP,
 ) -> Optional[Path]:
     """Write a snapshot of db_path into backup_dir and prune old ones.
@@ -97,7 +99,7 @@ def create_snapshot(
         dst = sqlite3.connect(tmp)
         try:
             src.backup(dst)
-            if not include_secrets:
+            if scrub_secrets:
                 secrets_keys = sorted(secret_config_keys())
                 placeholders = ",".join("?" * len(secrets_keys))
                 dst.execute(f"DELETE FROM config WHERE key IN ({placeholders})", secrets_keys)
@@ -164,7 +166,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     create = sub.add_parser("create", help="take a snapshot now")
     create.add_argument(
-        "--include-secrets", action="store_true", help="keep access token, session secret, API keys"
+        "--scrub-secrets",
+        action="store_true",
+        help="remove access token, session secret and API keys (for sharing; not restorable as-is)",
     )
     sub.add_parser("list", help="list snapshots")
     restore = sub.add_parser("restore", help="replace the database with a snapshot (app stopped)")
@@ -173,7 +177,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     backup_dir = args.backup_dir or args.db.parent / "backups"
     if args.command == "create":
-        path = create_snapshot(args.db, backup_dir, include_secrets=args.include_secrets)
+        path = create_snapshot(args.db, backup_dir, scrub_secrets=args.scrub_secrets)
         print(path if path else "Database unchanged since the last snapshot; nothing written.")
     elif args.command == "list":
         for p in list_snapshots(backup_dir):

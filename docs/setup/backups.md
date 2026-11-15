@@ -14,11 +14,10 @@ are taken with SQLite's online backup, so they are safe while kbox is running.
 - Files are named `kbox-YYYYMMDD-HHMMSS.db` and are readable only by their owner.
 - A failed snapshot is logged and never stops the queue from clearing.
 
-**Secrets are left out.** The guest access token, session secret and API
-keys (LLM, YouTube) are removed from snapshots, so a copy is safe to store
-elsewhere. After a restore, kbox generates a new access token and session
-secret itself; re-enter your API keys under Settings. Snapshots still contain
-guest first names and play history, so keep them somewhere private.
+**Snapshots are complete and sensitive.** A restore gives back a working
+install, so snapshots include the guest access token, session secret and API
+keys (LLM, YouTube), plus guest first names and play history. Keep them
+private: only copy them to storage that only you can read.
 
 ## Copy snapshots off the device
 
@@ -38,7 +37,7 @@ checkout with `uv run`:
 
 ```bash
 python -m kbox.backup create                    # snapshot now
-python -m kbox.backup create --include-secrets  # keep tokens/API keys (guard the file!)
+python -m kbox.backup create --scrub-secrets    # drop tokens/API keys, for sharing
 python -m kbox.backup list
 ```
 
@@ -54,3 +53,6 @@ docker compose start kbox
 To restore a snapshot you copied back from another machine, first copy it
 into the volume (for example with `docker compose cp` while the container
 exists) and pass that path.
+
+A scrubbed snapshot restores too, but kbox generates a new access token and
+session secret, and you must re-enter your API keys under Settings.
