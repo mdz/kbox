@@ -217,14 +217,7 @@ class PlaybackController:
     # =========================================================================
 
     def set_cursor(self, song_id: int) -> None:
-        """
-        Set the queue cursor to a song.
-
-        Called by _play_song() whenever a song starts playing.
-
-        Args:
-            song_id: ID of the song now playing
-        """
+        """Set the queue cursor to the song now playing. See QueueCursor.set."""
         self._cursor.set(song_id)
 
     def get_cursor(self) -> Optional[int]:
@@ -275,13 +268,7 @@ class PlaybackController:
     # =========================================================================
 
     def show_notification(self, text: str, duration_seconds: float = 5.0):
-        """
-        Show a transient notification that auto-hides and restores the base overlay.
-
-        Args:
-            text: Notification text to display
-            duration_seconds: How long to show the notification (default 5s)
-        """
+        """Show a transient notification. See OverlayCoordinator.show_notification."""
         self._overlay.show_notification(text, duration_seconds)
 
     def _on_monitor_tick(self):
@@ -958,53 +945,29 @@ class PlaybackController:
             return self._navigate(offset=-1, record_history=False)
 
     def move_down(self, item_id: int) -> MoveResult:
-        """
-        Move a song down one position in the queue.
+        """Move a song down one position, under the playback lock.
 
-        Does not affect the currently playing song.
-
-        Args:
-            item_id: ID of the queue item to move down
-
-        Returns:
-            MoveResult describing the outcome and the positions involved
+        Does not affect the currently playing song. See QueueManager.move_down.
         """
         with self._locked():
             return self.queue_manager.move_down(item_id)
 
     def move_up(self, item_id: int) -> MoveResult:
-        """
-        Move a song up one position in the queue.
+        """Move a song up one position, under the playback lock.
 
-        Does not affect the currently playing song.
-
-        Args:
-            item_id: ID of the queue item to move up
-
-        Returns:
-            MoveResult describing the outcome and the positions involved
+        Does not affect the currently playing song. See QueueManager.move_up.
         """
         with self._locked():
             return self.queue_manager.move_up(item_id)
 
     def move_to_next(self, item_id: int) -> bool:
-        """
-        Move a song to play next after the current song.
+        """Move a song to play next, i.e. after the current song.
 
-        Works whether a song is playing or stopped. If there is a current song,
-        moves the selected song to position+1 after it. Otherwise (idle state
-        with no current song), moves to position 1 (front of queue).
-
-        Args:
-            item_id: ID of the queue item to move
-
-        Returns:
-            True if successful, False if item not found
+        Supplies the current song as the reference; with none (idle), the song
+        goes to the front. See QueueManager.move_after.
         """
         with self._locked():
             self.logger.info("Moving song %s to play next", item_id)
-
-            # Check if this is the currently playing song
             is_currently_playing = (
                 self.current_song_id is not None and self.current_song_id == item_id
             )
@@ -1013,28 +976,18 @@ class PlaybackController:
             if new_position is None:
                 return False
 
-            # Note: No need to update current_song_id - the ID doesn't change,
-            # only the position in the database changes
+            # current_song_id needs no update: reordering changes positions, not IDs.
             if is_currently_playing:
                 self.logger.info("Currently playing song moved to position %s", new_position)
 
             return True
 
     def move_to_end(self, item_id: int) -> bool:
-        """
-        Move a song to the end of the queue.
+        """Move a song to the end of the queue, under the playback lock.
 
-        If the song is currently playing, playback continues but the
-        current_song position is updated to reflect its new location.
-
-        Args:
-            item_id: ID of the queue item to move
-
-        Returns:
-            True if successful, False if item not found
+        Playback continues if it is the current song. See QueueManager.move_to_end.
         """
         with self._locked():
-            # Check if this is the currently playing song
             is_currently_playing = (
                 self.current_song_id is not None and self.current_song_id == item_id
             )
@@ -1043,8 +996,7 @@ class PlaybackController:
             if new_position is None:
                 return False
 
-            # Note: No need to update current_song_id - the ID doesn't change,
-            # only the position in the database changes
+            # current_song_id needs no update: reordering changes positions, not IDs.
             if is_currently_playing:
                 self.logger.info("Currently playing song moved to position %s", new_position)
 
