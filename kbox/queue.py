@@ -7,7 +7,7 @@ Handles song queue operations with persistence and content preparation.
 import logging
 import threading
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
@@ -364,6 +364,171 @@ class QueueManager:
     def reorder_song(self, item_id: int, new_position: int) -> bool:
         """Move a song to a new position in the queue."""
         return self.repository.reorder(item_id, new_position)
+
+    # =========================================================================
+    # Relative moves
+    #
+    # These all clamp the target position into range before calling
+    # reorder_song(), because the repository rejects a position outside
+    # 1..max as invalid rather than clamping it itself (see
+    # QueueRepository.reorder). Keeping them here puts that knowledge next to
+    # the method whose contract requires it.
+    # =========================================================================
+
+    def _max_position(self, default: int = 0) -> int:
+        """Highest position currently in the queue, or `default` if empty."""
+        return max((item.position for item in self.repository.get_all()), default=default)
+
+    def move_down(self, item_id: int) -> Dict[str, Any]:
+        """
+        Move a song down one position in the queue.
+
+        Args:
+            item_id: ID of the queue item to move down
+
+        Returns:
+            Dictionary with status information:
+            - status: 'moved_down' or 'already_at_end'
+            - old_position: Original position
+            - new_position: New position
+        """
+        self.logger.info("Moving down song %s", item_id)
+
+        item = self.get_item(item_id)
+        if not item:
+            self.logger.warning("Song %s not found", item_id)
+            return {"status": "not_found"}
+
+        current_position = item.position
+
+        # Calculate new position (down 1, but not past the end)
+        new_position = min(current_position + 1, self._max_position())
+
+        if new_position == current_position:
+            # Already at the end
+            self.logger.info("Song %s already at end of queue", item_id)
+            return {"status": "already_at_end", "position": current_position}
+
+        if not self.reorder_song(item_id, new_position):
+            self.logger.error("Failed to reorder song %s", item_id)
+            return {"status": "error"}
+
+        return {
+            "status": "moved_down",
+            "old_position": current_position,
+            "new_position": new_position,
+        }
+
+    def move_up(self, item_id: int) -> Dict[str, Any]:
+        """
+        Move a song up one position in the queue.
+
+        Args:
+            item_id: ID of the queue item to move up
+
+        Returns:
+            Dictionary with status information:
+            - status: 'moved_up' or 'already_at_start'
+            - old_position: Original position
+            - new_position: New position
+        """
+        self.logger.info("Moving up song %s", item_id)
+
+        item = self.get_item(item_id)
+        if not item:
+            self.logger.warning("Song %s not found", item_id)
+            return {"status": "not_found"}
+
+        current_position = item.position
+
+        # Get min position
+        queue = self.get_queue()
+        min_position = min((q.position for q in queue), default=1)
+
+        # Calculate new position (up 1, but not past the start)
+        new_position = max(current_position - 1, min_position)
+
+        if new_position == current_position:
+            # Already at the start
+            self.logger.info("Song %s already at start of queue", item_id)
+            return {"status": "already_at_start", "position": current_position}
+
+        if not self.reorder_song(item_id, new_position):
+            self.logger.error("Failed to reorder song %s", item_id)
+            return {"status": "error"}
+
+        return {
+            "status": "moved_up",
+            "old_position": current_position,
+            "new_position": new_position,
+        }
+
+    def move_after(self, item_id: int, reference_song_id: Optional[int]) -> Optional[int]:
+        """
+        Move a song to the position just after a reference song.
+
+        The write-side mirror of get_song_at_offset(): the caller supplies the
+        reference song, so this needs to know nothing about playback. With no
+        reference song, the song goes to the front of the queue.
+
+        The reference song's position is queried fresh rather than taken from
+        the caller, because any earlier reorder leaves a cached position
+        stale.
+
+        Args:
+            item_id: ID of the queue item to move
+            reference_song_id: ID of the song to move it after, or None to
+                move it to the front
+
+        Returns:
+            The song's new position, or None if the move could not be made
+        """
+        self.logger.info("Moving song %s after song %s", item_id, reference_song_id)
+
+        if reference_song_id:
+            reference_song = self.get_item(reference_song_id)
+            if not reference_song:
+                self.logger.error("Reference song ID %s not found", reference_song_id)
+                return None
+            target_position = reference_song.position + 1
+
+            # If the reference song is last in the queue, "after" it is simply
+            # the end of the queue - clamp so we don't request a position
+            # past the max (which reorder() would reject).
+            target_position = min(target_position, self._max_position(target_position))
+        else:
+            target_position = 1
+
+        if not self.reorder_song(item_id, target_position):
+            self.logger.error("Failed to move song %s after %s", item_id, reference_song_id)
+            return None
+
+        return target_position
+
+    def move_to_end(self, item_id: int) -> Optional[int]:
+        """
+        Move a song to the end of the queue.
+
+        Args:
+            item_id: ID of the queue item to move
+
+        Returns:
+            The song's new position, or None if the move could not be made
+        """
+        self.logger.info("Moving song %s to end of queue", item_id)
+
+        queue = self.get_queue()
+        if not queue:
+            self.logger.warning("Cannot move to end - queue is empty")
+            return None
+
+        max_position = max((item.position for item in queue), default=0)
+
+        if not self.reorder_song(item_id, max_position):
+            self.logger.error("Failed to move song %s to end", item_id)
+            return None
+
+        return max_position
 
     def get_queue(self) -> List[QueueItem]:
         """Get the entire queue ordered by position."""
