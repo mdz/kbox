@@ -92,19 +92,36 @@ def test_karaoke_duplicates_collapse_to_one_row(mobile_page, init_user, suggest_
     expect(mobile_page.locator(".search-suggestion").nth(1)).to_have_text("bohemian rhapsody piano")
 
 
+def wait_for_final_suggest_response(page, query, action):
+    """Run `action`, then block until the response for exactly `query` arrives.
+
+    The dropdown being visible proves nothing about the last prefix: an
+    earlier prefix's response opens it while the debounced request for the
+    full query has not even been sent yet.
+    """
+    with page.expect_response(
+        lambda r: "/api/search/suggest" in r.url and r.url.endswith(f"q={query}")
+    ):
+        action()
+
+
 def test_repeat_prefixes_are_served_from_cache(mobile_page, init_user, suggest_fetcher):
     """Backtracking over characters already typed shouldn't re-ask Google."""
     suggest_fetcher.suggestions = SUGGESTIONS
     init_user("Alice")
 
-    type_query(mobile_page)
-    expect(mobile_page.locator("#search-suggestions")).to_be_visible()
+    # Settle on the response for the full query, not merely an open dropdown:
+    # the first prefix's response opens it while "bohemian" is still sitting
+    # in the debounce timer, uncached.
+    wait_for_final_suggest_response(mobile_page, "bohemian", lambda: type_query(mobile_page))
     before = len(suggest_fetcher.calls)
-    assert before > 0
+    assert "bohemian" in suggest_fetcher.calls
 
-    # Retype the identical query; every prefix is already cached.
+    # Retype the identical query; every prefix is already cached. Wait for
+    # the final request to be answered so a stray late fetch cannot slip in
+    # after the assertion.
     mobile_page.fill("#search-input", "")
-    type_query(mobile_page)
+    wait_for_final_suggest_response(mobile_page, "bohemian", lambda: type_query(mobile_page))
     expect(mobile_page.locator("#search-suggestions")).to_be_visible()
 
     assert suggest_fetcher.calls[before:] == []

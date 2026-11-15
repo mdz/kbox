@@ -151,3 +151,50 @@ def test_escape_html_inert(mobile_page, live_app):
     )
     # The text content should be the raw payload (visible as literal text, not code)
     assert "<script>" in result["visible_text"]
+
+
+# ---------------------------------------------------------------------------
+# computeTurnStatus (playback.js)
+# ---------------------------------------------------------------------------
+
+_TURN_CASES = [
+    # (status, next_song, my_next_turn, expected_level)
+    ({"current_song": None}, None, None, "none"),
+    ({"current_song": None}, {"user_id": "me"}, None, "idle-first"),
+    ({"current_song": {"user_id": "x"}}, {"user_id": "me"}, None, "next"),
+    ({"current_song": {"user_id": "me"}}, {"user_id": "x"}, None, "playing"),
+    (
+        {"current_song": {"user_id": "x"}},
+        {"user_id": "y"},
+        {"songs_away": 2, "estimated_seconds": 480},
+        "later",
+    ),
+    ({"current_song": {"user_id": "x"}}, {"user_id": "y"}, None, "none"),
+]
+
+
+def test_compute_turn_status_levels(mobile_page, live_app):
+    """computeTurnStatus maps queue state to the right alert level."""
+    mobile_page.goto(live_app)
+    results = mobile_page.evaluate(
+        """async (cases) => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { computeTurnStatus } = await import(new URL('./playback.js', appSrc).href);
+            return cases.map(([s, n, m]) => computeTurnStatus(s, n, m, 'me').level);
+        }""",
+        [list(c[:3]) for c in _TURN_CASES],
+    )
+    assert results == [c[3] for c in _TURN_CASES]
+
+
+def test_compute_turn_status_later_text(mobile_page, live_app):
+    mobile_page.goto(live_app)
+    text = mobile_page.evaluate(
+        """async () => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { computeTurnStatus } = await import(new URL('./playback.js', appSrc).href);
+            return computeTurnStatus({current_song: {user_id: 'x'}}, {user_id: 'y'},
+                {songs_away: 2, estimated_seconds: 480}, 'me').text;
+        }"""
+    )
+    assert text == "🎤 You're up in 2 songs (~8 min)"

@@ -2,7 +2,6 @@
  * Playback control functions for kbox web UI.
  */
 
-import { escapeHtml } from './utils.js';
 import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
@@ -324,55 +323,67 @@ export function renderNowPlaying(statusData) {
     }
 }
 
-// Render Up Next section
-// nextSong and myNextTurn are provided by the backend (single source of truth)
-export function renderUpNext(statusData, nextSong, myNextTurn) {
-    const section = document.getElementById('up-next-section');
-    const content = document.getElementById('up-next-content');
-    if (!section || !content) return;
+// --- Turn alert (sticky status bar, tab title, vibration) ---
 
-    section.style.display = 'block';
+const BASE_TITLE = document.title;
+let lastTurnLevel = 'none';
 
-    const currentSong = statusData.current_song;
+function formatEta(secs) {
+    const mins = Math.max(1, Math.round(secs / 60));
+    return `~${mins} min`;
+}
 
-    // Helper to format time
-    function formatTime(secs) {
-        const m = Math.floor(secs / 60);
-        const s = secs % 60;
-        return `${m}:${s.toString().padStart(2, '0')}`;
+// Pure: decide what the guest should be told about their turn.
+// level: 'none' | 'later' | 'next' | 'playing' | 'idle-first'
+export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId) {
+    const currentSong = statusData && statusData.current_song;
+    if (currentSong && currentSong.user_id === myUserId) {
+        return { level: 'playing', text: "🎤 You're on! Sing it!", title: "🎤 You're singing! – kbox" };
     }
-
-    if (!nextSong) {
-        content.innerHTML = `<span style="font-size: 1.1em; color: #666;">Up Next: No one in queue</span>`;
-        return;
+    if (nextSong && nextSong.user_id === myUserId) {
+        if (!currentSong) {
+            return {
+                level: 'idle-first',
+                text: "🎤 You're first — waiting for the host to start",
+                title: "🎤 You're first – kbox",
+            };
+        }
+        return { level: 'next', text: "🎤 You're next! Head to the mic", title: "🎤 You're next! – kbox" };
     }
-
-    // Calculate time remaining in current song
-    const position = statusData.position_seconds || 0;
-    const currentDuration = currentSong ? (currentSong.duration_seconds || 0) : 0;
-    const currentRemaining = Math.max(0, currentDuration - position);
-
-    const isNextYou = nextSong.user_id === userId;
-    const nameStyle = isNextYou ? 'color: #4aff6e; font-size: 1.2em;' : 'color: #4a9eff;';
-    const youLabel = isNextYou ? '🎤 ' : '';
-
-    // Build main "Up Next" message
-    let html = '';
-    if (!currentSong) {
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : escapeHtml(nextSong.user_name)}</strong></span>`;
-    } else {
-        const timeStr = formatTime(currentRemaining);
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : escapeHtml(nextSong.user_name)}</strong> in ${timeStr}</span>`;
-    }
-
-    // Show when the current user's next song is coming up
-    // (backend only provides this when user is not already the immediate next singer)
     if (myNextTurn) {
-        const timeStr = formatTime(myNextTurn.estimated_seconds);
-        const songsAway = myNextTurn.songs_away;
-        const songsLabel = songsAway === 1 ? '1 song' : `${songsAway} songs`;
-        html += `<br><span style="font-size: 0.95em; color: #4aff6e;">🎤 Your turn in ~${timeStr} (${songsLabel} away)</span>`;
+        const n = myNextTurn.songs_away;
+        const songs = n === 1 ? '1 song' : `${n} songs`;
+        const eta = myNextTurn.estimated_seconds > 0 ? ` (${formatEta(myNextTurn.estimated_seconds)})` : '';
+        return {
+            level: 'later',
+            text: `🎤 You're up in ${songs}${eta}`,
+            title: `🎤 Up in ${n} – kbox`,
+        };
     }
+    return { level: 'none', text: '', title: BASE_TITLE };
+}
 
-    content.innerHTML = html;
+function applyTurnStatus(status) {
+    const bar = document.getElementById('turn-bar');
+    if (bar) {
+        bar.textContent = status.text;
+        bar.className = `turn-bar turn-${status.level}`;
+        bar.hidden = status.level === 'none';
+    }
+    document.body.classList.toggle('has-turn-bar', status.level !== 'none');
+    document.title = status.title;
+
+    // Vibrate once on the transition into being the immediate next singer
+    if (status.level === 'next' && lastTurnLevel !== 'next' && typeof navigator.vibrate === 'function') {
+        try { navigator.vibrate([200, 100, 200]); } catch (e) { /* ignore */ }
+    }
+    lastTurnLevel = status.level;
+}
+
+// Update the turn-alert bar and tab title.
+// nextSong and myNextTurn are provided by the backend (single source of truth).
+// (This replaced the mid-page "Up Next" box: the display and the queue list
+// already show who is singing next.)
+export function renderUpNext(statusData, nextSong, myNextTurn) {
+    applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId));
 }
