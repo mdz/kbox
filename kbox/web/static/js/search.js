@@ -119,6 +119,11 @@ export async function search() {
         return;
     }
 
+    // Drop focus so mobile browsers put the on-screen keyboard away. iOS
+    // Safari leaves it up after a search otherwise, covering the results
+    // (#85).
+    document.getElementById('search-input').blur();
+
     const resultsDiv = document.getElementById('search-results');
     resultsDiv.innerHTML = 'Searching...';
 
