@@ -153,11 +153,11 @@ class QueueManager:
         # Mark PREPARING synchronously, before handing off to video_library,
         # so the next poll (as little as ~2s away) sees this item as already
         # in flight rather than still PENDING. video_library.request() only
-        # flips the status via the "downloading" callback once its background
-        # thread actually starts running, which can lag behind a poll cycle
-        # when the download-concurrency semaphore or the provider itself is
-        # slow — without this, each lagging poll spawns another competing
-        # download thread for the same video.
+        # flips the status via the "downloading" callback once its
+        # single-worker download executor actually picks the job up, which can
+        # lag behind a poll cycle while an earlier download is still running
+        # — without this, each lagging poll queues another competing download
+        # for the same video.
         self._prep_started_at[item_id] = datetime.now()
         self.update_content_status(item_id, self.STATUS_PREPARING)
 

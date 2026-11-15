@@ -7,6 +7,7 @@ Tests the VideoLibrary facade that manages video sources and storage.
 import os
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -357,26 +358,144 @@ class TestAvailability:
         callback.assert_called_once_with("ready", str(video_file), None)
 
     def test_request_starts_preparation_when_not_cached(self, config_manager, temp_storage_dir):
-        """request should start content preparation when video not cached."""
+        """request should hand the download to the provider and report its progress."""
         library = VideoLibrary(config_manager)
-
-        fake_source = FakeVideoSource("fake")
-        library.register_source(fake_source)
-
+        library.register_source(FakeVideoSource("fake"))
         fake_provider = FakeVideoProvider()
         library.set_provider(fake_provider)
 
-        callback = Mock()
+        done = threading.Event()
+        statuses: List[tuple] = []
+
+        def callback(status, path, error):
+            statuses.append((status, path, error))
+            if status in ("ready", "error"):
+                done.set()
+
         result = library.request("fake:newvideo", callback=callback)
 
         assert result is None
+        assert done.wait(timeout=5)
+        assert fake_provider.provide_calls == [
+            ("newvideo", Path(temp_storage_dir) / "fake" / "newvideo")
+        ]
+        expected_path = str(Path(temp_storage_dir) / "fake" / "newvideo" / "video.mp4")
+        assert statuses == [
+            ("downloading", None, None),
+            ("ready", expected_path, None),
+        ]
+        library.shutdown()
 
-        import time
+    def test_provider_failure_reported_via_callback(self, config_manager):
+        """A provider exception should reach the callback, not vanish into a Future."""
+        library = VideoLibrary(config_manager)
+        fake_provider = FakeVideoProvider()
+        fake_provider.should_succeed = False
+        callback = Mock()
 
-        time.sleep(0.2)
+        library._provide(fake_provider, "fake:bad", "bad", Path("/unused"), callback)
 
-        assert len(fake_provider.provide_calls) == 1
-        assert fake_provider.provide_calls[0][0] == "newvideo"
+        assert callback.call_args_list == [
+            (("downloading", None, None),),
+            (("error", None, "Content preparation failed"),),
+        ]
+
+    def test_request_without_provider_reports_error(self, video_library):
+        """With no provider, request should report an error and not queue anything."""
+        callback = Mock()
+
+        assert video_library.request("youtube:none", callback=callback) is None
+        callback.assert_called_once_with("error", None, "No video provider configured")
+
+    def test_downloads_run_one_at_a_time(self, config_manager):
+        """A second request must not start downloading until the first finishes."""
+        library = VideoLibrary(config_manager)
+        first_started = threading.Event()
+        release_first = threading.Event()
+        second_done = threading.Event()
+        events: List[str] = []
+        lock = threading.Lock()
+
+        class BlockingProvider(VideoProvider):
+            def provide(self, video_id: str, output_dir: Path) -> Path:
+                with lock:
+                    events.append(f"provide:{video_id}:start")
+                if video_id == "first":
+                    first_started.set()
+                    assert release_first.wait(timeout=5)
+                with lock:
+                    events.append(f"provide:{video_id}:end")
+                return output_dir / "video.mp4"
+
+        library.set_provider(BlockingProvider())
+
+        def make_callback(name):
+            def callback(status, path, error):
+                with lock:
+                    events.append(f"{name}:{status}")
+                if name == "second" and status in ("ready", "error"):
+                    second_done.set()
+
+            return callback
+
+        library.request("fake:first", callback=make_callback("first"))
+        assert first_started.wait(timeout=5)
+        library.request("fake:second", callback=make_callback("second"))
+
+        # The second job is queued behind the first: it has not even reported
+        # "downloading" yet. Its turn only comes once the worker is free.
+        with lock:
+            assert not any("second" in e for e in events)
+        release_first.set()
+        assert second_done.wait(timeout=5)
+
+        assert events == [
+            "first:downloading",
+            "provide:first:start",
+            "provide:first:end",
+            "first:ready",
+            "second:downloading",
+            "provide:second:start",
+            "provide:second:end",
+            "second:ready",
+        ]
+        library.shutdown()
+
+    def test_shutdown_cancels_queued_downloads(self, config_manager):
+        """shutdown drops downloads still waiting, and refuses new ones."""
+        library = VideoLibrary(config_manager)
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingProvider(VideoProvider):
+            def __init__(self):
+                self.calls: List[str] = []
+
+            def provide(self, video_id: str, output_dir: Path) -> Path:
+                self.calls.append(video_id)
+                started.set()
+                assert release.wait(timeout=5)
+                return output_dir / "video.mp4"
+
+        provider = BlockingProvider()
+        library.set_provider(provider)
+
+        library.request("fake:running", callback=Mock())
+        assert started.wait(timeout=5)
+        queued_callback = Mock()
+        library.request("fake:queued", callback=queued_callback)
+
+        library.shutdown()
+        release.set()
+        # Wait for the running job to finish so its worker exits.
+        library._provide_executor.shutdown(wait=True)
+
+        assert provider.calls == ["running"]
+        queued_callback.assert_not_called()
+
+        late_callback = Mock()
+        assert library.request("fake:late", callback=late_callback) is None
+        late_callback.assert_called_once_with("error", None, "Video library is shut down")
 
 
 # =============================================================================

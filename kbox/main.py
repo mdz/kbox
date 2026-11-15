@@ -286,6 +286,9 @@ class KboxServer:
         if self.queue_manager:
             self.queue_manager.stop_content_monitor()
 
+        if self.video_library:
+            self.video_library.shutdown()
+
         if self.streaming_controller:
             self.streaming_controller.stop()
 
