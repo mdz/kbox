@@ -274,6 +274,62 @@ def test_pause_resume(controller, test_video_3s):
     assert controller.get_pipeline_state() == "playing"
 
 
+def _still_image_state(controller):
+    """The still image feeder's pipeline state, or None if it isn't running."""
+    Gst = _get_gst()
+    if controller.still_image.pipeline is None:
+        return None
+    ret, state, pending = controller.still_image.pipeline.get_state(2 * Gst.SECOND)
+    return state
+
+
+def test_pause_holds_last_frame_on_display_bridge(controller, test_video_3s):
+    """
+    Pausing must not starve the display bridge.
+
+    A paused playbin stops feeding intervideosink, and intervideosrc serves a
+    frame only a couple of times before generating black (see
+    docs/development/gstreamer-pipeline.md) -- so pause() keeps the last
+    frame going itself, the way interstitials keep their image going.
+    """
+    Gst = _get_gst()
+    controller.load_file(test_video_3s)
+    # load_file waits for PLAYING, which needs a prerolled frame, so one has
+    # already crossed the bridge.
+    assert controller._last_video_sample is not None
+
+    controller.pause()
+    assert _still_image_state(controller) == Gst.State.PLAYING
+
+    controller.resume()
+    assert controller.still_image.pipeline is None
+
+
+def test_seek_while_paused_holds_the_new_frame(controller, test_video_3s):
+    """A seek while paused replaces the held frame with one from the new position."""
+    Gst = _get_gst()
+    controller.load_file(test_video_3s)
+    controller.pause()
+    held_before = controller._last_video_sample
+
+    assert controller.seek(2)
+
+    assert controller._last_video_sample is not held_before
+    assert _still_image_state(controller) == Gst.State.PLAYING
+    controller.resume()
+
+
+def test_stop_playback_while_paused_drops_the_held_frame(controller, test_video_3s):
+    """Stopping from pause drops the hold and the cached frame with the song."""
+    controller.load_file(test_video_3s)
+    controller.pause()
+
+    controller.stop_playback()
+
+    assert controller.still_image.pipeline is None
+    assert controller._last_video_sample is None
+
+
 def test_pause_when_not_playing_raises_error(controller):
     """Test that pausing when not playing raises an error."""
     with pytest.raises(RuntimeError, match="not currently playing"):

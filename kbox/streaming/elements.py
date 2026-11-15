@@ -236,7 +236,11 @@ def create_audio_sink_bin(
     return AudioSinkBin(audio_bin, pitch_shift_element, volume_element)
 
 
-def create_video_sink_bin(channel: str, on_source_caps_event: Optional[Callable] = None):
+def create_video_sink_bin(
+    channel: str,
+    on_source_caps_event: Optional[Callable] = None,
+    on_video_buffer: Optional[Callable] = None,
+):
     """
     Create the bin playbin renders video into.
 
@@ -273,6 +277,11 @@ def create_video_sink_bin(channel: str, on_source_caps_event: Optional[Callable]
     # rescaled to the display.
     if on_source_caps_event is not None:
         vc.get_static_pad("src").add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, on_source_caps_event)
+
+    # Sees every frame about to cross the bridge, so the controller can keep
+    # the latest one on screen while paused (StillImageFeeder.start_frame).
+    if on_video_buffer is not None:
+        vc.get_static_pad("src").add_probe(Gst.PadProbeType.BUFFER, on_video_buffer)
 
     logger.info("Video sink bin created (bridging to display pipeline)")
     return video_bin

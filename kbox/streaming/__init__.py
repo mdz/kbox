@@ -11,7 +11,7 @@ The package splits that into pieces that each own their own state:
 - elements: pure factory functions for individual elements and sink bins
 - pipelines: DisplayPipeline, the always-on pipeline that owns the screen
 - overlays: OverlayController, the QR and text overlays
-- still_image: StillImageFeeder, the interstitial image feed
+- still_image: StillImageFeeder, the interstitial image and paused-frame feed
 - bus: BusWatcher, the bus polling thread
 - controller: StreamingController, the facade that wires them together
 """
