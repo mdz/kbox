@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -306,7 +306,12 @@ class VideoLibrary:
         self.config_manager = config_manager
         self._sources: Dict[str, VideoSearchSource] = {}
         self._provider: Optional[VideoProvider] = None
-        self._provide_semaphore = threading.Semaphore(1)
+        # One worker: provider downloads run one at a time, in request order.
+        # Further requests wait in the executor's queue rather than each
+        # parking a thread of its own.
+        self._provide_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="kbox-video-provide"
+        )
 
         self.logger.info("VideoLibrary initialized")
 
@@ -589,31 +594,56 @@ class VideoLibrary:
         video_dir = self._get_video_directory(video_id)
         video_dir.mkdir(parents=True, exist_ok=True)
 
-        provider = self._provider
-
-        def provide_thread():
-            self._provide_semaphore.acquire()
-            try:
-                if callback:
-                    callback("downloading", None, None)
-                start = time.monotonic()
-                provided_path = provider.provide(source_id, video_dir)
-                elapsed = time.monotonic() - start
-                self.logger.info("Prepared %s at %s in %.1fs", video_id, provided_path, elapsed)
-                if callback:
-                    callback("ready", str(provided_path), None)
-            except Exception as e:
-                self.logger.error(
-                    "Content preparation failed for %s: %s", video_id, e, exc_info=True
-                )
-                if callback:
-                    callback("error", None, str(e))
-            finally:
-                self._provide_semaphore.release()
-
-        thread = threading.Thread(target=provide_thread, daemon=True)
-        thread.start()
+        try:
+            self._provide_executor.submit(
+                self._provide, self._provider, video_id, source_id, video_dir, callback
+            )
+        except RuntimeError as e:
+            # The executor refuses new work once shut down.
+            self.logger.warning("Not preparing %s: %s", video_id, e)
+            if callback:
+                callback("error", None, "Video library is shut down")
         return None
+
+    def _provide(
+        self,
+        provider: VideoProvider,
+        video_id: str,
+        source_id: str,
+        video_dir: Path,
+        callback: Optional[Callable[[str, Optional[str], Optional[str]], None]],
+    ) -> None:
+        """
+        Run one provider download on the executor's worker thread.
+
+        "downloading" is reported here, when the worker picks the job up, not
+        when it is submitted: a request queued behind another download stays
+        PENDING until its turn comes. Every exception is caught and reported
+        through the callback, since the executor would otherwise keep it in a
+        Future nobody reads.
+        """
+        try:
+            if callback:
+                callback("downloading", None, None)
+            start = time.monotonic()
+            provided_path = provider.provide(source_id, video_dir)
+            elapsed = time.monotonic() - start
+            self.logger.info("Prepared %s at %s in %.1fs", video_id, provided_path, elapsed)
+            if callback:
+                callback("ready", str(provided_path), None)
+        except Exception as e:
+            self.logger.error("Content preparation failed for %s: %s", video_id, e, exc_info=True)
+            if callback:
+                callback("error", None, str(e))
+
+    def shutdown(self) -> None:
+        """
+        Stop accepting downloads and drop any still waiting to start.
+
+        Does not wait: a download already running is left to finish (or die
+        with the process) on its worker thread.
+        """
+        self._provide_executor.shutdown(wait=False, cancel_futures=True)
 
     def is_available(self, video_id: str) -> bool:
         """
