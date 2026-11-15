@@ -501,6 +501,39 @@
             background: #3a3a3a;
         }
 
+        .queue-item.readonly {
+            cursor: default;
+        }
+
+        .queue-item.readonly:hover {
+            border-color: transparent;
+            background: #333;
+        }
+
+        .queue-item.mine {
+            border-left: 4px solid #f1c40f;
+        }
+
+        .queue-item-position {
+            flex: 0 0 auto;
+            min-width: 1.6em;
+            margin-right: 10px;
+            text-align: center;
+            font-weight: 600;
+            color: #888;
+        }
+
+        .queue-item-you {
+            margin-left: 6px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            background: #f1c40f;
+            color: #222;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
         .queue-item.playing {
             background: #2a4a6a;
             border-color: #4a9eff;

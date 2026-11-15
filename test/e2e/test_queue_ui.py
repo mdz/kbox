@@ -4,9 +4,9 @@ Queue UI: adding songs and duplicate-entry warnings.
 Covers the highest-traffic guest path (search → add) and the regression
 lock for the "already queued / already played" warning (commit d2803ac).
 
-NOTE: queue items only show the singer's name when the user is not an
-operator. The song title is visible to operators only. Assertions use
-the user name ("Alice") which is always present.
+NOTE: for non-operators, queue items show the song title only on the
+guest's own rows (marked "You"); other guests' titles stay hidden. Assertions
+use the user name ("Alice") which is always present.
 """
 
 import pytest

@@ -11,6 +11,7 @@ import {
     currentSelectionTarget, setCurrentSelectionTarget
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
+import { escapeHtml } from './utils.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
 
 // Check if playback controls are open
@@ -21,10 +22,13 @@ export function arePlaybackControlsOpen() {
 
 // Show edit queue item modal
 export function showEditQueueItemModal(item) {
-    setCurrentQueueItemToEdit(item);
-
     // Check if user can edit this song
     const canEdit = isOperator || (userId && item.user_id === userId);
+
+    // Other guests' songs are a surprise: never reveal their title.
+    if (!canEdit) return;
+
+    setCurrentQueueItemToEdit(item);
 
     // Use reusable song settings component
     const additionalControls = !canEdit ? '<div style="color: #e74c3c; font-size: 0.9em; margin-top: 8px;">⚠️ You can only edit songs you added</div>' : '';
@@ -333,6 +337,14 @@ function handleAuthExpired() {
     }
 }
 
+// Guest-friendly labels for content_status values (see QueueManager.STATUS_*)
+const STATUS_LABELS = {
+    pending: 'Getting ready…',
+    preparing: 'Getting ready…',
+    ready: 'Ready',
+    error: 'Problem',
+};
+
 // Load queue
 export async function loadQueue() {
     if (authExpired) return;
@@ -383,18 +395,27 @@ export async function loadQueue() {
 
         queueDiv.innerHTML = '';
 
+        let position = 0;
         currentQueue.forEach(item => {
             const div = document.createElement('div');
             const isCurrent = item.is_current;
             const isPlayed = item.is_played && !isCurrent;
+            const isMine = !!userId && item.user_id === userId;
+            const canSeeTitle = isOperator || isMine;
+            const canEdit = canSeeTitle;
+            const isUpcoming = !isCurrent && !isPlayed;
+            if (isUpcoming) position += 1;
 
             // Build class list based on state
             let classes = ['queue-item'];
             if (isCurrent) classes.push('playing');
             if (isPlayed) classes.push('played');
+            if (isMine) classes.push('mine');
+            if (!canEdit) classes.push('readonly');
             div.className = classes.join(' ');
 
-            const statusClass = `status-${item.content_status}`;
+            const statusClass = `status-${escapeHtml(item.content_status)}`;
+            const statusLabel = escapeHtml(STATUS_LABELS[item.content_status] || item.content_status);
             const duration = item.duration_seconds || 0;
             const durationStr = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
 
@@ -403,20 +424,25 @@ export async function loadQueue() {
             const primaryDisplay = hasExtracted
                 ? `<strong>${escapeHtml(item.song_name)}</strong> <span style="color: #888;">by ${escapeHtml(item.artist)}</span>`
                 : escapeHtml(item.title);
-            const secondaryDisplay = hasExtracted
+            // The original YouTube title is extra detail for operators only
+            const secondaryDisplay = hasExtracted && isOperator
                 ? `<div class="queue-item-original" style="color: #666; font-size: 0.8em; margin-top: 2px;">${escapeHtml(item.title)}</div>`
                 : '';
 
+            const positionBadge = isUpcoming ? `<span class="queue-item-position">${position}</span>` : '';
+            const youBadge = isMine ? '<span class="queue-item-you">You</span>' : '';
+
             div.innerHTML = `
+                ${positionBadge}
                 <div class="queue-item-info">
-                    <div class="queue-item-user">${escapeHtml(item.user_name)} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
-                    ${isOperator ? `<div class="queue-item-title">${primaryDisplay}</div>${secondaryDisplay}` : ''}
+                    <div class="queue-item-user">${escapeHtml(item.user_name)}${youBadge} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
+                    ${canSeeTitle ? `<div class="queue-item-title">${primaryDisplay}</div>${secondaryDisplay}` : ''}
                 </div>
-                <span class="queue-item-status ${statusClass}">${escapeHtml(item.content_status)}</span>
+                <span class="queue-item-status ${statusClass}">${statusLabel}</span>
             `;
 
-            // Make all queue items clickable to edit
-            div.onclick = () => showEditQueueItemModal(item);
+            // Only the owner and operators can open the edit modal
+            if (canEdit) div.onclick = () => showEditQueueItemModal(item);
 
             queueDiv.appendChild(div);
         });
