@@ -24,13 +24,9 @@ from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
-from kbox.platform import configure_macos_gstreamer_env
-
-# Must run before anything imports `gi` -- kbox.streaming defers that import,
-# so this just needs to happen at module load time, here. Lets
-# `uv run pytest` work directly on a Mac dev machine.
-configure_macos_gstreamer_env()
-
+# GStreamer/PyGObject env setup (needed before anything imports `gi` on
+# macOS) happens in test/conftest.py, which pytest imports before any test
+# module.
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.streaming import StreamingController, _get_glib, _get_gst, elements, gst, pipelines

@@ -8,7 +8,8 @@ PKG_MODULES="gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0"
 
 if ! pkg-config --exists $PKG_MODULES; then
     echo "Missing GStreamer development packages (need pkg-config modules: $PKG_MODULES)" >&2
-    echo "e.g. on Debian: apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev" >&2
+    echo "  Debian/Ubuntu: apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev" >&2
+    echo "  macOS:         brew install gstreamer pkgconf" >&2
     exit 1
 fi
 
