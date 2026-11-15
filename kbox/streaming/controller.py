@@ -667,11 +667,10 @@ class StreamingController:
         Args:
             image_path: Path to the QR code PNG image
         """
-        # Remembered even without GStreamer, so a later pipeline picks it up.
-        self.overlays.remember_qr_image(image_path)
-
-        if not self._requires_gst():
-            return
+        # No _requires_gst() guard, unlike its siblings above. With GStreamer
+        # missing self.overlays holds no elements, so its own element guard
+        # already covers that case -- and going through it is what records the
+        # path for a pipeline that may yet be built.
         self.overlays.update_qr_overlay(image_path)
 
     def set_qr_visible(self, visible: bool):

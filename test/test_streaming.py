@@ -1281,9 +1281,18 @@ def test_overlay_controller_sets_and_clears_text(mock_config_manager):
 
 
 def test_overlay_controller_carries_qr_image_path_across_rebuilds(mock_config_manager):
-    """The remembered QR path is constructor state, so a rebuild can hand it on."""
+    """
+    The remembered QR path is constructor state, so a rebuild can hand it on.
+
+    Set through the public entry point with no element attached, which is the
+    state during a config-change rebuild and whenever GStreamer is missing
+    altogether. The path has to be recorded anyway, or the rebuilt pipeline
+    comes up with no QR code on it.
+    """
     overlays = OverlayController(None, None, mock_config_manager)
-    overlays.remember_qr_image("/tmp/qr.png")
+    overlays.update_qr_overlay("/tmp/qr.png")
+
+    assert overlays.qr_image_path == "/tmp/qr.png"
 
     rebuilt = OverlayController(
         None, None, mock_config_manager, qr_image_path=overlays.qr_image_path

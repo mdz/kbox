@@ -258,15 +258,6 @@ class OverlayController:
     # QR
     # =========================================================================
 
-    def remember_qr_image(self, image_path: str):
-        """Record the QR image path without touching the element.
-
-        Kept separate so the path survives a period with no pipeline at all
-        (GStreamer missing, or a config-change rebuild in progress) and can be
-        re-applied to the next element.
-        """
-        self._qr_image_path = image_path
-
     def update_qr_overlay(self, image_path: str):
         """
         Update QR code overlay image.
@@ -274,7 +265,11 @@ class OverlayController:
         Args:
             image_path: Path to the QR code PNG image
         """
-        self.remember_qr_image(image_path)
+        # Recorded before the element guard on purpose, so the path survives a
+        # period with no element at all -- GStreamer missing, or a
+        # config-change rebuild in progress -- and reinitialize_pipeline can
+        # re-apply it to the next one.
+        self._qr_image_path = image_path
 
         if not self.qr_overlay:
             self.logger.debug("QR overlay not available")
