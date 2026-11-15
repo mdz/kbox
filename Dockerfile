@@ -52,13 +52,10 @@ RUN --mount=type=bind,source=uv.lock,target=uv.lock \
 # Copy the project into the image
 COPY . /app
 
-# Bring in the pre-built native signalsmithpitch plugin (see build stage above).
-# The whole build/ directory, not just the .so: its inputs.cksum stamp is what
-# lets `build.sh --if-stale` (run by the test suite) see the .so is current,
-# since this image has no compiler to rebuild it with.
+# Bring in the pre-built native signalsmithpitch plugin (see build stage above)
 COPY --from=gst-signalsmith-pitch-build \
-    /build/native/gst-signalsmith-pitch/build/ \
-    /app/native/gst-signalsmith-pitch/build/
+    /build/native/gst-signalsmith-pitch/build/libgstsignalsmithpitch.so \
+    /app/native/gst-signalsmith-pitch/build/libgstsignalsmithpitch.so
 
 # Install the project itself (no cache - avoid shebang issues from host builds)
 RUN uv sync --locked

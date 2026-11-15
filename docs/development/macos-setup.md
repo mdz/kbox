@@ -55,21 +55,18 @@ this page is a checkout where `uv run pytest` passes with no failures and
    `sys_platform == 'darwin'`, so `uv sync` handles them. Don't
    `uv pip install pygobject` by hand.
 
-4. **The native `signalsmithpitch` plugin**. The Docker image builds this in
-   its own stage. In a native checkout, `test/test_streaming.py` builds it on
-   first run, via `native/gst-signalsmith-pitch/build.sh --if-stale`, and
-   rebuilds it whenever its sources change. The build output is a gitignored
-   `.so`, so each checkout and each git worktree gets its own; that is why
-   it's automatic rather than a setup step.
+4. **The native `signalsmithpitch` plugin**. `uv sync` builds this when it
+   installs kbox (a hatch build hook, `hatch_build.py`), so each checkout and
+   git worktree gets one without a manual step. The Docker image builds it in
+   its own stage instead. The build needs a C++ compiler (Xcode Command Line
+   Tools) and `pkg-config` (`brew install pkgconf`).
 
-   The build needs a C++ compiler (Xcode Command Line Tools) and `pkg-config`
-   (`brew install pkgconf`). If it fails, **the four `test_signalsmith_*`
-   tests fail** with the build's output — by design: they never skip, so
-   missing coverage shows up red instead of vanishing.
-
-   Running the app (not the tests) in a fresh checkout still needs the plugin
-   built first, or pitch shifting silently falls back to a passthrough
-   element:
+   A failed build doesn't fail `uv sync` — the plugin is optional at runtime —
+   and its output only shows under `uv sync -v`. Without the plugin, pitch
+   shifting silently falls back to a passthrough element **and the four
+   `test_signalsmith_*` tests in `test/test_streaming.py` fail** — by design,
+   so missing coverage shows up red instead of vanishing. `uv sync` won't
+   retry by itself, so once the toolchain is in place, run:
 
    ```bash
    native/gst-signalsmith-pitch/build.sh

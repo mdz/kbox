@@ -30,10 +30,10 @@ pkg-config.
 ./build.sh
 ```
 
-Produces `build/libgstsignalsmithpitch.so`, plus `build/inputs.cksum`, a
-checksum of the sources it was built from. `./build.sh --if-stale` uses that
-stamp to skip the build when the `.so` is already current; kbox's test suite
-runs it that way so a fresh checkout builds the plugin on its own.
+Produces `build/libgstsignalsmithpitch.so`. In kbox you normally don't run
+this yourself: `uv sync` runs it, via kbox's `hatch_build.py`, whenever the
+`.so` is missing. After changing this plugin's sources, rerun `build.sh` --
+the hook only builds a missing `.so`, it doesn't check for a stale one.
 
 ## Using it
 

@@ -3,8 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-# native/gst-signalsmith-pitch/build.sh output (.so plus its inputs.cksum stamp)
-native/gst-signalsmith-pitch/build/
 .Python
 venv/
 env/

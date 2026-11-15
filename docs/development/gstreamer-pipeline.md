@@ -574,7 +574,7 @@ pipeline with a bus worth watching, give it a poller; do not reach for a signal
 watch unless you are also introducing a main loop, which is a much larger
 change to how the app runs.
 
-`_stop_bus_polling()` stops and joins every watcher, and each loop re-reads
+`stop_bus_polling()` stops and joins every watcher, and each loop re-reads
 its bus every pass so that teardown setting `self.playbin = None` ends the loop
 rather than crashing it.
 
@@ -603,10 +603,8 @@ them.
 macOS needs PyGObject, which is declared as a dev dependency for
 `sys_platform == 'darwin'` only — Linux and the Docker image use the system
 `python3-gi` package instead. If `import gi` fails, run `uv sync --group dev`.
-The native signalsmith pitch-shift plugin is built by `test/test_streaming.py`
-itself (`native/gst-signalsmith-pitch/build.sh --if-stale`, from a session
-fixture) when it's missing or out of date; if that build fails, the
-`test_signalsmith_*` tests fail with its output.
+The native signalsmith pitch-shift plugin is built by `uv sync` (see
+`hatch_build.py`); if that build failed, the `test_signalsmith_*` tests fail.
 
 `test/test_streaming.py` and `test/test_pipeline_benchmark.py` both call
 `configure_macos_gstreamer_env()` (in `kbox/platform.py`) before importing
