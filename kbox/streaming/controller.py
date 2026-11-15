@@ -459,7 +459,7 @@ class StreamingController:
         self.logger.info("Stopping streaming controller...")
 
         # Stop bus polling first
-        self._stop_bus_polling()
+        self.stop_bus_polling()
 
         # The bus watchers are joined above, OUTSIDE this lock, and must stay
         # that way: a watcher thread can be inside the EOS callback waiting on
@@ -502,7 +502,7 @@ class StreamingController:
         current_file_backup = self.current_file
 
         # Stop bus polling
-        self._stop_bus_polling()
+        self.stop_bus_polling()
 
         # The bus watchers are joined above, OUTSIDE this lock, and must stay
         # that way: a watcher thread can be inside the EOS callback waiting on
@@ -857,18 +857,14 @@ class StreamingController:
 
     def stop_bus_polling(self):
         """
-        Stop and join the bus polling threads ahead of reinitialize_pipeline().
+        Stop and join the bus polling threads.
 
-        For a caller that is about to take PlaybackController.lock and then
-        rebuild: joining the watchers must happen before that lock is taken
-        (see the ordering note in __init__), and reinitialize_pipeline() would
-        otherwise do it while the lock is held. The rebuild starts fresh
-        watchers, so nothing needs restarting here.
+        Public so a caller about to take PlaybackController.lock and then
+        call reinitialize_pipeline() can join the watchers first, outside
+        that lock (see the ordering note in __init__); reinitialize_pipeline()
+        would otherwise join them while it is held. The rebuild starts fresh
+        watchers, so nothing needs restarting afterwards.
         """
-        self._stop_bus_polling()
-
-    def _stop_bus_polling(self):
-        """Stop the bus polling threads."""
         for watcher in self.bus_watchers:
             watcher.stop()
         self.bus_watchers = []
