@@ -545,7 +545,7 @@ def test_next_song_not_ready_waits_then_auto_starts(full_system):
     )
 
     # Simulate the monitor's periodic check (normally runs every 2s on a thread)
-    system["playback"]._check_auto_start_when_idle()
+    system["playback"]._on_monitor_tick()
 
     # Should have auto-started song 2
     assert system["playback"].state == PlaybackState.PLAYING
