@@ -1,3 +1,8 @@
+# `pre-commit install` wires up both hook types. Without pre-push listed here
+# it installs only the commit hook, and anything with `stages: [pre-push]`
+# below never runs -- which is how the pytest hook sat dormant.
+default_install_hook_types: [pre-commit, pre-push]
+
 repos:
   # Standard pre-commit hooks for best practices
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -44,7 +49,14 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: uv run pytest -x -q -m "not gstreamer"
+        # No -m here on purpose. pyproject.toml's addopts already carries
+        # `-m "not e2e and not benchmark"`, and pytest's -m is single-valued,
+        # so any -m on the command line replaces that filter instead of
+        # narrowing it -- which pulled the Playwright e2e suite and the
+        # hardware benchmarks into the push gate (900 tests collected rather
+        # than 824). The marker it filtered on, `gstreamer`, was never
+        # registered or applied to anything either.
+        entry: uv run pytest -x -q
         language: system
         pass_filenames: false
         stages: [pre-push]
