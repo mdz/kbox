@@ -49,9 +49,22 @@ build-backend = "hatchling.build"
 # (e.g. the GitHub runners' lint/e2e jobs), uv still falls back to a managed
 # one. See docs/development/macos-setup.md.
 python-preference = "system"
+# uv only rebuilds (and reinstalls) the kbox editable install when one of
+# these changes. The plugin .so is listed so that a missing .so -- deleted, or
+# never built because the GStreamer dev packages weren't installed yet --
+# makes the next `uv sync`/`uv run` re-run hatch_build.py, which builds it.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "hatch_build.py" },
+    { file = "native/gst-signalsmith-pitch/build/libgstsignalsmithpitch.so" },
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["kbox"]
+
+# Builds the native signalsmithpitch GStreamer plugin when it's missing; see
+# hatch_build.py.
+[tool.hatch.build.targets.wheel.hooks.custom]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]

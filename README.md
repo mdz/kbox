@@ -83,13 +83,11 @@ uv run python -m kbox.main
 
 Open `http://localhost:8000` on your phone to queue songs, and `http://localhost:8000/display` on your TV/monitor for the fullscreen karaoke display. Configure your YouTube API key in Settings (see `docs/setup/youtube-api.md` if you need help getting one).
 
-Pitch shifting requires the native `signalsmithpitch` GStreamer plugin, which the Docker image builds automatically but a native install does not — without it kbox falls back to no pitch shifting. Build it once with:
+Pitch shifting uses the native `signalsmithpitch` GStreamer plugin. `uv sync` builds it (as does the Docker image), which needs a C++ compiler, `pkg-config` and the GStreamer development packages — see `native/gst-signalsmith-pitch/README.md`. If those weren't installed at the time, kbox falls back to no pitch shifting; once they are, build it with:
 
 ```bash
 native/gst-signalsmith-pitch/build.sh
 ```
-
-See `native/gst-signalsmith-pitch/README.md` for build requirements.
 
 ## Platform Support
 

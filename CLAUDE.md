@@ -91,8 +91,9 @@ targets.
 
 A full local run on a macOS dev machine can pass with the setup in
 [docs/development/macos-setup.md](docs/development/macos-setup.md):
-Homebrew GStreamer and Python, plus a one-time
-`native/gst-signalsmith-pitch/build.sh`. A fresh `uv sync` builds `.venv` on
+Homebrew GStreamer and Python, plus `pkgconf` and a C++ compiler so that
+`uv sync` can build the native `signalsmithpitch` plugin (via
+`hatch_build.py`) in each checkout or worktree. A fresh `uv sync` builds `.venv` on
 Homebrew's Python by itself (`pyproject.toml` sets
 `python-preference = "system"`). If conftest raises a `RuntimeError` saying
 the interpreter is uv-managed, the `.venv` predates that setting:
