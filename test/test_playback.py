@@ -287,7 +287,7 @@ def test_skip_clears_base_overlay(
     )
     playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
-    playback_controller._set_base_overlay("Now singing: Alice")
+    playback_controller._overlay.set_base("Now singing: Alice")
     mock_streaming_controller.set_overlay_text.reset_mock()
 
     mock_queue_manager.get_item.return_value = current_song
@@ -305,7 +305,7 @@ def test_skip_clears_base_overlay(
     playback_controller.skip()
 
     mock_streaming_controller.set_overlay_text.assert_called_with("")
-    assert playback_controller._base_overlay_text == ""
+    assert playback_controller._overlay.base_text == ""
 
 
 def test_natural_end_of_song_clears_base_overlay(
@@ -322,7 +322,7 @@ def test_natural_end_of_song_clears_base_overlay(
     )
     playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
-    playback_controller._set_base_overlay("Now singing: Alice")
+    playback_controller._overlay.set_base("Now singing: Alice")
     mock_streaming_controller.set_overlay_text.reset_mock()
 
     mock_queue_manager.get_item.return_value = current_song
@@ -332,7 +332,7 @@ def test_natural_end_of_song_clears_base_overlay(
     playback_controller.on_song_end()
 
     mock_streaming_controller.set_overlay_text.assert_called_with("")
-    assert playback_controller._base_overlay_text == ""
+    assert playback_controller._overlay.base_text == ""
 
 
 def test_skip_no_next_song(playback_controller, mock_queue_manager, mock_streaming_controller):
@@ -420,7 +420,8 @@ def test_skip_while_in_transition_retargets_pending(
     """
     playback_controller.state = PlaybackState.TRANSITION
     playback_controller.current_song_id = None  # cleared by _complete_current_song
-    playback_controller._cursor_song_id = 1  # song that just finished/was skipped
+    # song that just finished/was skipped
+    playback_controller.set_cursor(1)
 
     pending_song = create_mock_queue_item(id=2, title="Pending Song", user_name="Bob")
     playback_controller._next_song_pending = pending_song
@@ -457,7 +458,7 @@ def test_previous_while_in_transition_retargets_pending(
     """
     playback_controller.state = PlaybackState.TRANSITION
     playback_controller.current_song_id = None
-    playback_controller._cursor_song_id = 1
+    playback_controller.set_cursor(1)
 
     pending_song = create_mock_queue_item(id=2, title="Pending Song", user_name="Bob")
     playback_controller._next_song_pending = pending_song
@@ -490,7 +491,7 @@ def test_navigate_during_transition_no_target_available(
     fail cleanly and leave the existing pending transition untouched."""
     playback_controller.state = PlaybackState.TRANSITION
     playback_controller.current_song_id = None
-    playback_controller._cursor_song_id = 1
+    playback_controller.set_cursor(1)
 
     pending_song = create_mock_queue_item(id=2, title="Pending Song", user_name="Bob")
     playback_controller._next_song_pending = pending_song
@@ -1106,7 +1107,7 @@ def test_auto_start_when_idle_with_ready_songs(
     )
 
     # Cursor is on song 1 (already played); song 42 at position 2 is next
-    playback_controller._cursor_song_id = 1
+    playback_controller.set_cursor(1)
     # get_song_at_offset(1, +1) returns the new ready song
     mock_queue_manager.get_song_at_offset.return_value = ready_song
 
@@ -1158,7 +1159,7 @@ def test_auto_start_waits_for_not_ready_song(
     """
     # Set state to IDLE
     playback_controller.state = PlaybackState.IDLE
-    playback_controller._cursor_song_id = 1
+    playback_controller.set_cursor(1)
 
     # Next song in queue order is still downloading
     downloading_song = create_mock_queue_item(
@@ -1239,7 +1240,7 @@ def test_notification_restores_base_overlay(
     import time
 
     # Set up a base overlay (simulating "Now singing: Alice")
-    playback_controller._set_base_overlay("Now singing: Alice")
+    playback_controller._overlay.set_base("Now singing: Alice")
 
     # Verify base overlay was set
     mock_streaming_controller.set_overlay_text.assert_called_with("Now singing: Alice")
@@ -1322,7 +1323,7 @@ def test_auto_start_does_not_restart_played_songs(
     playback_controller.current_song_id = None
 
     # Cursor is set to the song that just finished (song ID 1)
-    playback_controller._cursor_song_id = 1
+    playback_controller.set_cursor(1)
 
     # No songs after the cursor
     mock_queue_manager.get_song_at_offset.return_value = None
@@ -1725,7 +1726,7 @@ class TestNotificationRace:
 
         pc._check_current_singer_notification(1)
         assert pc._current_singer_shown is True
-        assert "Alice" in pc._base_overlay_text
+        assert "Alice" in pc._overlay.base_text
 
         # A second tick for the same song must not re-show it.
         mock_queue_manager.get_item.reset_mock()
@@ -1743,7 +1744,7 @@ class TestNotificationRace:
 
         pc._check_up_next_notification(170)  # 10s remaining
         assert pc._up_next_shown is True
-        assert "Bob" in pc._base_overlay_text
+        assert "Bob" in pc._overlay.base_text
 
         # A second tick for the same song must not re-show it.
         mock_queue_manager.get_song_at_offset.reset_mock()
