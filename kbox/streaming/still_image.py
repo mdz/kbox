@@ -138,11 +138,13 @@ class StillImageFeeder:
 
         try:
             self.pipeline = self.create_frame_pipeline(sample.get_caps())
-            # A copy with timestamps reset: the original carries the song's
-            # running time, which means nothing to this fresh pipeline.
-            buf = sample.get_buffer().copy()
-            buf.pts = 0
-            buf.dts = 0
+            # Pushed as-is, carrying the song's timestamp: imagefreeze
+            # timestamps every frame it emits itself, from the segment appsrc
+            # opens at 0, so the input timestamp never reaches the bridge.
+            # Do not try to reset it -- with the Debian/Raspberry Pi
+            # gst-python bindings even a fresh Buffer.copy() is not
+            # writable, and setting pts raises.
+            buf = sample.get_buffer()
         except Exception as e:
             self.logger.error("Failed to build pause frame pipeline: %s", e, exc_info=True)
             self.stop()
