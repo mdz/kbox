@@ -45,3 +45,4 @@ deploy.sh
 ldocs
 .env
 backup
+.kbox-scratch/
