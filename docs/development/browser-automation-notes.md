@@ -101,7 +101,7 @@ uv run python -m kbox.main --data-dir .kbox-scratch --access-token uxtest
   worktree gets its own throwaway instance (`.kbox-scratch/` is gitignored). Delete
   the directory to reset.
 - `--access-token` (or `KBOX_ACCESS_TOKEN`) pins the guest token, so the guest page
-  is `http://localhost:8000/?token=uxtest` with no sqlite edits. Starting a new party
+  is `http://localhost:8000/?key=uxtest` with no sqlite edits. Starting a new party
   session still rotates the token, as in normal use. The operator PIN is the default
   (`1234`) on a fresh scratch DB.
 - Both are for development; a stock install ignores them unless set.
