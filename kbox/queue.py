@@ -6,7 +6,6 @@ Handles song queue operations with persistence and content preparation.
 
 import logging
 import threading
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Dict, List, Optional
 
@@ -19,15 +18,6 @@ if TYPE_CHECKING:
     from .silence_detection import TrailingSilenceAnalyzer
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
-
-
-@dataclass(frozen=True)
-class UpcomingItem:
-    """A queued song that hasn't played yet, with when it is expected to start."""
-
-    item: QueueItem
-    position: int  # 1-based among upcoming songs (1 = up next)
-    wait_seconds: int  # estimated time until this song starts
 
 
 class QueueManager:

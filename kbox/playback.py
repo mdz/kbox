@@ -7,12 +7,13 @@ Orchestrates playback, manages state transitions, and handles error recovery.
 import logging
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 from .database import ConfigRepository
 from .models import QueueItem
-from .queue import QueueManager, UpcomingItem
+from .queue import QueueManager
 
 
 class PlaybackState(Enum):
@@ -24,6 +25,15 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     TRANSITION = "transition"  # Between songs, showing interstitial
     ERROR = "error"
+
+
+@dataclass(frozen=True)
+class UpcomingItem:
+    """A queued song that hasn't played yet, with when it is expected to start."""
+
+    item: QueueItem
+    position: int  # 1-based among upcoming songs (1 = up next)
+    wait_seconds: int  # estimated time until this song starts
 
 
 def upcoming_songs(
