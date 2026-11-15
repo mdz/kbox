@@ -1351,6 +1351,14 @@ class TestWebUIEndpoint:
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
 
+    @pytest.mark.parametrize("configured", [True, False])
+    def test_suggest_button_follows_llm_config(self, client, app_components, configured):
+        """ "Suggest for me" is only offered when an LLM can answer it."""
+        app_components["suggestion_engine"].is_configured.return_value = configured
+        html = client.get("/").text
+        assert ('id="suggest-button"' in html) is configured
+        assert f"aiSuggestionsEnabled: {str(configured).lower()}" in html
+
 
 # =============================================================================
 # Authentication Tests

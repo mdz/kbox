@@ -41,6 +41,7 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
@@ -56,6 +57,25 @@ if TYPE_CHECKING:
 # Google's suggestion endpoint.  client=firefox returns a plain JSON array;
 # client=youtube returns the same data wrapped in a JSONP callback, which
 # would need stripping.  ds=yt scopes suggestions to YouTube.
+# Completions containing one of these are not what a karaoke search wants; see
+# SearchSuggester._drop_off_target.
+OFF_TARGET_PHRASES = (
+    "lyrics",
+    "lyric",
+    "remix",
+    "cover",
+    "covers",
+    "line dance",
+    "dance",
+    "tutorial",
+    "chords",
+    "reaction",
+    "meaning",
+    "ringtone",
+    "official video",
+    "music video",
+)
+
 SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
 
 # Shorter than any human would wait for a dropdown.  A slow suggestion is
@@ -173,6 +193,7 @@ class SearchSuggester:
         # That None was the only swallowed failure in this module: the call
         # to Google did not get through.  Everything from here raises, as
         # does a reply _parse could not read.
+        suggestions = self._drop_off_target(key, suggestions)
         suggestions = self._deduplicate(suggestions)
         self._store(key, suggestions)
         self._record_success()
@@ -278,6 +299,31 @@ class SearchSuggester:
             )
 
         return usable
+
+    @staticmethod
+    def _drop_off_target(query: str, suggestions: List[str]) -> List[str]:
+        """
+        Drop completions that steer away from a karaoke track.
+
+        "karaoke" is appended to every search, so "<song> lyrics", "<song>
+        remix" or "<song> line dance" would just run the plain song search and
+        lead to a lyric video, a remix or a dance tutorial rather than a
+        singalong.  A modifier the guest typed themselves is left alone, so
+        that someone who really does want "<song> acoustic karaoke" can still
+        get completions.
+        """
+        typed = set(re.findall(r"[a-z0-9']+", query.lower()))
+        kept = []
+        for suggestion in suggestions:
+            text = " ".join(re.findall(r"[a-z0-9']+", suggestion.lower()))
+            padded = f" {text} "
+            if any(
+                f" {phrase} " in padded and not set(phrase.split()) <= typed
+                for phrase in OFF_TARGET_PHRASES
+            ):
+                continue
+            kept.append(suggestion)
+        return kept
 
     @staticmethod
     def _deduplicate(suggestions: List[str]) -> List[str]:

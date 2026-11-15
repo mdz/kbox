@@ -651,7 +651,11 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request, config: ConfigManager = Depends(get_config_manager)):
+    def index(
+        request: Request,
+        config: ConfigManager = Depends(get_config_manager),
+        suggestion_engine: SuggestionEngine = Depends(get_suggestion_engine),
+    ):
         """Serve web UI."""
         return templates.TemplateResponse(
             request,
@@ -663,6 +667,10 @@ def create_app(
                 ),
                 "search_suggestions_enabled": config.get_bool("search_suggestions_enabled", True),
                 "suggestion_theme": config.get("suggestion_theme"),
+                # Hide "Suggest for me" when there is no LLM to answer it.
+                "ai_suggestions_enabled": bool(
+                    suggestion_engine and suggestion_engine.is_configured()
+                ),
             },
         )
 

@@ -11,6 +11,12 @@ import {
     PLAYBACK_AUTO_LOCK_TIMEOUT
 } from './state.js';
 
+// Label for the Now Playing pitch-lock button. For a guest this is the live
+// key/pitch adjustment, so name what it does rather than the lock mechanism.
+export function pitchLockLabel(locked) {
+    return locked ? '🎚 Adjust key' : '🔓 Done adjusting';
+}
+
 // Toggle controls lock
 export function toggleControlsLock() {
     setControlsLocked(!controlsLocked);
@@ -33,7 +39,7 @@ export function toggleControlsLock() {
     if (pitchSection) pitchSection.style.display = controlsLocked ? 'none' : 'block';
 
     if (lockButton) {
-        lockButton.innerHTML = controlsLocked ? '🔒 Unlock Controls' : '🔓 Lock Controls';
+        lockButton.innerHTML = pitchLockLabel(controlsLocked);
         lockButton.style.background = controlsLocked ? '#555' : '#666';
     }
 }
@@ -56,7 +62,7 @@ export function resetAutoLockTimer() {
 
             if (pitchSection) pitchSection.style.display = 'none';
             if (lockButton) {
-                lockButton.innerHTML = '🔒 Unlock Controls';
+                lockButton.innerHTML = pitchLockLabel(true);
                 lockButton.style.background = '#555';
             }
         }, AUTO_LOCK_TIMEOUT));

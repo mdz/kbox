@@ -32,7 +32,7 @@ _INTERVAL_CASES = [
     (-3, "Minor Third down"),
     (-2, "Major Second down"),
     (-1, "Minor Second down"),
-    (0, "Unison"),
+    (0, "Original key"),
     (1, "Minor Second up"),
     (2, "Major Second up"),
     (3, "Minor Third up"),

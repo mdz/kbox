@@ -3,6 +3,11 @@
 
 <!-- Main Content -->
 <div class="main-content" id="main-content">
+    <!-- Who this phone is singing as, with a way to switch (auth.js) -->
+    <div id="identity-line" class="identity-line" hidden>
+        Singing as <strong id="identity-name"></strong>
+        · <button type="button" class="identity-change" onclick="showChangeNameModal()">Not you?</button>
+    </div>
     <!-- Search Section -->
     <div class="section">
         {% if suggestion_theme %}
@@ -20,9 +25,11 @@
             <ul id="search-suggestions" class="search-suggestions hidden"
                 role="listbox" aria-label="Search suggestions"></ul>
         </form>
+        {% if ai_suggestions_enabled %}
         <div id="suggest-button-container">
             <button type="button" id="suggest-button" onclick="getSuggestions()">✨ Suggest for me</button>
         </div>
+        {% endif %}
         <div id="search-results" class="search-results"></div>
     </div>
 

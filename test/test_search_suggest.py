@@ -185,6 +185,46 @@ class TestDeduplication:
         assert suggester.suggest("x") == ["Song Name", "other"]
 
 
+class TestOffTargetFilter:
+    """Completions that lead away from a karaoke track are dropped."""
+
+    def test_non_karaoke_modifiers_are_dropped(self, clock):
+        fetcher = RecordingFetcher(
+            suggest_response(
+                "bohemian rha",
+                [
+                    "bohemian rhapsody lyrics",
+                    "bohemian rhapsody remix",
+                    "bohemian rhapsody cover",
+                    "bohemian rhapsody line dance",
+                    "bohemian rhapsody",
+                    "bohemian rhapsody piano",
+                ],
+            )
+        )
+        suggester = make_suggester(fetcher, clock)
+
+        assert suggester.suggest("bohemian rha") == [
+            "bohemian rhapsody",
+            "bohemian rhapsody piano",
+        ]
+
+    def test_modifier_the_guest_typed_is_kept(self, clock):
+        fetcher = RecordingFetcher(
+            suggest_response("song remix", ["song remix", "song remix lyrics"]),
+        )
+        suggester = make_suggester(fetcher, clock)
+
+        # "remix" was typed so it stays; "lyrics" was not, so it goes.
+        assert suggester.suggest("song remix") == ["song remix"]
+
+    def test_words_that_merely_contain_a_modifier_are_kept(self, clock):
+        fetcher = RecordingFetcher(suggest_response("x", ["discovery", "x covered"]))
+        suggester = make_suggester(fetcher, clock)
+
+        assert suggester.suggest("x") == ["discovery", "x covered"]
+
+
 class TestCaching:
     """Repeat prefixes shouldn't each cost an upstream request."""
 
