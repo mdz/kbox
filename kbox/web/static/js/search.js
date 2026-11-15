@@ -31,9 +31,11 @@ function formatDuration(totalSeconds) {
     return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
-// Shown on results whose exact video has been performed here before (#216).
-// A yes/no about this version, never a count: a count reads as how popular
-// the song is and could put guests off a crowd favourite.
+// Results whose exact video has been performed here before get a check badge
+// on the thumbnail (#216); this text is its screen-reader and tooltip wording,
+// and the add-song modal spells the meaning out. A yes/no about this version,
+// never a count: a count reads as how popular the song is and could put
+// guests off a crowd favourite.
 const TESTED_LABEL = 'Tested track';
 
 function renderResultsList(container, videos) {
@@ -50,13 +52,16 @@ function renderResultsList(container, videos) {
         div.setAttribute('aria-label',
             `Select ${video.title}${ariaDetails ? ` (${ariaDetails})` : ''}`);
         const tested = video.performed_before
-            ? `${details ? ' · ' : ''}<span class="search-result-tested">&#x2713; ${TESTED_LABEL}</span>`
+            ? `<span class="search-result-tested" title="${TESTED_LABEL}" aria-hidden="true">&#x2713;</span>`
             : '';
         div.innerHTML = `
-            <img src="${escapeHtml(video.thumbnail)}" alt="${escapeHtml(video.title)}" />
+            <div class="search-result-thumb">
+                <img src="${escapeHtml(video.thumbnail)}" alt="${escapeHtml(video.title)}" />
+                ${tested}
+            </div>
             <div class="search-result-info">
                 <div class="search-result-title">${escapeHtml(video.title)}</div>
-                <div class="search-result-channel">${escapeHtml(details)}${tested}</div>
+                <div class="search-result-channel">${escapeHtml(details)}</div>
             </div>
             ${renderFavoriteStar(video)}
         `;

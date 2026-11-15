@@ -399,12 +399,19 @@
             outline: none;
         }
 
+        .search-result-thumb {
+            position: relative;
+            flex-shrink: 0;
+            align-self: flex-start;
+            margin-right: 10px;
+        }
+
         .search-result img {
+            display: block;
             width: 80px;
             height: 60px;
             object-fit: cover;
             border-radius: 4px;
-            margin-right: 10px;
         }
 
         .search-result-info {
@@ -422,9 +429,22 @@
             color: #aaa;
         }
 
+        /* Badge on the thumbnail corner rather than text in the detail line,
+           so it never adds height to a result (#216). */
         .search-result-tested {
-            color: #4aff6e;
-            white-space: nowrap;
+            position: absolute;
+            right: -4px;
+            bottom: -4px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #4aff6e;
+            color: #1a1a1a;
+            border: 2px solid #333;
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 18px;
+            text-align: center;
         }
 
         .favorite-star {

@@ -299,7 +299,7 @@ def test_record_performance_without_theme(history_manager, test_users):
     assert history[0].theme is None
 
 
-def _record(history_manager, user, video_id):
+def _record(history_manager, user, video_id, completion=100.0):
     history_manager.record_performance(
         user_id=user["id"],
         user_name=user["name"],
@@ -308,7 +308,7 @@ def _record(history_manager, user, video_id):
         settings=SongSettings(),
         played_duration_seconds=180,
         playback_end_position_seconds=180,
-        completion_percentage=100.0,
+        completion_percentage=completion,
     )
 
 
@@ -328,3 +328,17 @@ def test_performed_video_ids_returns_only_performed(history_manager, test_users)
 def test_performed_video_ids_empty_input(history_manager):
     """No IDs means no query and an empty result."""
     assert history_manager.performed_video_ids([]) == set()
+
+
+def test_performed_video_ids_ignores_plays_below_completion_threshold(history_manager, test_users):
+    """A play abandoned partway doesn't vouch for the track; one ending in the outro does."""
+    _record(history_manager, test_users["alice"], "youtube:abandoned", completion=55.0)
+    _record(history_manager, test_users["alice"], "youtube:outro_skipped", completion=80.0)
+    _record(history_manager, test_users["bob"], "youtube:mixed", completion=30.0)
+    _record(history_manager, test_users["bob"], "youtube:mixed", completion=100.0)
+
+    performed = history_manager.performed_video_ids(
+        ["youtube:abandoned", "youtube:outro_skipped", "youtube:mixed"]
+    )
+
+    assert performed == {"youtube:outro_skipped", "youtube:mixed"}

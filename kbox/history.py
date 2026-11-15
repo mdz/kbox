@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from .session import SessionManager
 
 
+# A play must reach this much of the track to count as evidence the version
+# works (see performed_video_ids). Long instrumental outros are often skipped,
+# so a play that ends 30-60 seconds early still counts; one abandoned halfway
+# does not.
+TESTED_MIN_COMPLETION_PERCENTAGE = 70.0
+
+
 class HistoryManager:
     """
     Manages playback history.
@@ -132,10 +139,14 @@ class HistoryManager:
         """
         Find which of the given videos have been performed on this install.
 
-        Every history row is a play that ran past the history threshold, so
-        membership means "this version has worked here before". It says
-        nothing about who sang it or how often, deliberately: the search
-        label built on it is about the track, not the song's popularity.
+        Only plays that reached TESTED_MIN_COMPLETION_PERCENTAGE count. The
+        history threshold alone is lenient (90 seconds is enough, roughly a
+        third of a karaoke track), which suits pitch recall and the history
+        page but is too weak for "this version has worked here before".
+
+        It says nothing about who sang it or how often, deliberately: the
+        search label built on it is about the track, not the song's
+        popularity.
 
         Args:
             video_ids: Opaque video IDs (e.g., "youtube:abc123")
@@ -143,4 +154,6 @@ class HistoryManager:
         Returns:
             The subset of video_ids with at least one recorded performance
         """
-        return self.repository.performed_video_ids(video_ids)
+        return self.repository.performed_video_ids(
+            video_ids, min_completion_percentage=TESTED_MIN_COMPLETION_PERCENTAGE
+        )

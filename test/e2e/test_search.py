@@ -38,7 +38,8 @@ def _record_performance(db_path, video_id):
         conn.execute(
             "INSERT INTO playback_history (video_id, user_id, user_name, "
             "song_metadata_json, settings_json, performance_json) "
-            "VALUES (?, 'someone', 'Someone', '{\"title\": \"Test Song\"}', '{}', '{}')",
+            "VALUES (?, 'someone', 'Someone', '{\"title\": \"Test Song\"}', '{}', "
+            "'{\"completion_percentage\": 100.0}')",
             (video_id,),
         )
         conn.commit()
@@ -47,13 +48,16 @@ def _record_performance(db_path, video_id):
 
 
 def test_performed_track_is_labelled(mobile_page, init_user, tmp_path):
-    """A result performed here before shows the label, in the list and the modal (#216)."""
+    """A result performed here before gets the badge and the modal note (#216)."""
     _record_performance(tmp_path / "test.db", "youtube:test123")
     init_user("Alice")
     mobile_page.fill("#search-input", "test")
     mobile_page.locator("#search-button").click()
 
-    expect(mobile_page.locator(".search-result-tested")).to_have_text("✓ Tested track")
+    expect(mobile_page.locator(".search-result-tested")).to_be_visible()
+    expect(mobile_page.locator(".search-result")).to_have_attribute(
+        "aria-label", "Select Test Song (3:00, Tested track)"
+    )
     mobile_page.locator(".search-result").click()
     expect(mobile_page.locator("#add-song-modal")).to_contain_text(
         "This version has worked well here before"
