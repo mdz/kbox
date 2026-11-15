@@ -16,13 +16,18 @@ from typing import Iterator, List, Optional
 
 from ..database import ConfigRepository
 from ..models import QueueItem
+from ..periodic import PeriodicThread
 from ..queue import MoveResult, QueueManager
 from . import history_policy, song_tuning
 from .cursor import QueueCursor
-from .monitor import PlaybackMonitor
 from .overlay import OverlayCoordinator
 from .screens import ScreenPresenter
 from .upcoming import UpcomingItem, upcoming_songs
+
+# How often the background monitor ticks.
+MONITOR_INTERVAL_SECONDS = 2
+# Wait longer after a tick raised, so a persistent failure doesn't spin.
+MONITOR_ERROR_BACKOFF_SECONDS = 5
 
 
 class PlaybackState(Enum):
@@ -148,10 +153,15 @@ class PlaybackController:
         self._screens = ScreenPresenter(config_manager, streaming_controller)
 
         # Background monitor thread (handles notifications, auto-start, etc.).
-        # The monitor owns the thread; the policy of what each tick does is
+        # PeriodicThread owns the thread; the policy of what each tick does is
         # _on_monitor_tick() below, because it reads and writes the state
         # machine.
-        self._monitor = PlaybackMonitor(self._on_monitor_tick)
+        self._monitor = PeriodicThread(
+            self._on_monitor_tick,
+            interval_seconds=MONITOR_INTERVAL_SECONDS,
+            error_backoff_seconds=MONITOR_ERROR_BACKOFF_SECONDS,
+            name="PlaybackMonitor",
+        )
         self._up_next_shown = False  # Track if "up next" notification was shown for current song
         self._current_singer_shown = (
             False  # Track if "current singer" notification was shown for current song
@@ -275,7 +285,7 @@ class PlaybackController:
         """
         One pass of the background monitor: handle notifications, auto-start, etc.
 
-        Called from PlaybackMonitor's thread. This stays on the controller
+        Called from the monitor's PeriodicThread. This stays on the controller
         because every branch below reads self.state and self.current_song_id,
         and _check_auto_start_when_idle() / _check_auto_resume_after_replace()
         call back into play(). The _check_* methods take the playback lock

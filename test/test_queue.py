@@ -4,9 +4,10 @@ Unit tests for QueueManager.
 
 import os
 import tempfile
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -456,6 +457,21 @@ def test_queue_persistence(temp_db, user_manager, mock_video_library):
     assert queue[0].user_name == "Alice"
     assert queue[0].content_status == QueueManager.STATUS_READY
     qm2.stop_content_monitor()
+
+
+def test_content_monitor_runs_until_stopped(temp_db, mock_video_library):
+    """The content monitor ticks on its own thread, and stop_content_monitor()
+    ends it without waiting out the interval (the join is only a guard)."""
+    ticked = threading.Event()
+    with patch.object(QueueManager, "_process_pending_content", side_effect=ticked.set):
+        qm = QueueManager(temp_db, video_library=mock_video_library)
+        assert ticked.wait(10)
+
+        qm.stop_content_monitor()
+
+    assert not qm._content_monitor.is_alive()
+    # Idempotent: the fixtures and main.py may both stop it
+    qm.stop_content_monitor()
 
 
 # =============================================================================
