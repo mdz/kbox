@@ -997,8 +997,11 @@ class TestConfigEndpoints:
         assert data.get("restarted") is True
         assert "message" in data
 
-        # Verify reinitialize_pipeline was called on the same controller
-        streaming.reinitialize_pipeline.assert_called_once()
+        # The stop/rebuild/idle sequence goes through the playback
+        # controller as one locked step, not piecemeal from the route.
+        playback = client.app.state.playback_controller
+        playback.apply_streaming_config.assert_called_once()
+        streaming.reinitialize_pipeline.assert_not_called()
 
     def test_get_config_masks_password_fields(self, client):
         """GET /api/config - password-shaped fields never return the raw value."""
@@ -1055,8 +1058,32 @@ class TestConfigEndpoints:
         assert data["status"] == "updated"
         assert data.get("restarted") is True
 
-        # Verify reinitialize_pipeline was called on the same controller
-        streaming.reinitialize_pipeline.assert_called_once()
+        playback = client.app.state.playback_controller
+        playback.apply_streaming_config.assert_called_once()
+        streaming.reinitialize_pipeline.assert_not_called()
+
+    def test_update_streaming_config_rebuild_failure_returns_500(self, client):
+        """PATCH /api/config - a failed rebuild reports the setting as saved but not applied."""
+        set_operator(client)
+        playback = client.app.state.playback_controller
+        playback.apply_streaming_config.side_effect = RuntimeError("no device")
+
+        response = client.patch(
+            "/api/config", json={"key": "audio_output_device", "value": "test_device"}
+        )
+
+        assert response.status_code == 500
+        assert "failed to restart streaming" in response.json()["detail"]
+
+    def test_update_non_streaming_config_does_not_rebuild(self, client):
+        """PATCH /api/config - keys the pipeline doesn't read leave it alone."""
+        set_operator(client)
+        playback = client.app.state.playback_controller
+
+        response = client.patch("/api/config", json={"key": "suggestion_theme", "value": "80s"})
+
+        assert response.status_code == 200
+        playback.apply_streaming_config.assert_not_called()
 
 
 # =============================================================================

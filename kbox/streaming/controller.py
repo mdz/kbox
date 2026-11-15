@@ -855,6 +855,18 @@ class StreamingController:
         for watcher in self.bus_watchers:
             watcher.start()
 
+    def stop_bus_polling(self):
+        """
+        Stop and join the bus polling threads ahead of reinitialize_pipeline().
+
+        For a caller that is about to take PlaybackController.lock and then
+        rebuild: joining the watchers must happen before that lock is taken
+        (see the ordering note in __init__), and reinitialize_pipeline() would
+        otherwise do it while the lock is held. The rebuild starts fresh
+        watchers, so nothing needs restarting here.
+        """
+        self._stop_bus_polling()
+
     def _stop_bus_polling(self):
         """Stop the bus polling threads."""
         for watcher in self.bus_watchers:
