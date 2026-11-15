@@ -297,3 +297,34 @@ def test_record_performance_without_theme(history_manager, test_users):
     history = history_manager.get_user_history(user["id"])
     assert len(history) == 1
     assert history[0].theme is None
+
+
+def _record(history_manager, user, video_id):
+    history_manager.record_performance(
+        user_id=user["id"],
+        user_name=user["name"],
+        video_id=video_id,
+        metadata=SongMetadata(title="Song", duration_seconds=180),
+        settings=SongSettings(),
+        played_duration_seconds=180,
+        playback_end_position_seconds=180,
+        completion_percentage=100.0,
+    )
+
+
+def test_performed_video_ids_returns_only_performed(history_manager, test_users):
+    """Only videos with a recorded performance come back, whoever sang them."""
+    _record(history_manager, test_users["alice"], "youtube:vid1")
+    _record(history_manager, test_users["bob"], "youtube:vid2")
+    _record(history_manager, test_users["bob"], "youtube:vid2")
+
+    performed = history_manager.performed_video_ids(
+        ["youtube:vid1", "youtube:vid2", "youtube:never"]
+    )
+
+    assert performed == {"youtube:vid1", "youtube:vid2"}
+
+
+def test_performed_video_ids_empty_input(history_manager):
+    """No IDs means no query and an empty result."""
+    assert history_manager.performed_video_ids([]) == set()

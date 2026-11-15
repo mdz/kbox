@@ -6,7 +6,7 @@ and playback metrics.
 """
 
 import logging
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Iterable, List, Optional, Set
 
 from .database import Database, HistoryRepository
 from .models import HistoryRecord, SongMetadata, SongSettings
@@ -127,3 +127,20 @@ class HistoryManager:
             List of history records
         """
         return self.repository.get_user_history(user_id, limit)
+
+    def performed_video_ids(self, video_ids: Iterable[str]) -> Set[str]:
+        """
+        Find which of the given videos have been performed on this install.
+
+        Every history row is a play that ran past the history threshold, so
+        membership means "this version has worked here before". It says
+        nothing about who sang it or how often, deliberately: the search
+        label built on it is about the track, not the song's popularity.
+
+        Args:
+            video_ids: Opaque video IDs (e.g., "youtube:abc123")
+
+        Returns:
+            The subset of video_ids with at least one recorded performance
+        """
+        return self.repository.performed_video_ids(video_ids)

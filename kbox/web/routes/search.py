@@ -8,17 +8,19 @@ without building an app.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...database import EventRepository
+from ...history import HistoryManager
 from ...search_suggest import SearchSuggester
 from ...suggestions import SuggestionEngine, SuggestionError
 from ...video_library import VideoLibrary
 from ..dependencies import (
     get_current_user_id,
     get_event_repo,
+    get_history_manager,
     get_search_suggester,
     get_suggestion_engine,
     get_video_library,
@@ -51,6 +53,28 @@ MIN_SUGGEST_QUERY_LENGTH = 4
 router = APIRouter()
 
 
+def _mark_performed_before(results: List[Dict[str, Any]], history_mgr: HistoryManager) -> None:
+    """
+    Set ``performed_before`` on each result whose exact video has a recorded
+    performance on this install (see issue #216).
+
+    Deliberately a yes/no rather than a count: a count reads as how popular
+    the song is, which could put guests off a crowd favourite, when the point
+    is only that this version is known to work. It is a label, not a ranking
+    input, so an untried and possibly better version keeps its place.
+
+    Best effort: a failed lookup leaves the results unlabelled rather than
+    failing the search.
+    """
+    try:
+        performed = history_mgr.performed_video_ids(r["id"] for r in results if r.get("id"))
+    except Exception:
+        logger.warning("Failed to look up performance history for results", exc_info=True)
+        return
+    for result in results:
+        result["performed_before"] = result.get("id") in performed
+
+
 @router.get("/api/search")
 def search_videos(
     q: str,
@@ -58,9 +82,11 @@ def search_videos(
     video_lib: VideoLibrary = Depends(get_video_library),
     current_user_id: Optional[str] = Depends(get_current_user_id),
     event_repo: EventRepository = Depends(get_event_repo),
+    history_mgr: HistoryManager = Depends(get_history_manager),
 ):
     """Search for videos across all configured sources."""
     results = video_lib.search(q, max_results)
+    _mark_performed_before(results, history_mgr)
 
     if current_user_id:
         try:
@@ -110,6 +136,7 @@ def get_suggestions(
     max_results: int = 8,
     suggestion_engine: SuggestionEngine = Depends(get_suggestion_engine),
     current_user_id: str = Depends(require_user),
+    history_mgr: HistoryManager = Depends(get_history_manager),
 ):
     """
     Get AI-powered song suggestions for current user.
@@ -127,6 +154,7 @@ def get_suggestions(
 
     try:
         results = suggestion_engine.get_suggestions(current_user_id, max_results)
+        _mark_performed_before(results, history_mgr)
         return {"results": results, "source": "ai"}
     except SuggestionError as e:
         raise HTTPException(status_code=503, detail=str(e))
