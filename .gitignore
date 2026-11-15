@@ -42,6 +42,5 @@ test/fixtures/test_3s.mp4
 .mypy_cache
 .test-venv
 deploy.sh
-ldocs
 .env
 backup
