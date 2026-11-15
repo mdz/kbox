@@ -14,6 +14,7 @@ BusWatcher (the poll thread).
 
 import logging
 import sys
+import threading
 from typing import Any, Optional
 
 from . import elements
@@ -85,6 +86,37 @@ class StreamingController:
 
         # Interstitial state
         self._is_interstitial = False  # True when displaying interstitial (not a song)
+
+        # Serialises pipeline STATE TRANSITIONS, so two threads never drive
+        # playbin's state machine at once. Until this existed, the only thing
+        # serialising them was PlaybackController.lock, by the accident that
+        # most callers happen to hold it -- and two callers do not:
+        # PlaybackController.shutdown() -> stop() and the config-change route
+        # -> reinitialize_pipeline(). Whether this pipeline is safe to drive
+        # from two threads is this class's concern, not something its callers
+        # should have to arrange.
+        #
+        # Covered: load_file, stop_playback, pause, resume, seek,
+        # display_image, reinitialize_pipeline and stop. Also the
+        # StillImageFeeder, which has no lock of its own and is touched only
+        # from inside those methods.
+        #
+        # Deliberately NOT covered, because they are property writes and
+        # reads rather than state transitions, and are called from the
+        # monitor and overlay timer threads on every tick: get_position(),
+        # get_pipeline_state(), set_pitch_shift(), set_volume_gain_db() and
+        # the overlay/QR pass-throughs. Locking those would reintroduce the
+        # very stall this lock is meant to keep narrow.
+        #
+        # ORDERING: PlaybackController.lock (OUTER) -> this lock (INNER).
+        # Nothing executed while holding this lock may take the playback
+        # lock. That is why stop() and reinitialize_pipeline() both join the
+        # bus watchers BEFORE acquiring it: a watcher thread can be inside
+        # the EOS callback waiting on the playback lock, while the thread
+        # holding that lock waits on this one. BusWatcher.stop() joins with a
+        # 1s timeout, so that would strand the thread rather than hang
+        # forever -- still worth not writing.
+        self._pipeline_lock = threading.Lock()
 
         # GStreamer initialization state
         self._gst_initialized = False
@@ -294,65 +326,66 @@ class StreamingController:
 
         Gst = _get_gst()
 
-        self.logger.debug("load_file: entry, current_state=%s", self.state)
+        with self._pipeline_lock:
+            self.logger.debug("load_file: entry, current_state=%s", self.state)
 
-        # Clear interstitial flag - we're loading a real song
-        self._is_interstitial = False
+            # Clear interstitial flag - we're loading a real song
+            self._is_interstitial = False
 
-        # Hand the display bridge over to playbin: the interstitial pipeline
-        # must stop feeding it before playbin starts, or both would.
-        self.still_image.stop()
+            # Hand the display bridge over to playbin: the interstitial pipeline
+            # must stop feeding it before playbin starts, or both would.
+            self.still_image.stop()
 
-        # Drop to READY to reset pipeline before loading the next file. See
-        # the "NULL versus READY also makes no difference to format
-        # renegotiation" trap in docs/development/gstreamer-pipeline.md.
-        self.playbin.set_state(Gst.State.READY)
-        self.logger.debug("load_file: after READY")
+            # Drop to READY to reset pipeline before loading the next file. See
+            # the "NULL versus READY also makes no difference to format
+            # renegotiation" trap in docs/development/gstreamer-pipeline.md.
+            self.playbin.set_state(Gst.State.READY)
+            self.logger.debug("load_file: after READY")
 
-        # Unmute audio (may have been muted for interstitial)
-        self.playbin.set_property("mute", False)
+            # Unmute audio (may have been muted for interstitial)
+            self.playbin.set_property("mute", False)
 
-        # Set new URI
-        self.playbin.set_property("uri", f"file://{filepath}")
+            # Set new URI
+            self.playbin.set_property("uri", f"file://{filepath}")
 
-        # If we need to start at a non-zero position, go to PAUSED first,
-        # seek, then go to PLAYING. This prevents audio from position 0
-        # playing briefly before the seek completes.
-        if start_position_seconds > 0:
-            self.logger.debug("load_file: going to PAUSED for pre-seek")
-            ret = self.playbin.set_state(Gst.State.PAUSED)
+            # If we need to start at a non-zero position, go to PAUSED first,
+            # seek, then go to PLAYING. This prevents audio from position 0
+            # playing briefly before the seek completes.
+            if start_position_seconds > 0:
+                self.logger.debug("load_file: going to PAUSED for pre-seek")
+                ret = self.playbin.set_state(Gst.State.PAUSED)
+                if ret == Gst.StateChangeReturn.FAILURE:
+                    raise RuntimeError("Failed to pause for seek")
+
+                # Wait for PAUSED state
+                ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
+                if ret == Gst.StateChangeReturn.FAILURE:
+                    raise RuntimeError("Pipeline failed to reach PAUSED state")
+
+                # Seek while paused
+                position_ns = start_position_seconds * Gst.SECOND
+                self.logger.debug("load_file: seeking to %s while paused", start_position_seconds)
+                self.playbin.seek_simple(
+                    Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
+                )
+
+            # Start playing
+            ret = self.playbin.set_state(Gst.State.PLAYING)
             if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Failed to pause for seek")
+                raise RuntimeError("Failed to start playback")
 
-            # Wait for PAUSED state
+            self.logger.debug("load_file: after PLAYING request, ret=%s", ret)
+
+            # Wait for state change to complete or error
             ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
             if ret == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("Pipeline failed to reach PAUSED state")
+                raise RuntimeError("Pipeline failed to reach PLAYING state")
 
-            # Seek while paused
-            position_ns = start_position_seconds * Gst.SECOND
-            self.logger.debug("load_file: seeking to %s while paused", start_position_seconds)
-            self.playbin.seek_simple(
-                Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
-            )
+            self.logger.debug("load_file: state reached %s", state)
 
-        # Start playing
-        ret = self.playbin.set_state(Gst.State.PLAYING)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError("Failed to start playback")
-
-        self.logger.debug("load_file: after PLAYING request, ret=%s", ret)
-
-        # Wait for state change to complete or error
-        ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError("Pipeline failed to reach PLAYING state")
-
-        self.logger.debug("load_file: state reached %s", state)
-
-        self.state = "playing"
-        self.current_file = filepath
-        self.logger.info("Playback started successfully")
+            self.state = "playing"
+            self.current_file = filepath
+            self.logger.info("Playback started successfully")
 
     def stop_playback(self):
         """Stop current playback and return to idle state."""
@@ -361,56 +394,62 @@ class StreamingController:
 
         self.logger.info("Stopping playback")
 
-        Gst = _get_gst()
-        self.logger.debug("stop_playback: before READY, state=%s", self.state)
-        self.playbin.set_state(Gst.State.READY)
-        self.logger.debug("stop_playback: after READY")
+        with self._pipeline_lock:
+            Gst = _get_gst()
+            self.logger.debug("stop_playback: before READY, state=%s", self.state)
+            self.playbin.set_state(Gst.State.READY)
+            self.logger.debug("stop_playback: after READY")
 
-        self.state = "idle"
-        self.current_file = None
-        self.logger.info("Returned to idle state")
+            self.state = "idle"
+            self.current_file = None
+            self.logger.info("Returned to idle state")
 
     def pause(self):
         """Pause playback."""
         if not self._requires_gst():
             return
-        if self.state != "playing":
-            self.logger.warning("Cannot pause: not currently playing")
-            raise RuntimeError("Cannot pause: not currently playing")
+        # The state guard is inside the lock so the check and the state
+        # change cannot be split by another thread's transition.
+        with self._pipeline_lock:
+            if self.state != "playing":
+                self.logger.warning("Cannot pause: not currently playing")
+                raise RuntimeError("Cannot pause: not currently playing")
 
-        Gst = _get_gst()
-        ret = self.playbin.set_state(Gst.State.PAUSED)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError("Failed to pause playback")
+            Gst = _get_gst()
+            ret = self.playbin.set_state(Gst.State.PAUSED)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to pause playback")
 
-        # Wait for state change to complete (up to 5 seconds)
-        ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
-        if state != Gst.State.PAUSED:
-            self.logger.warning(
-                "Pause state change: ret=%s, state=%s, pending=%s", ret, state, pending
-            )
+            # Wait for state change to complete (up to 5 seconds)
+            ret, state, pending = self.playbin.get_state(5 * Gst.SECOND)
+            if state != Gst.State.PAUSED:
+                self.logger.warning(
+                    "Pause state change: ret=%s, state=%s, pending=%s", ret, state, pending
+                )
 
-        self.state = "paused"
-        self.logger.info("Playback paused")
+            self.state = "paused"
+            self.logger.info("Playback paused")
 
     def resume(self):
         """Resume playback."""
         if not self._requires_gst():
             return
-        if self.state != "paused":
-            self.logger.warning("Cannot resume: not currently paused")
-            raise RuntimeError("Cannot resume: not currently paused")
+        # Guard inside the lock, as in pause().
+        with self._pipeline_lock:
+            if self.state != "paused":
+                self.logger.warning("Cannot resume: not currently paused")
+                raise RuntimeError("Cannot resume: not currently paused")
 
-        Gst = _get_gst()
-        ret = self.playbin.set_state(Gst.State.PLAYING)
-        if ret == Gst.StateChangeReturn.FAILURE:
-            raise RuntimeError("Failed to resume playback")
+            Gst = _get_gst()
+            ret = self.playbin.set_state(Gst.State.PLAYING)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to resume playback")
 
-        # Wait for state change to complete
-        self.playbin.get_state(Gst.SECOND)
+            # Wait for state change to complete
+            self.playbin.get_state(Gst.SECOND)
 
-        self.state = "playing"
-        self.logger.info("Playback resumed")
+            self.state = "playing"
+            self.logger.info("Playback resumed")
 
     def stop(self):
         """Stop the streaming controller and cleanup resources."""
@@ -425,23 +464,28 @@ class StreamingController:
         # Stop bus polling first
         self._stop_bus_polling()
 
-        self.still_image.stop()
+        # The bus watchers are joined above, OUTSIDE this lock, and must stay
+        # that way: a watcher thread can be inside the EOS callback waiting on
+        # the playback lock while the thread holding that lock waits on this
+        # one. See the ordering note in __init__.
+        with self._pipeline_lock:
+            self.still_image.stop()
 
-        if self.playbin:
-            try:
-                Gst = _get_gst()
-                self.playbin.set_state(Gst.State.NULL)
-                self.playbin = None
-            except Exception as e:
-                self.logger.error("Error stopping pipeline: %s", e, exc_info=True)
+            if self.playbin:
+                try:
+                    Gst = _get_gst()
+                    self.playbin.set_state(Gst.State.NULL)
+                    self.playbin = None
+                except Exception as e:
+                    self.logger.error("Error stopping pipeline: %s", e, exc_info=True)
 
-        # Release the screen last, so it stays claimed until we are really
-        # shutting down rather than blinking during teardown.
-        if self.display:
-            self.display.stop()
-            self.display = None
+            # Release the screen last, so it stays claimed until we are really
+            # shutting down rather than blinking during teardown.
+            if self.display:
+                self.display.stop()
+                self.display = None
 
-        self.logger.info("Streaming controller stopped")
+            self.logger.info("Streaming controller stopped")
 
     def reinitialize_pipeline(self):
         """
@@ -463,46 +507,51 @@ class StreamingController:
         # Stop bus polling
         self._stop_bus_polling()
 
-        self.still_image.stop()
+        # The bus watchers are joined above, OUTSIDE this lock, and must stay
+        # that way: a watcher thread can be inside the EOS callback waiting on
+        # the playback lock while the thread holding that lock waits on this
+        # one. See the ordering note in __init__.
+        with self._pipeline_lock:
+            self.still_image.stop()
 
-        # Set pipeline to NULL and release resources
-        if self.playbin:
-            Gst = _get_gst()
-            self.playbin.set_state(Gst.State.NULL)
-            # Pipeline will be garbage collected
-            self.playbin = None
-            self.audio_bin = None
-            self.video_bin = None
-            self.pitch_shift_element = None
-            self.volume_element = None
+            # Set pipeline to NULL and release resources
+            if self.playbin:
+                Gst = _get_gst()
+                self.playbin.set_state(Gst.State.NULL)
+                # Pipeline will be garbage collected
+                self.playbin = None
+                self.audio_bin = None
+                self.video_bin = None
+                self.pitch_shift_element = None
+                self.volume_element = None
 
-        # Tear the display pipeline down too -- it holds the DRM device, and
-        # the rebuilt one cannot claim the screen until this one lets go.
-        if self.display:
-            self.display.release_for_rebuild()
-            self.display = None
+            # Tear the display pipeline down too -- it holds the DRM device, and
+            # the rebuilt one cannot claim the screen until this one lets go.
+            if self.display:
+                self.display.release_for_rebuild()
+                self.display = None
 
-        # Reset state
-        self.state = "idle"
-        self.current_file = None
-        self._is_interstitial = False
+            # Reset state
+            self.state = "idle"
+            self.current_file = None
+            self._is_interstitial = False
 
-        # Recreate the pipeline with fresh config
-        self._create_persistent_pipeline()
+            # Recreate the pipeline with fresh config
+            self._create_persistent_pipeline()
 
-        # Re-apply QR overlay image if we had one
-        if self.overlays.qr_image_path and self.overlays.qr_overlay:
-            self.logger.debug("Re-applying QR overlay after pipeline reinit")
-            self.update_qr_overlay(self.overlays.qr_image_path)
+            # Re-apply QR overlay image if we had one
+            if self.overlays.qr_image_path and self.overlays.qr_overlay:
+                self.logger.debug("Re-applying QR overlay after pipeline reinit")
+                self.update_qr_overlay(self.overlays.qr_image_path)
 
-        # Restore display if there was an interstitial showing
-        if was_showing_interstitial and current_file_backup:
-            try:
-                self.display_image(current_file_backup)
-            except Exception as e:
-                self.logger.warning("Could not restore interstitial display: %s", e)
+            # Restore display if there was an interstitial showing
+            if was_showing_interstitial and current_file_backup:
+                try:
+                    self._display_image_locked(current_file_backup)
+                except Exception as e:
+                    self.logger.warning("Could not restore interstitial display: %s", e)
 
-        self.logger.info("Pipeline reinitialized successfully")
+            self.logger.info("Pipeline reinitialized successfully")
 
     # =========================================================================
     # Pitch Control
@@ -605,29 +654,33 @@ class StreamingController:
         """
         if not self._requires_gst():
             return False
-        if self.state not in ("playing", "paused"):
-            self.logger.warning("Cannot seek: no active playback")
-            return False
+        # Guard inside the lock, as in pause(): a flush seek against a
+        # pipeline another thread is re-stating is exactly what this
+        # serialises.
+        with self._pipeline_lock:
+            if self.state not in ("playing", "paused"):
+                self.logger.warning("Cannot seek: no active playback")
+                return False
 
-        try:
-            Gst = _get_gst()
-            position_ns = position_seconds * Gst.SECOND
-            success = self.playbin.seek_simple(
-                Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
-            )
-            if success:
-                self.logger.info("Seeked to position: %s seconds", position_seconds)
-                # Track last seek position and time to handle stale position queries
-                import time
+            try:
+                Gst = _get_gst()
+                position_ns = position_seconds * Gst.SECOND
+                success = self.playbin.seek_simple(
+                    Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, position_ns
+                )
+                if success:
+                    self.logger.info("Seeked to position: %s seconds", position_seconds)
+                    # Track last seek position and time to handle stale position queries
+                    import time
 
-                self._last_seek_position = position_seconds
-                self._last_seek_time = time.time()
-            else:
-                self.logger.warning("Seek failed")
-            return success
-        except Exception as e:
-            self.logger.error("Error seeking: %s", e, exc_info=True)
-            return False
+                    self._last_seek_position = position_seconds
+                    self._last_seek_time = time.time()
+                else:
+                    self.logger.warning("Seek failed")
+                return success
+            except Exception as e:
+                self.logger.error("Error seeking: %s", e, exc_info=True)
+                return False
 
     # =========================================================================
     # Overlay Control
@@ -698,6 +751,17 @@ class StreamingController:
 
         Args:
             image_path: Path to the image file to display
+        """
+        with self._pipeline_lock:
+            self._display_image_locked(image_path)
+
+    def _display_image_locked(self, image_path: str):
+        """
+        display_image()'s body, with self._pipeline_lock already held.
+
+        Split out because reinitialize_pipeline() restores the interstitial
+        it was showing before the rebuild, from inside its own locked
+        region, and the lock is deliberately not reentrant.
         """
         self.logger.debug("Displaying image: %s", image_path)
 

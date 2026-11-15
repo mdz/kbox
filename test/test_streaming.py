@@ -1505,3 +1505,170 @@ def test_stop_bus_polling_joins_every_thread(controller):
     assert controller.bus_watchers == []
     for watcher in watchers:
         assert not watcher.is_alive(), f"{watcher.name} did not exit"
+
+
+# =========================================================================
+# Pipeline Lock Tests
+#
+# These assert the locking *discipline*, not pipeline behaviour, so they
+# stub playbin out: what matters is which methods take
+# _pipeline_lock and which deliberately do not. They do not skip when
+# GStreamer is missing -- see this module's docstring.
+# =========================================================================
+
+
+class _CountingLock:
+    """A Lock that records how many times it was entered as a context manager."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.entries = 0
+
+    def __enter__(self):
+        self._lock.acquire()
+        self.entries += 1
+        return self
+
+    def __exit__(self, *exc_info):
+        self._lock.release()
+        return False
+
+    def locked(self):
+        return self._lock.locked()
+
+
+@pytest.fixture
+def stubbed_controller(controller):
+    """A controller whose playbin and interstitial feeder are stubs.
+
+    Lets every pipeline-mutating method run start to finish without
+    touching real GStreamer state, so the locking can be observed on its
+    own.
+    """
+    Gst = _get_gst()
+    # Retire the real playbin properly before dropping it. Letting it fall
+    # out of scope in READY emits a GStreamer-CRITICAL about disposing a
+    # non-NULL element, which is pure noise in CI output.
+    controller.playbin.set_state(Gst.State.NULL)
+    controller.playbin.get_state(Gst.SECOND)
+
+    controller.playbin = MagicMock()
+    controller.playbin.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+    controller.playbin.get_state.return_value = (
+        Gst.StateChangeReturn.SUCCESS,
+        Gst.State.PLAYING,
+        Gst.State.VOID_PENDING,
+    )
+    controller.playbin.seek_simple.return_value = True
+    controller.still_image = MagicMock()
+    controller.still_image.start.return_value = True
+    return controller
+
+
+def test_pipeline_state_changes_take_the_pipeline_lock(stubbed_controller):
+    """Every pipeline state transition is serialised by _pipeline_lock.
+
+    Before this lock existed, the only thing serialising playbin state
+    changes was PlaybackController.lock, by the accident that most callers
+    happened to hold it -- and PlaybackController.shutdown() and the
+    config-change route did not. Driving playbin from two threads at once
+    is undefined pipeline behaviour, so each of these must hold the lock.
+    """
+    lock = _CountingLock()
+    stubbed_controller._pipeline_lock = lock
+
+    stubbed_controller.load_file("/tmp/does-not-need-to-exist.mp4")
+    assert lock.entries == 1, "load_file did not take the pipeline lock"
+
+    stubbed_controller.pause()
+    assert lock.entries == 2, "pause did not take the pipeline lock"
+
+    stubbed_controller.resume()
+    assert lock.entries == 3, "resume did not take the pipeline lock"
+
+    stubbed_controller.seek(5)
+    assert lock.entries == 4, "seek did not take the pipeline lock"
+
+    stubbed_controller.stop_playback()
+    assert lock.entries == 5, "stop_playback did not take the pipeline lock"
+
+    stubbed_controller.display_image("/tmp/does-not-need-to-exist.png")
+    assert lock.entries == 6, "display_image did not take the pipeline lock"
+
+
+def test_pipeline_lock_is_held_across_the_pipeline_work(stubbed_controller):
+    """The lock spans the pipeline work, it isn't merely touched on entry.
+
+    Proven from inside the critical section: a non-blocking acquire from
+    another thread must fail while load_file is mid-flight. A plain
+    assertion on the calling thread would pass even for a non-reentrant
+    lock already released, which is the bug worth catching.
+    """
+    inside = threading.Event()
+    acquired_from_other_thread = []
+
+    def try_acquire_elsewhere():
+        got = stubbed_controller._pipeline_lock.acquire(blocking=False)
+        acquired_from_other_thread.append(got)
+        if got:
+            stubbed_controller._pipeline_lock.release()
+
+    def probe_from_inside_the_lock():
+        """Runs inside load_file, while the lock is held."""
+        inside.set()
+        prober = threading.Thread(target=try_acquire_elsewhere)
+        prober.start()
+        prober.join()
+
+    stubbed_controller.still_image.stop.side_effect = probe_from_inside_the_lock
+
+    stubbed_controller.load_file("/tmp/does-not-need-to-exist.mp4")
+
+    assert inside.is_set(), "load_file never reached the instrumented call"
+    assert acquired_from_other_thread == [False], (
+        "another thread acquired the pipeline lock while load_file held it"
+    )
+
+
+def test_hot_path_reads_do_not_take_the_pipeline_lock(stubbed_controller):
+    """Property writes and reads stay outside the lock, deliberately.
+
+    get_position() runs on every monitor tick and the pitch/volume setters
+    are property writes on persistent-bin elements, not state transitions.
+    Pulling them inside the lock would make them queue behind a song load
+    -- reintroducing, by a different door, the stall the narrow lock
+    exists to avoid.
+    """
+    lock = _CountingLock()
+    stubbed_controller._pipeline_lock = lock
+    stubbed_controller.state = "playing"
+    stubbed_controller.playbin.query_position.return_value = (True, 0)
+
+    stubbed_controller.get_position()
+    stubbed_controller.set_pitch_shift(3)
+    stubbed_controller.set_volume_gain_db(-2.0)
+    stubbed_controller.get_pipeline_state()
+
+    assert lock.entries == 0, "a hot-path read/property write took the pipeline lock"
+
+
+def test_reinitialize_restores_interstitial_without_reentering_the_lock(stubbed_controller):
+    """reinitialize_pipeline() must not re-enter the non-reentrant lock.
+
+    It restores the interstitial it was showing before the rebuild from
+    inside its own locked region, so it has to call the already-locked
+    body. Calling the public display_image() there would deadlock on the
+    first config change made while an interstitial was up.
+    """
+    stubbed_controller.display_image("/tmp/idle-screen.png")
+    assert stubbed_controller._is_interstitial
+
+    restored = []
+    stubbed_controller._display_image_locked = lambda path: restored.append(path)
+    stubbed_controller.display_image = lambda path: pytest.fail(
+        "reinitialize_pipeline() called the lock-taking display_image()"
+    )
+
+    stubbed_controller.reinitialize_pipeline()
+
+    assert restored == ["/tmp/idle-screen.png"]
