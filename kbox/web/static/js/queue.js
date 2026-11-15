@@ -2,7 +2,6 @@
  * Queue management functions for kbox web UI.
  */
 
-import { escapeHtml } from './utils.js';
 import {
     isOperator, userId,
     currentQueue, setCurrentQueue,
