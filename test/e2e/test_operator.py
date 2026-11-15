@@ -37,6 +37,7 @@ def _unlock_and_reveal_buttons(mobile_page, init_user, operator_unlock):
 def test_operator_button_shows_pin_modal(mobile_page, live_app, init_user):
     """Clicking the operator key opens the PIN entry modal."""
     init_user()
+    mobile_page.locator("#operator-menu-button").click()
     mobile_page.locator("#operator-auth-button").click()
     expect(mobile_page.locator("#operator-pin-modal")).to_be_visible()
 
@@ -44,6 +45,7 @@ def test_operator_button_shows_pin_modal(mobile_page, live_app, init_user):
 def test_wrong_pin_shows_error(mobile_page, live_app, init_user):
     """Submitting an incorrect PIN shows an error inside the modal."""
     init_user()
+    mobile_page.locator("#operator-menu-button").click()
     mobile_page.locator("#operator-auth-button").click()
     mobile_page.wait_for_selector("#operator-pin-modal", state="visible")
     mobile_page.fill("#operator-pin-input", "9999")
