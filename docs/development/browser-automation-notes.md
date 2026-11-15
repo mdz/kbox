@@ -89,8 +89,8 @@ browser DOM currently shows.
 
 ## Running an isolated instance (worktrees, scratch data)
 
-Never point automation at your real `~/.kbox`. Start the checked-in `kbox-scratch`
-entry from `.claude/launch.json` (`preview_start {name: "kbox-scratch"}`), which runs:
+Never point automation at your real `~/.kbox`. Start the checked-in `kbox`
+entry from `.claude/launch.json` (`preview_start {name: "kbox"}`), which is already isolated, which runs:
 
 ```bash
 uv run python -m kbox.main --data-dir .kbox-scratch --access-token uxtest
