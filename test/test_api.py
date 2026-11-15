@@ -201,6 +201,37 @@ class TestQueueEndpoints:
         assert data["status"] == "added"
         assert "id" in data
 
+    def test_add_song_returns_queue_slot(self, client, alice):
+        """POST /api/queue reports the new item's position and estimated wait."""
+        set_user(client, ALICE_ID, "Alice")
+
+        def add(video_id, duration):
+            r = client.post(
+                "/api/queue",
+                json={
+                    "user_id": ALICE_ID,
+                    "video_id": video_id,
+                    "title": video_id,
+                    "duration_seconds": duration,
+                    "pitch_semitones": 0,
+                },
+            )
+            assert r.status_code == 200
+            return r.json()
+
+        assert add("youtube:a", 200)["slot"] == {"position": 1, "estimated_seconds": 0}
+        assert add("youtube:b", 300)["slot"] == {"position": 2, "estimated_seconds": 200}
+        third = add("youtube:c", 100)
+        assert third["slot"] == {"position": 3, "estimated_seconds": 500}
+
+        # Replacing keeps the item's slot
+        r = client.post(
+            f"/api/queue/{third['id']}/replace",
+            json={"video_id": "youtube:d", "title": "d", "duration_seconds": 50},
+        )
+        assert r.status_code == 200
+        assert r.json()["slot"] == {"position": 3, "estimated_seconds": 500}
+
     def test_add_song_not_authenticated(self, client):
         """POST /api/queue - unauthenticated request returns 401."""
         # Without establishing session identity first, requests are rejected

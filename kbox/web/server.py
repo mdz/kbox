@@ -560,15 +560,40 @@ def create_app(
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
 
+    def queue_slot(queue_mgr: QueueManager, playback: PlaybackController, item_id: int):
+        """Where a queue item sits among upcoming songs and roughly when it plays.
+
+        Same basis as ``my_next_turn`` in GET /api/queue: remaining time of the
+        current song plus the durations of the upcoming songs ahead of it.
+        Returns None if the item isn't upcoming (e.g. already played).
+        """
+        queue_items = queue_mgr.get_queue()
+        cursor_id = playback.get_cursor()
+        cursor_idx = next((i for i, it in enumerate(queue_items) if it.id == cursor_id), None)
+        upcoming = queue_items[(cursor_idx + 1) if cursor_idx is not None else 0 :]
+        index = next((i for i, it in enumerate(upcoming) if it.id == item_id), None)
+        if index is None:
+            return None
+        status = playback.get_status()
+        current_song = status.get("current_song")
+        seconds = 0
+        if current_song:
+            seconds = max(
+                0,
+                (current_song.get("duration_seconds") or 0) - (status.get("position_seconds") or 0),
+            )
+        seconds += sum(it.metadata.duration_seconds or 0 for it in upcoming[:index])
+        return {"position": index + 1, "estimated_seconds": int(seconds)}
+
     @app.post("/api/queue")
     def add_song(
         request_data: AddSongRequest,
-        request: Request,
         queue_mgr: QueueManager = Depends(get_queue_manager),
         user_mgr: UserManager = Depends(get_user_manager),
+        playback: PlaybackController = Depends(get_playback_controller),
         current_user_id: str = Depends(require_user),
     ):
-        """Add song to queue."""
+        """Add song to queue. Responds with the new item's queue slot."""
         try:
             # Get user from session, not the request body — the session is
             # the source of truth for which self-declared identity this
@@ -591,13 +616,13 @@ def create_app(
             )
 
             # Show overlay notification
-            playback = request.app.state.playback_controller
-            if playback:
-                playback.show_notification(
-                    f"{user.display_name} added a song", duration_seconds=5.0
-                )
+            playback.show_notification(f"{user.display_name} added a song", duration_seconds=5.0)
 
-            return {"id": item_id, "status": "added"}
+            return {
+                "id": item_id,
+                "status": "added",
+                "slot": queue_slot(queue_mgr, playback, item_id),
+            }
         except HTTPException:
             raise  # Let HTTP exceptions pass through
         except Exception as e:
@@ -669,7 +694,7 @@ def create_app(
         ):
             raise HTTPException(status_code=404, detail="Queue item not found")
 
-        return {"status": "replaced"}
+        return {"status": "replaced", "slot": queue_slot(queue_mgr, playback, item_id)}
 
     @app.patch("/api/queue/{item_id}/position")
     def reorder_song(
