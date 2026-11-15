@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 
 from kbox.models import QueueItem, SongMetadata, SongSettings
-from kbox.playback import PlaybackController, PlaybackState
+from kbox.playback import PlaybackController, PlaybackState, song_tuning
 from kbox.queue import QueueManager
 
 
@@ -917,95 +917,45 @@ def test_navigating_away_clears_pending_replace_auto_resume(
     assert playback_controller.current_song_id == 2
 
 
-def test_move_to_next_with_stale_position_cache(
-    playback_controller, mock_queue_manager, mock_streaming_controller
+def test_move_to_next_passes_the_current_song_as_the_reference(
+    playback_controller, mock_queue_manager
 ):
-    """Test that move_to_next uses fresh position data, not stale cache.
+    """The controller's only job here is to say which song to move after.
 
-    Regression test: After queue reordering operations, the cached position
-    in self.current_song['position'] becomes stale. move_to_next should query
-    fresh position from database, not use the cached value.
-    """
-    # Currently playing song
-    playback_controller.current_song_id = 10
-    playback_controller.state = PlaybackState.PLAYING
-
-    # In the database, current song is at position 5 (fresh data)
-    current_song_fresh = create_mock_queue_item(
-        id=10,
-        position=5,
-        title="Currently Playing",
-        user_name="Alice",
-        content_path="/path/to/current.mp4",
-        content_status=QueueManager.STATUS_READY,
-        pitch_semitones=0,
-    )
-
-    # Song to move to "play next"
-    song_to_move = create_mock_queue_item(
-        id=20, position=8, title="Move This Next", content_status=QueueManager.STATUS_READY
-    )
-
-    # Mock: get_item returns fresh data with correct position
-    def get_item_side_effect(item_id):
-        if item_id == 10:
-            return current_song_fresh  # Fresh position = 5
-        elif item_id == 20:
-            return song_to_move
-        return None
-
-    mock_queue_manager.get_item.side_effect = get_item_side_effect
-    mock_queue_manager.reorder_song.return_value = True
-
-    # Call move_to_next
-    result = playback_controller.move_to_next(20)
-
-    assert result is True
-
-    # BUG: With stale cache, it calculates: 3 + 1 = 4 (WRONG!)
-    # CORRECT: Should query fresh position: 5 + 1 = 6
-    # This assertion will FAIL, demonstrating the bug
-    mock_queue_manager.reorder_song.assert_called_once_with(20, 6)
-
-
-def test_move_to_next_when_current_song_is_last_in_queue(
-    playback_controller, mock_queue_manager, mock_streaming_controller
-):
-    """Test that move_to_next clamps to the queue's max position instead of failing.
-
-    Regression test for https://github.com/mdz/kbox/issues/89: when the
-    currently playing song is last in the queue, current_song.position + 1
-    exceeds the max position, so reorder() would reject it as an "invalid
-    position" - which the API layer misreports as "Queue item not found".
-    "Next" after the last song should simply mean the end of the queue.
+    The position arithmetic (fresh lookup, clamping) belongs to
+    QueueManager.move_after and is tested in test_queue.py.
     """
     playback_controller.current_song_id = 10
     playback_controller.state = PlaybackState.PLAYING
+    mock_queue_manager.move_after.return_value = 6
 
-    # Current song is last in the queue, at position 2
-    current_song = create_mock_queue_item(
-        id=10, position=2, title="Currently Playing", content_status=QueueManager.STATUS_READY
-    )
-    song_to_move = create_mock_queue_item(
-        id=20, position=1, title="Move This Next", content_status=QueueManager.STATUS_READY
-    )
+    assert playback_controller.move_to_next(20) is True
 
-    def get_item_side_effect(item_id):
-        if item_id == 10:
-            return current_song
-        elif item_id == 20:
-            return song_to_move
-        return None
+    mock_queue_manager.move_after.assert_called_once_with(20, 10)
 
-    mock_queue_manager.get_item.side_effect = get_item_side_effect
-    mock_queue_manager.get_queue.return_value = [song_to_move, current_song]
-    mock_queue_manager.reorder_song.return_value = True
 
-    result = playback_controller.move_to_next(20)
+def test_move_to_next_with_no_current_song_has_no_reference(
+    playback_controller, mock_queue_manager
+):
+    playback_controller.current_song_id = None
+    mock_queue_manager.move_after.return_value = 1
 
-    assert result is True
-    # Clamped to max position (2), not 3 (which would be rejected as invalid)
-    mock_queue_manager.reorder_song.assert_called_once_with(20, 2)
+    assert playback_controller.move_to_next(20) is True
+
+    mock_queue_manager.move_after.assert_called_once_with(20, None)
+
+
+def test_move_to_next_reports_failure(playback_controller, mock_queue_manager):
+    playback_controller.current_song_id = 10
+    mock_queue_manager.move_after.return_value = None
+
+    assert playback_controller.move_to_next(20) is False
+
+
+def test_move_to_end_reports_failure(playback_controller, mock_queue_manager):
+    mock_queue_manager.move_to_end.return_value = None
+
+    assert playback_controller.move_to_end(20) is False
 
 
 def test_on_song_end_plays_next_in_queue_order(
@@ -1555,42 +1505,39 @@ class TestTrailingSilenceSkip:
         pc._monitoring = False
         return pc, mock_silence_analyzer
 
-    def test_lookup_trim_point_no_analyzer(self, playback_controller):
+    def test_lookup_trim_point_no_analyzer(self, playback_controller, mock_config_manager):
         """No analyzer configured -- always None, feature is a no-op."""
         assert playback_controller.silence_analyzer is None
-        assert playback_controller._lookup_trim_point("youtube:abc") is None
+        assert song_tuning.lookup_trim_point(None, mock_config_manager, "youtube:abc") is None
 
-    def test_lookup_trim_point_disabled_by_config(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=False
-        )
+    def test_lookup_trim_point_disabled_by_config(self, mock_config_manager):
+        mock_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = False
         mock_analyzer.get_cached_trim_point.return_value = 120
 
-        assert pc._lookup_trim_point("youtube:abc") is None
+        assert (
+            song_tuning.lookup_trim_point(mock_analyzer, mock_config_manager, "youtube:abc") is None
+        )
         mock_analyzer.get_cached_trim_point.assert_not_called()
 
-    def test_lookup_trim_point_returns_cached_value(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
-        )
+    def test_lookup_trim_point_returns_cached_value(self, mock_config_manager):
+        mock_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = True
         mock_analyzer.get_cached_trim_point.return_value = 120
 
-        assert pc._lookup_trim_point("youtube:abc") == 120
+        assert (
+            song_tuning.lookup_trim_point(mock_analyzer, mock_config_manager, "youtube:abc") == 120
+        )
         mock_analyzer.get_cached_trim_point.assert_called_once_with("youtube:abc")
 
-    def test_lookup_trim_point_swallows_analyzer_errors(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
-        )
+    def test_lookup_trim_point_swallows_analyzer_errors(self, mock_config_manager):
+        mock_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = True
         mock_analyzer.get_cached_trim_point.side_effect = Exception("db error")
 
-        assert pc._lookup_trim_point("youtube:abc") is None
+        assert (
+            song_tuning.lookup_trim_point(mock_analyzer, mock_config_manager, "youtube:abc") is None
+        )
 
     def test_play_song_sets_trim_point(
         self, mock_queue_manager, mock_streaming_controller, mock_config_manager
@@ -1935,63 +1882,57 @@ class TestVolumeNormalization:
         pc._monitoring = False
         return pc, mock_loudness_analyzer
 
-    def test_lookup_volume_gain_no_analyzer(self, playback_controller):
+    @staticmethod
+    def _tuning_mocks(mock_config_manager, enabled=True):
+        """Analyzer + config for a direct song_tuning call -- no controller."""
+        from kbox.loudness import DEFAULT_TARGET_LUFS
+
+        mock_analyzer = Mock()
+        mock_config_manager.get_bool.return_value = enabled
+        mock_config_manager.get_float.return_value = DEFAULT_TARGET_LUFS
+        return mock_analyzer, mock_config_manager
+
+    def test_lookup_volume_gain_no_analyzer(self, playback_controller, mock_config_manager):
         """No analyzer configured -- always 0.0, feature is a no-op."""
         assert playback_controller.loudness_analyzer is None
-        assert playback_controller._lookup_volume_gain_db("youtube:abc") == 0.0
+        assert song_tuning.lookup_volume_gain_db(None, mock_config_manager, "youtube:abc") == 0.0
 
-    def test_lookup_volume_gain_disabled_by_config(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
+    def test_lookup_volume_gain_disabled_by_config(self, mock_config_manager):
         from kbox.loudness import LoudnessInfo
 
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=False
-        )
+        mock_analyzer, config = self._tuning_mocks(mock_config_manager, enabled=False)
         mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
             integrated_lufs=-10.0, true_peak_dbtp=-3.0
         )
 
-        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+        assert song_tuning.lookup_volume_gain_db(mock_analyzer, config, "youtube:abc") == 0.0
         mock_analyzer.get_cached_loudness.assert_not_called()
 
-    def test_lookup_volume_gain_unmeasured_video(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
+    def test_lookup_volume_gain_unmeasured_video(self, mock_config_manager):
         """A freshly-downloaded video without a measurement yet plays unadjusted."""
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
-        )
+        mock_analyzer, config = self._tuning_mocks(mock_config_manager)
         mock_analyzer.get_cached_loudness.return_value = None
 
-        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+        assert song_tuning.lookup_volume_gain_db(mock_analyzer, config, "youtube:abc") == 0.0
 
-    def test_lookup_volume_gain_computes_gain_from_measurement(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
+    def test_lookup_volume_gain_computes_gain_from_measurement(self, mock_config_manager):
         from kbox.loudness import LoudnessInfo
 
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
-        )
+        mock_analyzer, config = self._tuning_mocks(mock_config_manager)
         mock_analyzer.get_cached_loudness.return_value = LoudnessInfo(
             integrated_lufs=-10.0, true_peak_dbtp=-3.0
         )
 
-        gain = pc._lookup_volume_gain_db("youtube:abc")
+        gain = song_tuning.lookup_volume_gain_db(mock_analyzer, config, "youtube:abc")
 
         assert gain == pytest.approx(-6.0, abs=0.01)
         mock_analyzer.get_cached_loudness.assert_called_once_with("youtube:abc")
 
-    def test_lookup_volume_gain_swallows_analyzer_errors(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
-        pc, mock_analyzer = self._make_controller(
-            mock_queue_manager, mock_streaming_controller, mock_config_manager, enabled=True
-        )
+    def test_lookup_volume_gain_swallows_analyzer_errors(self, mock_config_manager):
+        mock_analyzer, config = self._tuning_mocks(mock_config_manager)
         mock_analyzer.get_cached_loudness.side_effect = Exception("db error")
 
-        assert pc._lookup_volume_gain_db("youtube:abc") == 0.0
+        assert song_tuning.lookup_volume_gain_db(mock_analyzer, config, "youtube:abc") == 0.0
 
     def test_play_song_applies_volume_gain(
         self, mock_queue_manager, mock_streaming_controller, mock_config_manager
