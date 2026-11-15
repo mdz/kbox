@@ -8,11 +8,11 @@ import logging
 import threading
 from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 from .database import ConfigRepository
 from .models import QueueItem
-from .queue import QueueManager
+from .queue import QueueManager, UpcomingItem
 
 
 class PlaybackState(Enum):
@@ -24,6 +24,34 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     TRANSITION = "transition"  # Between songs, showing interstitial
     ERROR = "error"
+
+
+def upcoming_songs(
+    queue: Sequence[QueueItem],
+    cursor_id: Optional[int],
+    current_song_id: Optional[int],
+    position_seconds: Optional[float],
+) -> List[UpcomingItem]:
+    """
+    The songs after the cursor, each with an estimated time until it starts.
+
+    The estimate is the time left in the song now playing plus the durations
+    of the upcoming songs ahead of it. With no cursor (or a cursor song no
+    longer in the queue) the whole queue is upcoming.
+    """
+    cursor_idx = next((i for i, s in enumerate(queue) if s.id == cursor_id), None)
+    upcoming_items = queue[(cursor_idx + 1) if cursor_idx is not None else 0 :]
+
+    wait = 0.0
+    current = next((s for s in queue if s.id == current_song_id), None)
+    if current is not None:
+        wait = max(0.0, (current.metadata.duration_seconds or 0) - (position_seconds or 0))
+
+    upcoming = []
+    for position, item in enumerate(upcoming_items, start=1):
+        upcoming.append(UpcomingItem(item, position, int(wait)))
+        wait += item.metadata.duration_seconds or 0
+    return upcoming
 
 
 class PlaybackController:
@@ -206,6 +234,20 @@ class PlaybackController:
     def get_cursor(self) -> Optional[int]:
         """Get the current cursor song ID."""
         return self._cursor_song_id
+
+    def get_upcoming(self) -> List[UpcomingItem]:
+        """Songs after the cursor, with estimated start times (see upcoming_songs)."""
+        with self._locked():
+            state = self.state
+            current_song_id = self.current_song_id
+
+        position = None
+        if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+            position = self.streaming_controller.get_position()
+
+        return upcoming_songs(
+            self.queue_manager.get_queue(), self.get_cursor(), current_song_id, position
+        )
 
     def clear_cursor(self) -> None:
         """Clear the queue cursor (e.g., when queue is cleared)."""
@@ -1556,16 +1598,10 @@ class PlaybackController:
                 current_song["song_name"] = queue_item.metadata.song_name
                 current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
 
-        # Time left in the current song, for wait estimates on upcoming songs
-        remaining = 0
-        if current_song:
-            remaining = max(0, (current_song["duration_seconds"] or 0) - (position or 0))
-
         status = {
             "state": state.value,
             "current_song": current_song,
             "position_seconds": position,
-            "remaining_seconds": remaining,
         }
         return status
 

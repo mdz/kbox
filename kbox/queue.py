@@ -379,33 +379,6 @@ class QueueManager:
         """Get the entire queue ordered by position."""
         return self.repository.get_all()
 
-    def get_upcoming(
-        self, after_song_id: Optional[int], current_remaining_seconds: float = 0
-    ) -> List[UpcomingItem]:
-        """
-        Get the songs after a reference song, with an estimated start time for each.
-
-        Args:
-            after_song_id: The song currently at the cursor (None, or a song no
-                longer in the queue, means the whole queue is upcoming).
-            current_remaining_seconds: Time left in the song now playing; it is
-                added to every wait estimate. The queue doesn't know playback
-                state, so the caller supplies it.
-        """
-        queue = self.repository.get_all()
-        start = 0
-        if after_song_id is not None:
-            idx = next((i for i, s in enumerate(queue) if s.id == after_song_id), None)
-            if idx is not None:
-                start = idx + 1
-
-        upcoming = []
-        wait = max(0, current_remaining_seconds)
-        for position, item in enumerate(queue[start:], start=1):
-            upcoming.append(UpcomingItem(item, position, int(wait)))
-            wait += item.metadata.duration_seconds or 0
-        return upcoming
-
     def get_song_at_offset(self, from_song_id: Optional[int], offset: int) -> Optional[QueueItem]:
         """
         Get the song at an offset from a reference song, respecting queue order.

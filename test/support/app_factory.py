@@ -13,7 +13,7 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackController, PlaybackState
+from kbox.playback import PlaybackController, PlaybackState, upcoming_songs
 from kbox.queue import QueueManager
 from kbox.search_suggest import SearchSuggester
 from kbox.suggestions import SuggestionEngine, SuggestionError
@@ -46,7 +46,6 @@ def _mock_playback():
         "state": PlaybackState.IDLE.value,
         "current_song": None,
         "position_seconds": 0,
-        "remaining_seconds": 0,
         "duration_seconds": 0,
     }
     playback.get_cursor.return_value = None
@@ -66,6 +65,20 @@ def _mock_playback():
     playback.state = PlaybackState.IDLE
     playback.current_song_id = None
     return playback
+
+
+def wire_mock_upcoming(playback, queue):
+    """Make a mock PlaybackController's get_upcoming() use the real
+    computation, driven by whatever cursor and status the test configured."""
+
+    def get_upcoming():
+        status = playback.get_status()
+        current = status.get("current_song") or {}
+        return upcoming_songs(
+            queue.get_queue(), playback.get_cursor(), current.get("id"), status["position_seconds"]
+        )
+
+    playback.get_upcoming.side_effect = get_upcoming
 
 
 def _mock_video_library():
@@ -172,7 +185,8 @@ def build_test_app(
         video_library = _mock_video_library()
         video_library.has_provider = False
 
-    if playback is None:
+    mock_playback = playback is None
+    if mock_playback:
         playback = _mock_playback()
     if streaming is None:
         streaming = _mock_streaming()
@@ -180,6 +194,8 @@ def build_test_app(
         suggestion_engine = _mock_suggestions()
 
     queue = QueueManager(db, video_library=video_library)
+    if mock_playback:
+        wire_mock_upcoming(playback, queue)
     app = create_app(
         queue_manager=queue,
         video_library=video_library,

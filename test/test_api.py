@@ -17,6 +17,7 @@ from support.app_factory import (
     _mock_streaming,
     _mock_suggestions,
     _mock_video_library,
+    wire_mock_upcoming,
 )
 
 from kbox.config_manager import ConfigManager
@@ -97,6 +98,7 @@ def app_components(
 
     user_manager = UserManager(temp_db)
     queue_manager = QueueManager(temp_db, video_library=mock_video_library)
+    wire_mock_upcoming(mock_playback, queue_manager)
     history_manager = HistoryManager(temp_db)
     favorites_manager = FavoritesManager(temp_db)
 
@@ -350,7 +352,6 @@ class TestQueueEndpoints:
             "state": "playing",
             "current_song": {"id": id1},
             "position_seconds": 30,
-            "remaining_seconds": 90,
             "duration_seconds": 120,
         }
 
@@ -382,7 +383,6 @@ class TestQueueEndpoints:
             "state": "playing",
             "current_song": {"id": id1, "duration_seconds": 120},
             "position_seconds": 30,
-            "remaining_seconds": 90,
             "duration_seconds": 120,
         }
 
@@ -1565,7 +1565,6 @@ class TestPitchEndpoint:
                 "title": "Test Song",
             },
             "position_seconds": 60,
-            "remaining_seconds": 120,
             "duration_seconds": 180,
         }
         app_components["playback"].set_pitch.return_value = True

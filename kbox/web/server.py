@@ -484,7 +484,7 @@ def create_app(
 
         # Everything before the cursor is "played"
         cursor_idx = next((i for i, item in enumerate(queue_items) if item.id == cursor_id), None)
-        upcoming = queue_mgr.get_upcoming(cursor_id, status["remaining_seconds"])
+        upcoming = playback.get_upcoming()
 
         # Serialize queue items for the frontend
         queue = []
@@ -552,11 +552,10 @@ def create_app(
             return {"settings": {"pitch_semitones": settings.pitch_semitones}}
         return {"settings": None}
 
-    def queue_slot(queue_mgr: QueueManager, playback: PlaybackController, item_id: int):
+    def queue_slot(playback: PlaybackController, item_id: int):
         """Position and estimated wait of an upcoming queue item, or None if
         it isn't upcoming (e.g. already played)."""
-        remaining = playback.get_status()["remaining_seconds"]
-        for u in queue_mgr.get_upcoming(playback.get_cursor(), remaining):
+        for u in playback.get_upcoming():
             if u.item.id == item_id:
                 return {"position": u.position, "estimated_seconds": u.wait_seconds}
         return None
@@ -597,7 +596,7 @@ def create_app(
             return {
                 "id": item_id,
                 "status": "added",
-                "slot": queue_slot(queue_mgr, playback, item_id),
+                "slot": queue_slot(playback, item_id),
             }
         except HTTPException:
             raise  # Let HTTP exceptions pass through
@@ -670,7 +669,7 @@ def create_app(
         ):
             raise HTTPException(status_code=404, detail="Queue item not found")
 
-        return {"status": "replaced", "slot": queue_slot(queue_mgr, playback, item_id)}
+        return {"status": "replaced", "slot": queue_slot(playback, item_id)}
 
     @app.patch("/api/queue/{item_id}/position")
     def reorder_song(
