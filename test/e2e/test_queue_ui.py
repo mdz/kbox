@@ -49,9 +49,9 @@ def test_already_queued_warning(mobile_page, init_user):
 
     # The warning is shown inline in the modal and the button becomes
     # "Add anyway"; no native dialog is involved.
-    expect(mobile_page.locator("#add-song-modal .add-song-warning")).to_contain_text(
-        "already in the queue"
-    )
+    expect(
+        mobile_page.locator("#add-song-modal .add-song-warning", has_text="already in the queue")
+    ).to_have_count(1)
     expect(mobile_page.locator("#add-song-modal-confirm")).to_have_text("Add anyway")
 
     # Cancelling leaves the song count at 1
