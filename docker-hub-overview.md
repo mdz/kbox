@@ -22,7 +22,7 @@ Images are published for each release as multi-arch manifests (`linux/amd64` and
 | `X.Y`, `X` | The newest release in that minor / major line |
 | `latest` | The newest stable (non-pre-release) version |
 
-Pre-releases such as `0.1.0-alpha.2` are published under their exact tag only, so pin an explicit version until a stable release exists.
+Pre-releases such as `0.1.0-alpha.2` are published under their exact tag only, so pin an explicit version until a stable release exists. Currently the only published version is `0.1.0-alpha.2`.
 
 ## Quick start
 
@@ -32,7 +32,7 @@ docker run -d --name kbox --restart unless-stopped \
   -p 8000:8000 \
   -v kbox-data:/root/.kbox \
   -v kbox-library:/root/.kbox/library \
-  mdzz/kbox:<version>
+  mdzz/kbox:0.1.0-alpha.2
 ```
 
 Then open `http://localhost:8000` and add your YouTube API key in Settings.
@@ -46,7 +46,7 @@ Then open `http://localhost:8000` and add your YouTube API key in Settings.
 ```yaml
 services:
   kbox:
-    image: mdzz/kbox:<version>
+    image: mdzz/kbox:0.1.0-alpha.2
     devices:
       - "/dev/snd:/dev/snd"
       - "/dev/dri:/dev/dri"
