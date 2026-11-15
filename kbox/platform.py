@@ -247,9 +247,11 @@ def _verify_pygobject_usable() -> None:
 
     PyGObject is a C extension that has to pair with Homebrew's glib, and
     uv's managed interpreters are python-build-standalone builds, which do
-    not. uv prefers its own managed interpreter by default, so whether a
-    checkout works comes down to which interpreter `uv venv` happened to
-    pick -- and the untreated failure is dozens of `assert g_type !=
+    not. uv prefers its own managed interpreter by default; pyproject.toml
+    sets `[tool.uv] python-preference = "system"` so a new venv gets
+    Homebrew's Python, but a venv created before that (or with no Homebrew
+    Python installed, so uv fell back to a download) is still on a managed
+    build, and uv sync reuses an existing venv as-is. The untreated failure is dozens of `assert g_type !=
     TYPE_NONE` assertions from inside gi/overrides, which name nothing
     useful and read like a broken GStreamer install.
 
@@ -271,10 +273,10 @@ def _verify_pygobject_usable() -> None:
                 "This interpreter is uv-managed "
                 f"({sys.base_prefix}), which is the known cause: "
                 "python-build-standalone builds cannot load Homebrew's "
-                "PyGObject. Rebuild the venv on Homebrew's Python:\n"
+                "PyGObject. Recreate the venv; pyproject.toml makes uv pick "
+                "Homebrew's Python for a new one:\n"
                 "    brew install python@3.14\n"
-                "    uv venv --python $(brew --prefix python@3.14)/bin/python3.14\n"
-                "    uv sync --group dev"
+                "    rm -rf .venv && uv sync --group dev"
             )
             if uv_managed
             else (

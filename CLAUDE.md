@@ -89,14 +89,14 @@ passed ruff and mypy. Re-running them to confirm is wasted work.
 only one where the GStreamer pipeline actually exists on the hardware kbox
 targets.
 
-A full local run on a macOS dev machine can pass, but only with the setup
-in [docs/development/macos-setup.md](docs/development/macos-setup.md) —
-Homebrew GStreamer, a venv built on **Homebrew's** Python rather than uv's
-managed interpreter, and a one-time
-`native/gst-signalsmith-pitch/build.sh`. Without the right interpreter a
-large block of GStreamer tests fails with PyGObject typelib errors that say
-nothing about your change; that is the environment, not your edit, and that
-doc has the diagnosis.
+A full local run on a macOS dev machine can pass with the setup in
+[docs/development/macos-setup.md](docs/development/macos-setup.md):
+Homebrew GStreamer and Python, plus a one-time
+`native/gst-signalsmith-pitch/build.sh`. A fresh `uv sync` builds `.venv` on
+Homebrew's Python by itself (`pyproject.toml` sets
+`python-preference = "system"`). If conftest raises a `RuntimeError` saying
+the interpreter is uv-managed, the `.venv` predates that setting:
+`rm -rf .venv && uv sync --group dev`.
 
 Even when green it is not the gate: it uses fakesinks and mocks, so it
 verifies logic rather than the real pipeline.

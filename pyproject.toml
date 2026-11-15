@@ -39,6 +39,17 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# Prefer an interpreter already installed on the host over one of uv's
+# managed (python-build-standalone) builds. On macOS, PyGObject only loads in
+# a Homebrew-built Python, and uv's default ("managed") picks its own build
+# whenever one is installed. On Linux and in Docker the PyGObject/GStreamer
+# bindings come from the distro's python3, so the system interpreter is the
+# right one there too. If no system interpreter satisfies requires-python
+# (e.g. the GitHub runners' lint/e2e jobs), uv still falls back to a managed
+# one. See docs/development/macos-setup.md.
+python-preference = "system"
+
 [tool.hatch.build.targets.wheel]
 packages = ["kbox"]
 
