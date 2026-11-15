@@ -52,6 +52,10 @@ playbin and the interstitial pipeline are **mutually exclusive** — each stops
 the other before it starts feeding. If both fed the bridge at once, a song and
 an interstitial would interleave on screen.
 
+That mutual exclusion is maintained by hand today. An alternative that makes it
+structural, prototyped but not yet implemented, is in "Feeding the bridge
+between songs" below.
+
 ## Why kmssink, despite gstreamer-plugins-bad
 
 kmssink ships in gstreamer-plugins-bad, which sometimes reads as a quality
@@ -107,6 +111,155 @@ fit *while preserving aspect*, so a 4:3 source on a 16:9 screen lands centred
 with bars either side, and the console is what is underneath. The fix is to
 letterbox the source into a frame that already carries the display's aspect
 ratio, so the frame kmssink scales covers the screen.
+
+## Feeding the bridge between songs
+
+Something must always be feeding the display bridge or the screen goes black
+(see the `intervideosrc` trap below). Today that job is split between playbin
+during a song and a second pipeline, built and torn down per still image,
+between songs.
+
+That works, but the cost is spread across `kbox/streaming/`: a
+`StillImageFeeder` that builds and tears down a pipeline per image, four call
+sites in `controller.py` (three `stop()` and one `start()`) that must each
+arrange for one feeder to stop before the other starts, the `_is_interstitial`
+flag, and an EOS guard — all of it maintaining a single invariant by hand,
+namely that exactly one thing feeds the bridge at a time.
+
+An `input-selector` makes that invariant structural instead: a selector has one
+active pad, so "two feeders at once" stops being representable. Two placements
+were prototyped. They differ only in **which `GstPipeline` the selector lives
+in**, and that turns out to decide the whole outcome.
+
+### Ruled out: the selector inside playbin3's sink bin
+
+The first prototype put the selector inside a collapsed `playbin3` pipeline —
+an `appsrc`/`imagefreeze` branch alongside the pad playbin3 decodes into,
+feeding `kmssink` directly with no bridge at all. Switching worked and was
+fast (~20-30 ms), but **a background URI swap stalled whichever branch was
+showing**: with the selector sitting on the interstitial branch, setting
+playbin3's `uri` (even under `instant-uri`, even though the decode branch was
+not selected) dropped frame delivery to 1-2 frames over 2+ seconds, from
+~30/second immediately before. Bus tracing showed playbin3 rebuilding its
+entire internal decode graph — fresh `urisourcebin`, `parsebin`, `qtdemux`,
+`multiqueue`, `h264parse`, `aacparse`, 100+ bus messages in under half a
+second — inside the same `GstPipeline` as the selector, sharing its clock and
+state machine.
+
+That is the worst possible moment for a freeze: "up next" is on screen
+*because* the next song is loading. The conclusion was that `input-selector`
+only routes buffers; it does not reproduce the insulation that comes from
+being a separate `GstPipeline`.
+
+### Works: the selector inside the display pipeline
+
+The second prototype keeps that insulation. playbin stays in its own
+`GstPipeline` feeding the bridge exactly as it does today, and only the
+interstitial feeder moves — into the display pipeline, as a second selector
+branch:
+
+```mermaid
+flowchart LR
+    subgraph display["Display pipeline — one GstPipeline, PLAYING for the session"]
+        ISRC[intervideosrc<br/>channel=kbox-display] --> VC[videoconvert]
+        VC --> VS[videoscale<br/>add-borders] --> CF[capsfilter<br/>render size]
+        BLACK[videotestsrc<br/>pattern=black, is-live] --> CF2[capsfilter<br/>same render size]
+        CF2 --> IOV[gdkpixbufoverlay<br/>interstitial PNG, full frame]
+        CF --> SEL[input-selector]
+        IOV --> SEL
+        SEL --> QR[gdkpixbufoverlay<br/>QR] --> TXT[textoverlay] --> SINK[kmssink]
+    end
+    PB[playbin — separate GstPipeline] -.->|frames during a song| ISRC
+```
+
+The stall does not reproduce. Measured at the sink with pad probes, three
+consecutive runs, with a real `GLib.MainLoop` on a dedicated thread:
+
+| phase | frames at sink |
+|---|---|
+| Cold idle, before anything has ever played | 30.0 fps |
+| Interstitial image swapped at runtime (`location` property) | 30.0 fps, new image in 28-34 ms |
+| **Baseline, interstitial showing** | **30.0 fps** |
+| **During background playbin URI swap + preroll** | **30.0 fps** |
+| Switch to the song branch | 30.0 fps, first frame in 6-19 ms |
+| Second background URI swap, song on screen | 30.0 fps |
+| Switch back to the interstitial | 30.0 fps, first frame in 5-8 ms |
+
+Frame counts alone prove nothing here — an unfed `intervideosrc` emits black
+at exactly 30fps, which is indistinguishable from a working branch if you only
+count buffers. The runs above sampled luma at the sink to confirm the content
+actually changed: interstitial (violet background, mean 33) → ball-on-black
+test clip (mean 18) → SMPTE bars (mean 105) → interstitial (mean 35).
+
+**Both branches must be normalised to identical caps _before_ the selector.**
+The first attempt kept the shared `videoconvert`/`videoscale`/`capsfilter`
+downstream of the selector, mirroring today's layout. It failed the moment a
+real 640x360 frame arrived against a 1280x720 capsfilter with no scaler in
+that branch: negotiation broke and the bridge branch went to 0 fps
+permanently, while the interstitial branch carried on at 30fps — which reads
+exactly like a selector bug and is not one. Giving each branch its own scaler
+and capsfilter fixes it, and is the right shape anyway: with matched caps on
+both pads, a switch never renegotiates anything downstream, which is what
+kmssink's fixed bufferpool needs (see "Why the render size is fixed").
+
+### Pausing the idle branch
+
+The interstitial branch runs continuously in this arrangement, including
+during songs — unlike today's interstitial pipeline, which only exists between
+them. That is a real cost and it needs gating. Two ways, both measured while a
+song was playing:
+
+| | branch free-running | pad-block probe | locked-state PAUSED |
+|---|---|---|---|
+| Process CPU | 0.17-0.20 cores | 0.02-0.03 | **0.02-0.04** |
+| Song frame rate | 30.0 fps | 30.0 fps | **30.0 fps** |
+| Resume latency | — | 0-4 ms | **0-14 ms** |
+| Frame rate after resume | — | 80 fps (catch-up burst) | **30.0 fps (clean)** |
+
+Both stop the branch dead (91 frames per 3s → 0). The difference is on
+resume: a blocking pad probe leaves `videotestsrc` on its old timeline, so it
+races to catch up and dumps a burst of late-timestamped frames at the sink —
+harmless-looking for a still image, but not something to hand `kmssink`
+untested. Dropping the branch's elements to PAUSED with `set_locked_state(True)`
+and resuming with `sync_state_with_parent()` gets the same CPU saving and
+re-syncs base time on the way back, with no burst.
+
+So **use locked-state PAUSED**, not pad blocking.
+
+### Note on pre-encoding interstitials to video
+
+A third option — render each interstitial to a short looping video file so
+playbin can load it like any other URI — has been raised twice and rejected
+twice on the grounds that it "adds an encode to every transition." That
+reasoning is wrong and should not be recycled: it conflates when the content
+is *determined* with when it must be *on screen*. Rendering can start the
+moment the queue changes, which is usually minutes ahead of the transition.
+The only exposed case is a queue mutation seconds before a song ends, which
+degrades to showing the previous or a generic screen — not to a stall.
+
+It is still not the recommended path, but for a weaker reason: it trades the
+`imagefreeze` pipeline for an encoder dependency plus segment-seek-on-EOS loop
+handling, which is a similar amount of machinery somewhere less familiar. If
+the selector approach falls down on hardware, this deserves a real prototype
+rather than a third dismissal.
+
+### What is still unverified
+
+All of the above is macOS, GStreamer 1.26.0, `fakesink` standing in for
+`kmssink` — the same caveat class as everything else in this document that
+hasn't been to the Pi. Specifically open:
+
+- **kmssink's behaviour across a selector switch.** Matched caps on both pads
+  should mean no renegotiation and no bufferpool reallocation, but that is
+  reasoning, not a measurement.
+- **Whether to pin pixel format in the branch caps.** Width/height/PAR are
+  pinned; format is not, matching today. Both branches should negotiate to
+  whatever the sink prefers, but if they ever diverge, the format change at a
+  switch is bufferpool-relevant.
+- **The CPU numbers are a comparison between configurations on one machine**,
+  not a prediction of Pi cost. The ratio is the meaningful part.
+- Overlay behaviour across a switch, EOS and pause paths, and the actual
+  refactor: none of it written or tested yet.
 
 ## Why the render size is fixed and capped
 
