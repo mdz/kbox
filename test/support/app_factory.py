@@ -13,8 +13,8 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackController, PlaybackState
-from kbox.queue import QueueManager
+from kbox.playback import PlaybackController, PlaybackState, PlaybackStatus
+from kbox.queue import MoveOutcome, MoveResult, QueueManager
 from kbox.search_suggest import SearchSuggester
 from kbox.suggestions import SuggestionEngine, SuggestionError
 from kbox.user import UserManager
@@ -42,18 +42,15 @@ def _mock_streaming():
 
 def _mock_playback():
     playback = Mock(spec=PlaybackController)
-    playback.get_status.return_value = {
-        "state": PlaybackState.IDLE.value,
-        "current_song": None,
-        "position_seconds": 0,
-        "duration_seconds": 0,
-    }
+    playback.get_status.return_value = PlaybackStatus(
+        state=PlaybackState.IDLE, current_song=None, position_seconds=0
+    )
     playback.get_cursor.return_value = None
     playback.get_upcoming.return_value = []
     playback.move_to_next.return_value = True
     playback.move_to_end.return_value = True
-    playback.move_down.return_value = True
-    playback.move_up.return_value = True
+    playback.move_down.return_value = MoveResult(MoveOutcome.MOVED, old_position=1, new_position=2)
+    playback.move_up.return_value = MoveResult(MoveOutcome.MOVED, old_position=2, new_position=1)
     playback.play.return_value = False
     playback.pause.return_value = True
     playback.stop_playback.return_value = True

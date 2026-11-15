@@ -10,13 +10,14 @@ a sibling module (see the package docstring).
 import logging
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Iterator, List, Optional
 
 from ..database import ConfigRepository
 from ..models import QueueItem
-from ..queue import QueueManager
-from . import history_policy, song_tuning, status
+from ..queue import MoveResult, QueueManager
+from . import history_policy, song_tuning
 from .cursor import QueueCursor
 from .monitor import PlaybackMonitor
 from .overlay import OverlayCoordinator
@@ -33,6 +34,22 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     TRANSITION = "transition"  # Between songs, showing interstitial
     ERROR = "error"
+
+
+@dataclass(frozen=True)
+class PlaybackStatus:
+    """
+    A snapshot of what playback is doing.
+
+    Domain objects, not a response body: current_song is the QueueItem
+    itself, so a caller that only wants one field off it (the web layer's
+    queue endpoint wants the duration) reads it directly instead of through
+    a flattened dict. kbox/web/serializers.py turns it into JSON.
+    """
+
+    state: PlaybackState
+    current_song: Optional[QueueItem]
+    position_seconds: Optional[int]
 
 
 class PlaybackController:
@@ -916,7 +933,7 @@ class PlaybackController:
             self.logger.info("Going to previous song")
             return self._navigate(offset=-1, record_history=False)
 
-    def move_down(self, item_id: int) -> Dict[str, Any]:
+    def move_down(self, item_id: int) -> MoveResult:
         """
         Move a song down one position in the queue.
 
@@ -926,15 +943,12 @@ class PlaybackController:
             item_id: ID of the queue item to move down
 
         Returns:
-            Dictionary with status information:
-            - status: 'moved_down' or 'already_at_end'
-            - old_position: Original position
-            - new_position: New position
+            MoveResult describing the outcome and the positions involved
         """
         with self._locked():
             return self.queue_manager.move_down(item_id)
 
-    def move_up(self, item_id: int) -> Dict[str, Any]:
+    def move_up(self, item_id: int) -> MoveResult:
         """
         Move a song up one position in the queue.
 
@@ -944,10 +958,7 @@ class PlaybackController:
             item_id: ID of the queue item to move up
 
         Returns:
-            Dictionary with status information:
-            - status: 'moved_up' or 'already_at_start'
-            - old_position: Original position
-            - new_position: New position
+            MoveResult describing the outcome and the positions involved
         """
         with self._locked():
             return self.queue_manager.move_up(item_id)
@@ -1213,7 +1224,7 @@ class PlaybackController:
         """Show the idle screen interstitial with QR code instructions."""
         self._screens.show_idle()
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> PlaybackStatus:
         """
         Get current playback status.
 
@@ -1231,7 +1242,8 @@ class PlaybackController:
         always handled.
 
         Returns:
-            Dictionary with playback state and current song info
+            PlaybackStatus with the state, the current QueueItem (or None)
+            and the position in seconds
         """
         with self._locked():
             state = self.state
@@ -1244,15 +1256,9 @@ class PlaybackController:
         # Query current song data from database (always fresh)
         current_song = None
         if current_song_id:
-            queue_item = self.queue_manager.get_item(current_song_id)
-            if queue_item:
-                current_song = status.serialize_current_song(queue_item)
+            current_song = self.queue_manager.get_item(current_song_id)
 
-        return {
-            "state": state.value,
-            "current_song": current_song,
-            "position_seconds": position,
-        }
+        return PlaybackStatus(state=state, current_song=current_song, position_seconds=position)
 
     def set_pitch(self, semitones: int) -> bool:
         """

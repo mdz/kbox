@@ -603,7 +603,7 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
 
 
 def test_get_status(playback_controller, mock_queue_manager):
-    """Test getting playback status returns properly serialized dict."""
+    """Test getting playback status returns the state and the current song."""
     song = create_mock_queue_item(id=1, title="Test Song")
     playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
@@ -613,11 +613,10 @@ def test_get_status(playback_controller, mock_queue_manager):
 
     status = playback_controller.get_status()
 
-    assert status["state"] == "playing"
-    # current_song should be a dict (for JSON serialization), not a QueueItem object
-    assert isinstance(status["current_song"], dict)
-    assert status["current_song"]["id"] == 1
-    assert status["current_song"]["title"] == "Test Song"
+    assert status.state == PlaybackState.PLAYING
+    # current_song is the QueueItem itself; serializing it for the frontend
+    # is the web layer's job (kbox/web/serializers.py).
+    assert status.current_song is song
 
 
 def test_upcoming_songs():
@@ -697,8 +696,8 @@ def test_get_status_does_not_hold_lock_during_io(
 
     status = playback_controller.get_status()
 
-    assert status["position_seconds"] == 42
-    assert status["current_song"]["id"] == 1
+    assert status.position_seconds == 42
+    assert status.current_song.id == 1
     mock_streaming_controller.get_position.assert_called_once()
     mock_queue_manager.get_item.assert_called_once_with(1)
 

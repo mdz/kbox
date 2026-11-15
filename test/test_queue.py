@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from kbox.database import Database
-from kbox.queue import QueueManager
+from kbox.queue import MoveOutcome, MoveResult, QueueManager
 from kbox.user import UserManager
 
 
@@ -215,7 +215,7 @@ def test_move_down(queue_manager, test_users):
 
     result = queue_manager.move_down(id1)
 
-    assert result == {"status": "moved_down", "old_position": 1, "new_position": 2}
+    assert result == MoveResult(MoveOutcome.MOVED, old_position=1, new_position=2)
     queue = queue_manager.get_queue()
     assert [item.id for item in queue] == [id2, id1, queue[2].id]
 
@@ -227,11 +227,11 @@ def test_move_down_at_end_of_queue(queue_manager, test_users):
 
     result = queue_manager.move_down(id2)
 
-    assert result == {"status": "already_at_end", "position": 2}
+    assert result == MoveResult(MoveOutcome.ALREADY_AT_BOUNDARY, old_position=2)
 
 
 def test_move_down_nonexistent_song(queue_manager):
-    assert queue_manager.move_down(9999) == {"status": "not_found"}
+    assert queue_manager.move_down(9999) == MoveResult(MoveOutcome.NOT_FOUND)
 
 
 def test_move_up(queue_manager, test_users):
@@ -241,7 +241,7 @@ def test_move_up(queue_manager, test_users):
 
     result = queue_manager.move_up(id2)
 
-    assert result == {"status": "moved_up", "old_position": 2, "new_position": 1}
+    assert result == MoveResult(MoveOutcome.MOVED, old_position=2, new_position=1)
     assert [item.id for item in queue_manager.get_queue()] == [id2, id1]
 
 
@@ -252,11 +252,11 @@ def test_move_up_at_start_of_queue(queue_manager, test_users):
 
     result = queue_manager.move_up(id1)
 
-    assert result == {"status": "already_at_start", "position": 1}
+    assert result == MoveResult(MoveOutcome.ALREADY_AT_BOUNDARY, old_position=1)
 
 
 def test_move_up_nonexistent_song(queue_manager):
-    assert queue_manager.move_up(9999) == {"status": "not_found"}
+    assert queue_manager.move_up(9999) == MoveResult(MoveOutcome.NOT_FOUND)
 
 
 def test_move_after_uses_fresh_reference_position(queue_manager, test_users):

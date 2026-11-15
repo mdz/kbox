@@ -133,7 +133,7 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
 
     from kbox.favorites import FavoritesManager
     from kbox.history import HistoryManager
-    from kbox.playback import PlaybackController
+    from kbox.playback import PlaybackController, PlaybackState, PlaybackStatus
     from kbox.video_library import VideoLibrary
     from kbox.web.server import create_app
 
@@ -158,12 +158,9 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
     mock_streaming.get_position = Mock(return_value=0)
 
     mock_playback = Mock(spec=PlaybackController)
-    mock_playback.get_status.return_value = {
-        "state": "idle",
-        "current_song": None,
-        "position_seconds": 0,
-        "duration_seconds": 0,
-    }
+    mock_playback.get_status.return_value = PlaybackStatus(
+        state=PlaybackState.IDLE, current_song=None, position_seconds=0
+    )
 
     try:
         app = create_app(

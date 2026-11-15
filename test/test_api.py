@@ -23,8 +23,8 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackState, UpcomingItem
-from kbox.queue import QueueManager
+from kbox.playback import PlaybackState, PlaybackStatus, UpcomingItem
+from kbox.queue import MoveOutcome, MoveResult, QueueManager
 from kbox.suggestions import SuggestionError
 from kbox.user import UserManager
 from kbox.web.server import create_app
@@ -354,12 +354,11 @@ class TestQueueEndpoints:
         id2 = queue_mgr.add_song(user=bob, video_id="youtube:s2", title="Song 2")
 
         playback.get_cursor.return_value = id1
-        playback.get_status.return_value = {
-            "state": "playing",
-            "current_song": {"id": id1},
-            "position_seconds": 30,
-            "duration_seconds": 120,
-        }
+        playback.get_status.return_value = PlaybackStatus(
+            state=PlaybackState.PLAYING,
+            current_song=queue_mgr.get_item(id1),
+            position_seconds=30,
+        )
 
         response = client.get("/api/queue")
         data = response.json()
@@ -590,6 +589,36 @@ class TestPlaybackEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "state" in data
+
+    def test_get_playback_status_flattens_current_song(self, client, alice, app_components):
+        """GET /api/playback/status - current_song carries the flattened fields.
+
+        The frontend reads title/duration_seconds/pitch_semitones off the top
+        level of current_song rather than out of metadata/settings. That
+        shaping is the web layer's job, so this pins the response body.
+        """
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Test Song", duration_seconds=180
+        )
+        app_components["playback"].get_status.return_value = PlaybackStatus(
+            state=PlaybackState.PLAYING,
+            current_song=queue_mgr.get_item(item_id),
+            position_seconds=60,
+        )
+
+        data = client.get("/api/playback/status").json()
+
+        assert data["state"] == "playing"
+        assert data["position_seconds"] == 60
+        current_song = data["current_song"]
+        assert current_song["id"] == item_id
+        assert current_song["title"] == "Test Song"
+        assert current_song["duration_seconds"] == 180
+        assert current_song["pitch_semitones"] == 0
+        assert current_song["user_name"] == "Alice"
+        # created_at is stringified, not left as a datetime
+        assert isinstance(current_song["created_at"], str)
 
     def test_play_requires_operator(self, client):
         """POST /api/playback/play - requires operator."""
@@ -1527,11 +1556,17 @@ class TestQueueOperatorActions:
         )
         id2 = r2.json()["id"]
 
-        # move_up/move_down return dicts with a "status" key
-        app_components["playback"].move_up.return_value = {"status": "moved"}
+        app_components["playback"].move_up.return_value = MoveResult(
+            MoveOutcome.MOVED, old_position=2, new_position=1
+        )
         set_operator(client)
         response = client.post(f"/api/queue/{id2}/move-up")
         assert response.status_code == 200
+        assert response.json() == {
+            "status": "moved_up",
+            "old_position": 2,
+            "new_position": 1,
+        }
         app_components["playback"].move_up.assert_called_with(id2)
 
     def test_move_down(self, client, alice, app_components):
@@ -1546,11 +1581,59 @@ class TestQueueOperatorActions:
             json={"user_id": ALICE_ID, "video_id": "youtube:song2", "title": "Song 2"},
         )
 
-        app_components["playback"].move_down.return_value = {"status": "moved"}
+        app_components["playback"].move_down.return_value = MoveResult(
+            MoveOutcome.MOVED, old_position=1, new_position=2
+        )
         set_operator(client)
         response = client.post(f"/api/queue/{id1}/move-down")
         assert response.status_code == 200
+        assert response.json() == {
+            "status": "moved_down",
+            "old_position": 1,
+            "new_position": 2,
+        }
         app_components["playback"].move_down.assert_called_with(id1)
+
+    def test_move_down_already_at_end(self, client, alice, app_components):
+        """The direction-specific wording is the route's, not the queue's."""
+        set_operator(client)
+        app_components["playback"].move_down.return_value = MoveResult(
+            MoveOutcome.ALREADY_AT_BOUNDARY, old_position=3
+        )
+
+        response = client.post("/api/queue/7/move-down")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "already_at_end", "position": 3}
+
+    def test_move_up_already_at_start(self, client, alice, app_components):
+        set_operator(client)
+        app_components["playback"].move_up.return_value = MoveResult(
+            MoveOutcome.ALREADY_AT_BOUNDARY, old_position=1
+        )
+
+        response = client.post("/api/queue/7/move-up")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "already_at_start", "position": 1}
+
+    def test_move_down_not_found(self, client, alice, app_components):
+        set_operator(client)
+        app_components["playback"].move_down.return_value = MoveResult(MoveOutcome.NOT_FOUND)
+
+        response = client.post("/api/queue/7/move-down")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Queue item not found"
+
+    def test_move_down_reorder_failed(self, client, alice, app_components):
+        set_operator(client)
+        app_components["playback"].move_down.return_value = MoveResult(MoveOutcome.FAILED)
+
+        response = client.post("/api/queue/7/move-down")
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to move down song"
 
 
 class TestPitchEndpoint:
@@ -1560,16 +1643,13 @@ class TestPitchEndpoint:
         """POST /api/playback/pitch - user sets pitch on their own playing song."""
         set_user(client, ALICE_ID, "Alice")
         # Mock get_status to return a current_song owned by Alice
-        app_components["playback"].get_status.return_value = {
-            "state": PlaybackState.PLAYING.value,
-            "current_song": {
-                "id": 1,
-                "user_id": ALICE_ID,
-                "title": "Test Song",
-            },
-            "position_seconds": 60,
-            "duration_seconds": 180,
-        }
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(user=alice, video_id="youtube:s1", title="Test Song")
+        app_components["playback"].get_status.return_value = PlaybackStatus(
+            state=PlaybackState.PLAYING,
+            current_song=queue_mgr.get_item(item_id),
+            position_seconds=60,
+        )
         app_components["playback"].set_pitch.return_value = True
 
         response = client.post(

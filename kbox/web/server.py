@@ -20,12 +20,13 @@ from ..config_manager import ConfigManager
 from ..database import EventRepository
 from ..identity import normalize_name
 from ..playback import PlaybackController, PlaybackState
-from ..queue import QueueManager
+from ..queue import MoveOutcome, QueueManager
 from ..search_suggest import SearchSuggester
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine, SuggestionError
 from ..user import UserManager
 from ..video_library import VideoLibrary
+from .serializers import serialize_queue_item
 
 logger = logging.getLogger(__name__)
 # Root logger stays at INFO (DEBUG globally is too spammy from third-party
@@ -473,13 +474,11 @@ def create_app(
         current_user_id: Optional[str] = Depends(get_current_user_id),
     ):
         """Get current queue with current/played flags for UI rendering."""
-        from dataclasses import asdict
-
         queue_items = queue_mgr.get_queue()
 
         status = playback.get_status()
-        current_song = status.get("current_song")
-        current_song_id = current_song.get("id") if current_song else None
+        current_song = status.current_song
+        current_song_id = current_song.id if current_song else None
         cursor_id = playback.get_cursor()
 
         # Everything before the cursor is "played"
@@ -489,14 +488,7 @@ def create_app(
         # Serialize queue items for the frontend
         queue = []
         for i, item in enumerate(queue_items):
-            item_dict = asdict(item)
-            item_dict["title"] = item.metadata.title
-            item_dict["duration_seconds"] = item.metadata.duration_seconds
-            item_dict["thumbnail_url"] = item.metadata.thumbnail_url
-            item_dict["channel"] = item.metadata.channel
-            item_dict["artist"] = item.metadata.artist
-            item_dict["song_name"] = item.metadata.song_name
-            item_dict["pitch_semitones"] = item.settings.pitch_semitones
+            item_dict = serialize_queue_item(item)
             item_dict["is_current"] = item.id == current_song_id
             item_dict["is_played"] = cursor_idx is not None and i < cursor_idx
             queue.append(item_dict)
@@ -765,12 +757,18 @@ def create_app(
 
         result = playback.move_down(item_id)
 
-        if result.get("status") == "not_found":
+        if result.outcome is MoveOutcome.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Queue item not found")
-        elif result.get("status") == "error":
+        elif result.outcome is MoveOutcome.FAILED:
             raise HTTPException(status_code=500, detail="Failed to move down song")
+        elif result.outcome is MoveOutcome.ALREADY_AT_BOUNDARY:
+            return {"status": "already_at_end", "position": result.old_position}
 
-        return result
+        return {
+            "status": "moved_down",
+            "old_position": result.old_position,
+            "new_position": result.new_position,
+        }
 
     @app.post("/api/queue/{item_id}/move-up")
     def move_up(
@@ -784,12 +782,18 @@ def create_app(
 
         result = playback.move_up(item_id)
 
-        if result.get("status") == "not_found":
+        if result.outcome is MoveOutcome.NOT_FOUND:
             raise HTTPException(status_code=404, detail="Queue item not found")
-        elif result.get("status") == "error":
+        elif result.outcome is MoveOutcome.FAILED:
             raise HTTPException(status_code=500, detail="Failed to move up song")
+        elif result.outcome is MoveOutcome.ALREADY_AT_BOUNDARY:
+            return {"status": "already_at_start", "position": result.old_position}
 
-        return result
+        return {
+            "status": "moved_up",
+            "old_position": result.old_position,
+            "new_position": result.new_position,
+        }
 
     @app.post("/api/queue/clear")
     def clear_queue(
@@ -906,7 +910,14 @@ def create_app(
         playback: PlaybackController = Depends(get_playback_controller),
     ):
         """Get current playback status."""
-        return playback.get_status()
+        status = playback.get_status()
+        return {
+            "state": status.state.value,
+            "current_song": (
+                serialize_queue_item(status.current_song) if status.current_song else None
+            ),
+            "position_seconds": status.position_seconds,
+        }
 
     @app.post("/api/playback/play")
     def play(
@@ -1010,13 +1021,13 @@ def create_app(
         not proof of who that UUID belongs to.
         """
         status = playback.get_status()
-        current_song = status.get("current_song")
+        current_song = status.current_song
 
         if not current_song:
             raise HTTPException(status_code=400, detail="No song is currently playing")
 
         # Check authorization: user's own song OR operator
-        is_own_song = current_song.get("user_id") == current_user_id
+        is_own_song = current_song.user_id == current_user_id
 
         if not is_own_song and not is_operator:
             raise HTTPException(
