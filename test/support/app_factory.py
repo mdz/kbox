@@ -39,7 +39,6 @@ def _mock_streaming():
     streaming.set_eos_callback = Mock()
     streaming.get_position = Mock(return_value=0)
     streaming.seek = Mock(return_value=True)
-    streaming.show_notification = Mock()
     streaming.display_image = Mock()
     streaming.reinitialize_pipeline = Mock()
     streaming.server = None

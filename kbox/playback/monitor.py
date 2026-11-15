@@ -10,8 +10,8 @@ arrives here as a single callable. That is the honest boundary for a thread --
 the same one BusWatcher draws in kbox/streaming/bus.py.
 
 The monitor takes no lock. Whatever locking a tick needs is the callback's
-business, and the controller's _check_* methods do their own check-then-lock-
-then-recheck under the playback lock.
+business: PlaybackController._on_monitor_tick() takes the playback lock for
+the whole tick.
 """
 
 import logging

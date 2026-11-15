@@ -458,9 +458,6 @@ class StreamingController:
 
         self.logger.info("Stopping streaming controller...")
 
-        # Cancel notification timer
-        self.overlays.cancel_notification_timer()
-
         # Stop bus polling first
         self._stop_bus_polling()
 
@@ -685,26 +682,14 @@ class StreamingController:
     # =========================================================================
     # Overlay Control
     #
-    # Thin pass-throughs: the overlay elements, the notification timer and the
-    # QR geometry all belong to self.overlays.
+    # Thin pass-throughs: the overlay elements and the QR geometry belong to
+    # self.overlays. Transient notifications are the playback layer's job
+    # (kbox.playback.overlay.OverlayCoordinator), not this one's.
     # =========================================================================
-
-    def show_notification(self, text: str, duration_seconds: float = 5.0):
-        """
-        Show transient text notification that auto-hides.
-
-        Args:
-            text: Notification text to display
-            duration_seconds: How long to show the notification (default 5s)
-        """
-        if not self._requires_gst():
-            return
-        self.overlays.show_notification(text, duration_seconds)
 
     def set_overlay_text(self, text: str):
         """
-        Set persistent overlay text (does not auto-hide).
-        Use empty string to clear the overlay.
+        Set the overlay text. Use empty string to clear the overlay.
 
         Args:
             text: Text to display, or empty string to hide

@@ -24,6 +24,24 @@ class QueueRepository:
         self.logger = logging.getLogger(__name__)
 
     @staticmethod
+    def _begin_write(cursor: sqlite3.Cursor) -> None:
+        """
+        Start a write transaction before reading the positions it will act on.
+
+        add(), remove() and reorder() each read a position and then write
+        rows based on it. Python's sqlite3 only opens a transaction
+        implicitly at the first INSERT/UPDATE/DELETE, so without this the
+        read runs outside it: two guests adding at once could both read the
+        same MAX(position) and get the same slot. BEGIN IMMEDIATE takes the
+        database's write lock up front, so the read and the writes are one
+        unit and a concurrent writer waits for it to commit.
+
+        An early return without commit() is fine: closing the connection
+        rolls the transaction back.
+        """
+        cursor.execute("BEGIN IMMEDIATE")
+
+    @staticmethod
     def _encode_content_info(content_info: Dict[str, Any]) -> str:
         """Encode content info to JSON for the download_json DB column."""
         return json.dumps(content_info)
@@ -78,6 +96,7 @@ class QueueRepository:
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            self._begin_write(cursor)
 
             # Get the highest position
             cursor.execute("SELECT MAX(position) as max_pos FROM queue_items")
@@ -152,6 +171,7 @@ class QueueRepository:
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            self._begin_write(cursor)
 
             # Get position of item to remove
             cursor.execute("SELECT position FROM queue_items WHERE id = ?", (item_id,))
@@ -256,6 +276,7 @@ class QueueRepository:
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            self._begin_write(cursor)
 
             # Get current position
             cursor.execute("SELECT position FROM queue_items WHERE id = ?", (item_id,))
