@@ -116,8 +116,17 @@ class SuggestionEngine:
                         seen_videos.add(record.video_id)
                         unique_songs.append(get_song_info(record.metadata))
                 context["user_history"] = unique_songs
-        except Exception as e:
-            self.logger.debug("Could not get user history: %s", e)
+        except Exception:
+            # Local SQLite reads, so a failure here is not an expected
+            # degrade. Suggestions still get generated, just with nothing
+            # about this user in the prompt -- which looks to an operator
+            # like the model ignoring their taste rather than like a bug.
+            self.logger.warning(
+                "Could not read history for user %s; suggestions will be "
+                "generated without it and will be correspondingly generic",
+                user_id,
+                exc_info=True,
+            )
 
         # Current queue (all songs - played and upcoming - for full context)
         try:
@@ -130,8 +139,12 @@ class SuggestionEngine:
                     }
                     for item in queue[:20]  # Limit for prompt size
                 ]
-        except Exception as e:
-            self.logger.debug("Could not get queue: %s", e)
+        except Exception:
+            self.logger.warning(
+                "Could not read the current queue; suggestions will be generated "
+                "without it and may repeat songs that are already queued",
+                exc_info=True,
+            )
 
         # Operator theme
         theme = self.config.get("suggestion_theme")
@@ -309,12 +322,15 @@ class SuggestionEngine:
         """Search YouTube for each suggested song."""
         results: List[Dict[str, Any]] = []
         seen_ids: set[str] = set()
+        attempted = 0
+        failed = 0
 
         for suggestion in suggestions:
             if len(results) >= max_results:
                 break
 
             query = f"{suggestion['title']} {suggestion['artist']}"
+            attempted += 1
             try:
                 search_results = self.video_library.search(query, max_results=2)
                 for video in search_results:
@@ -323,6 +339,21 @@ class SuggestionEngine:
                         results.append(video)
                         break  # Only take the first unique result per suggestion
             except Exception as e:
-                self.logger.debug("Search failed for %s: %s", query, e)
+                # No traceback per query: a failing backend fails every one of
+                # these, and the exception message is the useful part.
+                failed += 1
+                self.logger.warning("Search failed for %r: %s", query, e)
+
+        if failed and failed == attempted:
+            # get_suggestions() is about to raise "Could not find karaoke
+            # videos for the suggested songs", which blames the model for
+            # what is actually a broken search backend. That message cannot
+            # tell the difference; this line can.
+            self.logger.error(
+                "Every suggestion lookup failed (%d of %d); the suggestions "
+                "themselves may be fine and the search backend is the likely cause",
+                failed,
+                attempted,
+            )
 
         return results
