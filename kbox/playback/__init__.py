@@ -16,13 +16,21 @@ all), following the same shape as kbox/streaming/:
 - controller: PlaybackController, the state machine that wires them together
 """
 
-from .controller import PlaybackController, PlaybackState, PlaybackStatus
+from .controller import (
+    PlaybackController,
+    PlaybackState,
+    PlaybackStatus,
+    SeekOutcome,
+    SeekResult,
+)
 from .upcoming import UpcomingItem, upcoming_songs
 
 __all__ = [
     "PlaybackController",
     "PlaybackState",
     "PlaybackStatus",
+    "SeekOutcome",
+    "SeekResult",
     "UpcomingItem",
     "upcoming_songs",
 ]

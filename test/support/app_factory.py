@@ -13,7 +13,13 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackController, PlaybackState, PlaybackStatus
+from kbox.playback import (
+    PlaybackController,
+    PlaybackState,
+    PlaybackStatus,
+    SeekOutcome,
+    SeekResult,
+)
 from kbox.queue import MoveOutcome, MoveResult, QueueManager
 from kbox.search_suggest import SearchSuggester
 from kbox.suggestions import SuggestionEngine, SuggestionError
@@ -57,8 +63,8 @@ def _mock_playback():
     playback.skip.return_value = True
     playback.previous.return_value = True
     playback.jump_to_song.return_value = True
-    playback.restart.return_value = {"status": "restarted"}
-    playback.seek_relative.return_value = {"status": "seeked"}
+    playback.restart.return_value = SeekResult(SeekOutcome.SEEKED, position=0)
+    playback.seek_relative.return_value = SeekResult(SeekOutcome.SEEKED, position=30)
     playback.set_pitch.return_value = False
     playback.state = PlaybackState.IDLE
     playback.current_song_id = None
