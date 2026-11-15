@@ -8,7 +8,7 @@ The CONFIG_SCHEMA provides rich metadata for building user-friendly configuratio
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from .database import ConfigRepository, Database
 
@@ -31,6 +31,15 @@ MASKED_VALUE_PLACEHOLDER = "•" * 8
 # editable through the config UI), e.g. internally-generated tokens. These
 # must still be masked when returned via get_full_config().
 INTERNAL_SECRET_KEYS = {"session_secret", "access_token"}
+
+
+def secret_config_keys() -> set:
+    """Config keys that hold secrets: password-control schema entries plus internal tokens."""
+    schema = cast(Dict[str, dict], CONFIG_SCHEMA)
+    return INTERNAL_SECRET_KEYS | {
+        key for key, entry in schema.items() if entry.get("control") == "password"
+    }
+
 
 # Schema defining metadata for each editable configuration key
 # This drives the configuration UI - the frontend reads this to render appropriate controls
@@ -464,9 +473,7 @@ class ConfigManager:
         values = self.get_all()
         schema = self.get_config_schema()
 
-        secret_keys = INTERNAL_SECRET_KEYS | {
-            key for key, entry in schema.items() if entry.get("control") == "password"
-        }
+        secret_keys = secret_config_keys()
         masked_values = {
             key: (MASKED_VALUE_PLACEHOLDER if value else "") if key in secret_keys else value
             for key, value in values.items()
