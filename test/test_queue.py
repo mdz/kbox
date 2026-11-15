@@ -1031,3 +1031,40 @@ class TestLoudnessAnalysis:
         qm._process_pending_content()
 
         mock_analyzer.analyze.assert_called_once_with("youtube:stuck", "/recovered/path/video.mp4")
+
+
+@pytest.mark.parametrize("operation", ["add", "remove", "reorder"])
+def test_position_reads_happen_inside_the_write_transaction(
+    queue_manager, test_users, temp_db, operation
+):
+    """add/remove/reorder read a position and then write rows based on it.
+
+    The read must come after BEGIN IMMEDIATE, so it runs under the write
+    lock; otherwise two concurrent adds can both read the same
+    MAX(position) and land in the same slot. Checked by tracing the SQL
+    each operation sends, since a thread race would only fail sometimes.
+    """
+    first = queue_manager.add_song(test_users["alice"], "youtube:a", "A")
+    queue_manager.add_song(test_users["bob"], "youtube:b", "B")
+
+    statements = []
+    real_get_connection = temp_db.get_connection
+
+    def traced_connection():
+        conn = real_get_connection()
+        conn.set_trace_callback(statements.append)
+        return conn
+
+    temp_db.get_connection = traced_connection
+    try:
+        if operation == "add":
+            queue_manager.add_song(test_users["charlie"], "youtube:c", "C")
+        elif operation == "remove":
+            queue_manager.remove_song(first)
+        else:
+            queue_manager.reorder_song(first, 2)
+    finally:
+        temp_db.get_connection = real_get_connection
+
+    assert statements[0] == "BEGIN IMMEDIATE"
+    assert any("SELECT" in sql and "position" in sql for sql in statements[1:])
