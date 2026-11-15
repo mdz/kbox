@@ -119,11 +119,12 @@ Something must always be feeding the display bridge or the screen goes black
 during a song and a second pipeline, built and torn down per still image,
 between songs.
 
-That works, but the cost is spread across `kbox/streaming.py`:
-`_create_interstitial_pipeline` and `_stop_interstitial_pipeline` plus its six
-call sites, each of which must stop one feeder before starting the other, the
-`_is_interstitial` flag, and an EOS guard — all of it maintaining a single
-invariant by hand, namely that exactly one thing feeds the bridge at a time.
+That works, but the cost is spread across `kbox/streaming/`: a
+`StillImageFeeder` that builds and tears down a pipeline per image, four call
+sites in `controller.py` (three `stop()` and one `start()`) that must each
+arrange for one feeder to stop before the other starts, the `_is_interstitial`
+flag, and an EOS guard — all of it maintaining a single invariant by hand,
+namely that exactly one thing feeds the bridge at a time.
 
 An `input-selector` makes that invariant structural instead: a selector has one
 active pad, so "two feeders at once" stops being representable. Two placements
@@ -576,16 +577,6 @@ change to how the app runs.
 `_stop_bus_polling()` stops and joins every watcher, and each loop re-reads
 its bus every pass so that teardown setting `self.playbin = None` ends the loop
 rather than crashing it.
-
-**It also does not currently fire.** `bus.add_signal_watch()` delivers
-messages through a GLib main loop, and kbox never runs one — there is no
-`MainLoop` anywhere in `kbox/` or `test/`. playbin's bus is covered regardless
-by `_start_bus_polling()`, a thread doing `timed_pop`, but that thread handles
-only EOS and ERROR, so `_on_warning` and its audio-device check are dead code
-too. The display pipeline has no polling thread at all, so `_on_display_error`
-never runs and the silent-failure mode this trap warns about is still live
-despite the watch being installed. Fixing it means polling the display bus as
-well, or running a real main loop.
 
 ## Running the GStreamer tests
 
