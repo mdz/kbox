@@ -3,7 +3,7 @@
 How kbox gets audio and video onto a screen, why it is arranged this way, and
 the things that look like they should work but do not.
 
-Read this before changing anything in `kbox/streaming.py`. Most of the notes
+Read this before changing anything in `kbox/streaming/`. Most of the notes
 below exist because something plausible was tried, shipped, and had to be
 measured on real hardware before it became obvious it was wrong.
 
@@ -247,8 +247,8 @@ change turns out not to be enough.
 
 The display pipeline is on the hot path for every frame.
 `test/test_pipeline_benchmark.py` measures the stages, building its pipelines
-from the same `StreamingController` methods the app uses (see the file's
-docstring) so it can't quietly drift from what actually runs:
+from the same `kbox.streaming.elements` factory functions the app uses (see
+the file's docstring) so it can't quietly drift from what actually runs:
 
 ```bash
 # on the Pi, inside the container — the only numbers that mean anything
@@ -408,19 +408,22 @@ right in review, and were dead code. EOS and errors on *playbin's* bus still
 worked, which hid the problem, because those came from a separate polling
 thread rather than from the signal watch.
 
-So both buses are drained by polling threads instead
-(`_start_bus_polling()` / `_start_bus_poller()` in `kbox/streaming.py`): one for
-playbin's bus, one for the display pipeline's, each doing
+So both buses are drained by polling threads instead (`BusWatcher` in
+`kbox/streaming/bus.py`, started by `StreamingController._start_bus_polling()`):
+one for playbin's bus, one for the display pipeline's, each doing
 `bus.timed_pop(100ms)` and routing EOS, ERROR and WARNING to the handlers.
+`BusWatcher` owns only the thread; what a message means is the dispatch
+callable it is given — `_dispatch_playbin_message` on the controller,
+`DisplayPipeline.dispatch_bus_message` for the display pipeline's.
 The `add_signal_watch()` / `connect()` calls are gone, deliberately — leaving
 them in implied a delivery path that does not exist. If you add another
 pipeline with a bus worth watching, give it a poller; do not reach for a signal
 watch unless you are also introducing a main loop, which is a much larger
 change to how the app runs.
 
-`_stop_bus_polling()` clears the shared run flag and joins every poll thread,
-and each loop re-reads its pipeline attribute every pass so that teardown
-setting `self.playbin = None` ends the loop rather than crashing it.
+`_stop_bus_polling()` stops and joins every watcher, and each loop re-reads
+its bus every pass so that teardown setting `self.playbin = None` ends the loop
+rather than crashing it.
 
 ## Running the GStreamer tests
 

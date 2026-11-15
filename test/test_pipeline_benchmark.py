@@ -7,9 +7,11 @@ The headline number for video is the maximum frame rate each configuration
 could hold if it had a whole core to itself: if that drops below the source
 frame rate, playback stutters no matter how much headroom the totals suggest.
 
-Elements are built by calling the real StreamingController methods
-(_create_audio_sink_bin, _create_pitch_shift_or_identity,
-_create_qr_overlay_element, _create_videoscale_element, ...) rather than a
+Elements are built by calling the real factory functions the app uses
+(kbox.streaming.elements.create_audio_sink_bin,
+create_pitch_shift_or_identity, create_qr_overlay_element,
+create_videoscale_element, ...) and the real OverlayController to size them,
+rather than a
 separately hand-written pipeline description, so this can't quietly drift
 from what the app actually runs the way a from-scratch reimplementation can.
 A prior version of this benchmark hardcoded the QR overlay at 15% of frame
@@ -58,6 +60,9 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.overlay import generate_qr_code
 from kbox.streaming import StreamingController, _get_gst, _render_caps_string
+from kbox.streaming import elements as streaming_elements
+from kbox.streaming import pipelines as streaming_pipelines
+from kbox.streaming.overlays import OverlayController
 
 AUDIO_RATE = 44100
 AUDIO_SAMPLES_PER_BUFFER = 1024
@@ -167,21 +172,28 @@ def _make_video_source(width, height, frames, fps):
 def _make_overlays(controller, width, height):
     """Real QR + text overlay elements, sized the way the app sizes them for
     a `width`x`height` render frame. Returns the elements to link in, in
-    order (either may be missing if the plugin isn't installed)."""
+    order (either may be missing if the plugin isn't installed).
+
+    The elements and the OverlayController driving them are built here
+    directly -- same classes and factory functions the app uses, no need to
+    reach into the controller that happens to be running.
+    """
+    config_manager = controller.config_manager
+
+    qr = streaming_elements.create_qr_overlay_element(config_manager)
+    text = streaming_elements.create_text_overlay_element()
+    overlays = OverlayController(qr, text, config_manager)
+
     elements = []
 
-    qr = controller._create_qr_overlay_element()
     if qr is not None:
-        controller.qr_overlay = qr
-        controller._update_qr_size_for_resolution(width, height)
+        overlays.update_qr_size_for_resolution(width, height)
         elements.append(qr)
 
-    text = controller._create_text_overlay_element()
     if text is not None:
-        controller.text_overlay = text
         text.set_property("text", "benchmark")
         text.set_property("silent", False)
-        controller._update_text_layout_for_resolution(width)
+        overlays.update_text_layout_for_resolution(width)
         elements.append(text)
 
     return elements
@@ -203,7 +215,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
         if qr_image_path:
             controller.update_qr_overlay(qr_image_path)
 
-        render_w, render_h = controller._choose_render_size(screen_size) or screen_size
+        render_w, render_h = streaming_pipelines.choose_render_size(screen_size) or screen_size
 
         def baseline():
             src = _make_video_source(src_w, src_h, frames, fps)
@@ -216,7 +228,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
             src = _make_video_source(src_w, src_h, frames, fps)
             vc = Gst.ElementFactory.make("videoconvert", "videoconvert")
             overlay_elems = _make_overlays(controller, src_w, src_h)
-            vs = controller._create_videoscale_element()
+            vs = streaming_elements.create_videoscale_element()
             sink = Gst.ElementFactory.make("fakesink", "sink")
             sink.set_property("sync", False)
             return [*src, vc, *overlay_elems, vs, sink]
@@ -224,7 +236,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
         def upscale_with_overlays():
             src = _make_video_source(src_w, src_h, frames, fps)
             vc = Gst.ElementFactory.make("videoconvert", "videoconvert")
-            vs = controller._create_videoscale_element()
+            vs = streaming_elements.create_videoscale_element()
             caps = Gst.ElementFactory.make("capsfilter", "render_caps")
             caps.set_property("caps", Gst.Caps.from_string(_render_caps_string(render_w, render_h)))
             overlay_elems = _make_overlays(controller, render_w, render_h)
@@ -245,7 +257,7 @@ def benchmark_video(source_size, screen_size, fps, frames, repeats, qr_image_pat
         # videoscale's resampling method dominates the upscale cost. This
         # matrix is exploratory tuning data, not tied to what the app runs --
         # the app always uses the default (method=1, "upscale to screen"
-        # above) via _create_videoscale_element.
+        # above) via kbox.streaming.elements.create_videoscale_element.
         print("\n  exploratory: alternative videoscale methods (not used by the app)\n")
         for method, label in (
             (0, "nearest"),
@@ -292,7 +304,7 @@ def benchmark_audio(seconds, repeats):
 
     # The pitch shift element and audio sink bin are picked at controller
     # construction time, and this benchmark wants to run the real
-    # _create_audio_sink_bin() rather than reimplementing the element chain.
+    # create_audio_sink_bin() rather than reimplementing the element chain.
     name = "signalsmithpitch, 0 semitones"
     with make_controller() as controller:
 
@@ -300,7 +312,12 @@ def benchmark_audio(seconds, repeats):
             src = make_source()
             # A fresh audio sink bin per run: it already ends in a
             # (fake)sink, so nothing else needs to be appended.
-            audio_bin = controller._create_audio_sink_bin()
+            audio_bin = streaming_elements.create_audio_sink_bin(
+                controller.config_manager,
+                controller.use_fakesinks,
+                controller.pitch_shift_semitones,
+                controller.volume_gain_linear,
+            ).bin
             return [*src, audio_bin]
 
         cpu, error = run_pipeline(build, repeats)

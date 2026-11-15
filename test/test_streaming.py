@@ -33,7 +33,9 @@ configure_macos_gstreamer_env()
 
 from kbox.config_manager import ConfigManager
 from kbox.database import Database
-from kbox.streaming import StreamingController, _get_glib, _get_gst
+from kbox.streaming import StreamingController, _get_glib, _get_gst, elements, gst, pipelines
+from kbox.streaming.bus import BusWatcher
+from kbox.streaming.overlays import OverlayController
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -171,10 +173,10 @@ def test_init_creates_text_overlay_element(controller):
 
     This requires gstreamer1.0-x (Pango plugin) to be installed.
     """
-    assert controller.text_overlay is not None, (
+    assert controller.display.text_overlay is not None, (
         "textoverlay element not available - install gstreamer1.0-x"
     )
-    assert controller._notification_lock is not None
+    assert controller.overlays.notification_lock is not None
 
 
 def test_reinitialize_pipeline(controller, test_video_1s):
@@ -385,9 +387,11 @@ def test_create_pitch_shift_uses_signalsmith_when_available(controller, monkeypa
     """The dispatcher should use the native signalsmithpitch element when its
     plugin is available."""
     sentinel = MagicMock(name="signalsmith_element")
-    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: sentinel)
+    monkeypatch.setattr(
+        elements, "create_signalsmith_pitch_shift", lambda config_manager, semitones: sentinel
+    )
 
-    result = controller._create_pitch_shift_or_identity()
+    result = elements.create_pitch_shift_or_identity(controller.config_manager, 0)
 
     assert result is sentinel
 
@@ -395,9 +399,11 @@ def test_create_pitch_shift_uses_signalsmith_when_available(controller, monkeypa
 def test_create_pitch_shift_falls_back_to_identity_when_unavailable(controller, monkeypatch):
     """When the signalsmithpitch plugin isn't available, dispatcher should
     return identity rather than raise."""
-    monkeypatch.setattr(controller, "_create_signalsmith_pitch_shift", lambda: None)
+    monkeypatch.setattr(
+        elements, "create_signalsmith_pitch_shift", lambda config_manager, semitones: None
+    )
 
-    result = controller._create_pitch_shift_or_identity()
+    result = elements.create_pitch_shift_or_identity(controller.config_manager, 0)
 
     assert type(result).__name__ == "GstIdentity"
 
@@ -482,7 +488,7 @@ def _run_pitch_element_and_measure_frequency(
 
 def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
     """The native signalsmith element should genuinely change pitch, not just pass audio through."""
-    elem = controller._create_signalsmith_pitch_shift()
+    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
     assert elem is not None, (
         "signalsmithpitch plugin not available -- run "
         "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
@@ -501,7 +507,7 @@ def test_signalsmith_pitch_shift_mono_channel(controller):
     """The element declares support for any channel count (see caps in
     gstsignalsmithpitch.cpp) -- confirm mono actually works, not just the
     stereo path exercised by the other frequency test."""
-    elem = controller._create_signalsmith_pitch_shift()
+    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
     assert elem is not None, (
         "signalsmithpitch plugin not available -- run "
         "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
@@ -521,7 +527,7 @@ def test_signalsmith_pitch_shift_mono_channel(controller):
 def test_signalsmith_pitch_shift_semitones_boundary_values(controller):
     """The semitones property is declared with range [-24, 24]; confirm both
     extremes round-trip through set/get without being rejected or clamped."""
-    elem = controller._create_signalsmith_pitch_shift()
+    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
     assert elem is not None, (
         "signalsmithpitch plugin not available -- run "
         "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
@@ -544,7 +550,7 @@ def test_signalsmith_flush_stop_resets_state(controller):
     flushing seeks (as happen on quick track transitions) must not error out
     or leave the pipeline in a broken state.
     """
-    elem = controller._create_signalsmith_pitch_shift()
+    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
     assert elem is not None, (
         "signalsmithpitch plugin not available -- run "
         "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
@@ -768,12 +774,12 @@ def test_streaming_controller_initialization(mock_config_manager):
 
 def test_qr_overlay_resizes_on_video_caps(controller, test_video_3s):
     """Test that QR overlay resizes based on video resolution via caps negotiation."""
-    assert controller.qr_overlay is not None, (
+    assert controller.display.qr_overlay is not None, (
         "gdkpixbufoverlay not available -- install gstreamer1.0-plugins-good"
     )
 
     # Store initial size
-    initial_size = controller._qr_current_size
+    initial_size = controller.overlays.qr_current_size
 
     # Load a video - this should trigger caps negotiation
     controller.load_file(test_video_3s)
@@ -784,27 +790,27 @@ def test_qr_overlay_resizes_on_video_caps(controller, test_video_3s):
     # The QR size should have been updated based on video height
     # Test video is 240px high, so at 10% it should be ~48px (minimum is 48)
     # Just verify the update method was exercised without crashing
-    assert controller._qr_current_size >= 48
+    assert controller.overlays.qr_current_size >= 48
 
     controller.stop_playback()
 
 
 def test_qr_overlay_position_calculation(controller, test_video_3s):
     """Test that QR position is calculated correctly for different corners."""
-    assert controller.qr_overlay is not None, (
+    assert controller.display.qr_overlay is not None, (
         "gdkpixbufoverlay not available -- install gstreamer1.0-plugins-good"
     )
 
     # Test each position
     for position in ["top-left", "top-right", "bottom-left", "bottom-right"]:
-        controller._qr_position = position
+        controller.overlays.qr_position = position
 
         # Manually trigger the size update with known dimensions
-        controller._update_qr_size_for_resolution(1280, 720)
+        controller.overlays.update_qr_size_for_resolution(1280, 720)
 
         # Get the offset properties
-        offset_x = controller.qr_overlay.get_property("offset-x")
-        offset_y = controller.qr_overlay.get_property("offset-y")
+        offset_x = controller.display.qr_overlay.get_property("offset-x")
+        offset_y = controller.display.qr_overlay.get_property("offset-y")
 
         # Verify offsets are reasonable (not negative, within bounds)
         assert offset_x >= 0, f"offset-x negative for {position}"
@@ -820,7 +826,7 @@ def test_qr_overlay_position_calculation(controller, test_video_3s):
 
 def test_show_notification(controller):
     """Test that notifications can be shown and hidden."""
-    assert controller.text_overlay is not None, (
+    assert controller.display.text_overlay is not None, (
         "textoverlay not available -- install gstreamer1.0-plugins-base"
     )
 
@@ -828,22 +834,22 @@ def test_show_notification(controller):
     controller.show_notification("Test notification", duration_seconds=1.0)
 
     # Verify text is set
-    text = controller.text_overlay.get_property("text")
+    text = controller.display.text_overlay.get_property("text")
     assert text == "Test notification"
 
     # Verify not silent (visible)
-    silent = controller.text_overlay.get_property("silent")
+    silent = controller.display.text_overlay.get_property("silent")
     assert silent is False
 
     # Wait for auto-hide
     time.sleep(1.5)
 
     # Verify text is cleared
-    text = controller.text_overlay.get_property("text")
+    text = controller.display.text_overlay.get_property("text")
     assert text == ""
 
     # Verify now silent
-    silent = controller.text_overlay.get_property("silent")
+    silent = controller.display.text_overlay.get_property("silent")
     assert silent is True
 
 
@@ -851,30 +857,30 @@ def test_show_notification_escapes_pango_markup(controller):
     """Titles/artists with &, <, > must be escaped before hitting the
     textoverlay element, or GStreamer emits a Pango markup parse warning
     (e.g. "Shallow ... (Lady Gaga & Bradley Cooper)")."""
-    assert controller.text_overlay is not None, (
+    assert controller.display.text_overlay is not None, (
         "textoverlay not available -- install gstreamer1.0-plugins-base"
     )
 
     raw = "Lady Gaga & Bradley Cooper <3 <live>"
     controller.show_notification(raw, duration_seconds=60.0)
 
-    text = controller.text_overlay.get_property("text")
+    text = controller.display.text_overlay.get_property("text")
     assert text == "Lady Gaga &amp; Bradley Cooper &lt;3 &lt;live&gt;"
-    assert controller.text_overlay.get_property("silent") is False
+    assert controller.display.text_overlay.get_property("silent") is False
 
 
 def test_set_overlay_text_escapes_pango_markup(controller):
     """set_overlay_text() (persistent overlay) must also escape markup."""
-    assert controller.text_overlay is not None, (
+    assert controller.display.text_overlay is not None, (
         "textoverlay not available -- install gstreamer1.0-plugins-base"
     )
 
     raw = "Now singing: Ben & Jerry's <Encore>"
     controller.set_overlay_text(raw)
 
-    text = controller.text_overlay.get_property("text")
+    text = controller.display.text_overlay.get_property("text")
     assert text == "Now singing: Ben &amp; Jerry&apos;s &lt;Encore&gt;"
-    assert controller.text_overlay.get_property("silent") is False
+    assert controller.display.text_overlay.get_property("silent") is False
 
 
 # =========================================================================
@@ -947,7 +953,7 @@ def test_display_image_produces_no_audio(controller, interstitial_image):
 
     _, playbin_state, _ = controller.playbin.get_state(Gst.SECOND)
     assert playbin_state == Gst.State.NULL
-    assert controller.interstitial_pipeline.get_by_name("isink") is not None
+    assert controller.still_image.pipeline.get_by_name("isink") is not None
 
     controller.stop_playback()
 
@@ -998,7 +1004,7 @@ def test_show_notification_during_interstitial(controller, interstitial_image):
     position 0 to force imagefreeze to regenerate the frame so the text
     overlay actually appears on the frozen image.
     """
-    assert controller.text_overlay is not None, (
+    assert controller.display.text_overlay is not None, (
         "textoverlay not available -- install gstreamer1.0-plugins-base"
     )
 
@@ -1008,8 +1014,8 @@ def test_show_notification_during_interstitial(controller, interstitial_image):
     # Long duration so auto-hide doesn't fire during the test
     controller.show_notification("Up next: Alice", duration_seconds=60.0)
 
-    assert controller.text_overlay.get_property("text") == "Up next: Alice"
-    assert controller.text_overlay.get_property("silent") is False
+    assert controller.display.text_overlay.get_property("text") == "Up next: Alice"
+    assert controller.display.text_overlay.get_property("silent") is False
 
     controller.stop_playback()
 
@@ -1048,8 +1054,8 @@ def test_display_pipeline_is_separate_from_playbin(controller):
     song change -- which for kmssink closes the DRM fd and hands the screen
     back to the kernel console.
     """
-    assert controller.display_pipeline is not None
-    assert controller.display_pipeline is not controller.playbin
+    assert controller.display.pipeline is not None
+    assert controller.display.pipeline is not controller.playbin
 
 
 def test_overlays_are_composited_after_the_render_caps(controller):
@@ -1062,12 +1068,12 @@ def test_overlays_are_composited_after_the_render_caps(controller):
     Upstream they would be drawn onto the source frame and scaled with it,
     which made the QR code enormous and resized it on every song.
     """
-    assert controller.qr_overlay or controller.text_overlay, (
+    assert controller.display.qr_overlay or controller.display.text_overlay, (
         "no overlay elements available -- install gstreamer1.0-plugins-good "
         "and gstreamer1.0-plugins-base"
     )
 
-    chain = _linked_chain(controller.display_pipeline, "intervideosrc")
+    chain = _linked_chain(controller.display.pipeline, "intervideosrc")
 
     assert "capsfilter" in chain, f"no capsfilter in display chain: {chain}"
     caps_at = chain.index("capsfilter")
@@ -1103,18 +1109,18 @@ def test_render_size_keeps_display_aspect_ratio(controller, display, expected):
     what keeps the cost survivable: rendering straight at 1080p measured
     ~46 ms/frame, which cannot sustain 30fps.
     """
-    assert controller._choose_render_size(display) == expected
+    assert pipelines.choose_render_size(display) == expected
 
     width, height = expected
     assert abs(width / height - display[0] / display[1]) < 0.01
-    assert height <= max(controller.MAX_RENDER_HEIGHT, display[1])
+    assert height <= max(pipelines.MAX_RENDER_HEIGHT, display[1])
     # Odd dimensions upset chroma-subsampled formats.
     assert width % 2 == 0 and height % 2 == 0
 
 
 def test_no_render_size_when_display_size_is_unknown(controller):
     """A sink that cannot report a mode leaves the caps open rather than guessing."""
-    assert controller._choose_render_size(None) is None
+    assert pipelines.choose_render_size(None) is None
 
 
 def test_bridge_channels_all_agree(controller, interstitial_image):
@@ -1126,13 +1132,13 @@ def test_bridge_channels_all_agree(controller, interstitial_image):
     """
     channel = StreamingController.DISPLAY_CHANNEL
 
-    src = controller.display_pipeline.get_by_name("intervideosrc")
+    src = controller.display.pipeline.get_by_name("intervideosrc")
     assert src.get_property("channel") == channel
 
     playbin_side = controller.video_bin.get_by_name("intervideosink")
     assert playbin_side.get_property("channel") == channel
 
-    interstitial = controller._create_interstitial_pipeline(interstitial_image)
+    interstitial = controller.still_image.create_pipeline(interstitial_image)
     try:
         assert interstitial.get_by_name("isink").get_property("channel") == channel
     finally:
@@ -1148,7 +1154,7 @@ def test_interstitial_pipeline_uses_imagefreeze(controller, interstitial_image):
     starts generating black frames, blanking the idle screen a second after
     every stop.
     """
-    pipeline = controller._create_interstitial_pipeline(interstitial_image)
+    pipeline = controller.still_image.create_pipeline(interstitial_image)
     try:
         assert pipeline.get_by_name("ifreeze") is not None
     finally:
@@ -1165,12 +1171,12 @@ def test_only_one_source_feeds_the_bridge(controller, interstitial_image, test_v
     Gst = _get_gst()
 
     controller.display_image(interstitial_image)
-    assert controller.interstitial_pipeline is not None
+    assert controller.still_image.pipeline is not None
     _, playbin_state, _ = controller.playbin.get_state(Gst.SECOND)
     assert playbin_state == Gst.State.NULL
 
     controller.load_file(test_video_1s)
-    assert controller.interstitial_pipeline is None
+    assert controller.still_image.pipeline is None
 
 
 def test_query_display_size_handles_sinks_without_mode_properties(controller):
@@ -1185,7 +1191,7 @@ def test_query_display_size_handles_sinks_without_mode_properties(controller):
         def find_property(self, name):
             return None
 
-    assert controller._query_display_size(_SinkWithoutModeProperties()) is None
+    assert pipelines.query_display_size(_SinkWithoutModeProperties()) is None
 
 
 def test_text_layout_leaves_font_size_to_auto_resize(controller):
@@ -1196,26 +1202,141 @@ def test_text_layout_leaves_font_size_to_auto_resize(controller):
     deriving a size from the display scales it twice -- which put roughly
     66pt of text across a 1080p screen.
     """
-    assert controller.text_overlay is not None, (
+    text_overlay = controller.display.text_overlay
+    assert text_overlay is not None, (
         "textoverlay not available -- install gstreamer1.0-plugins-base"
     )
 
-    font_before = controller.text_overlay.get_property("font-desc")
+    font_before = text_overlay.get_property("font-desc")
 
-    controller._update_text_layout_for_resolution(1920)
+    controller.overlays.update_text_layout_for_resolution(1920)
 
-    assert controller.text_overlay.get_property("font-desc") == font_before
-    assert controller.text_overlay.get_property("auto-resize") is True
+    assert text_overlay.get_property("font-desc") == font_before
+    assert text_overlay.get_property("auto-resize") is True
     # xpad is raw pixels that auto-resize does not touch, so it does scale:
     # 20 * (1920 / 640) == 60
-    assert controller.text_overlay.get_property("xpad") == 60
+    assert text_overlay.get_property("xpad") == 60
 
 
 def test_caps_dimensions_extracts_width_and_height(controller):
     """The shared caps parser pulls dimensions out of a caps object."""
     caps = _get_gst().Caps.from_string("video/x-raw,format=I420,width=1280,height=720")
 
-    assert controller._caps_dimensions(caps) == (1280, 720)
+    assert gst.caps_dimensions(caps) == (1280, 720)
+
+
+# =========================================================================
+# Collaborator Tests
+#
+# These construct a collaborator on its own, with stub elements, and no
+# StreamingController anywhere. They are the evidence that the split is real:
+# if a piece ever starts reaching back through a controller it does not own,
+# these stop compiling.
+# =========================================================================
+
+
+class _StubOverlayElement:
+    """Minimal stand-in for a GStreamer element: just properties."""
+
+    def __init__(self, **properties):
+        self._properties = dict(properties)
+
+    def set_property(self, name, value):
+        self._properties[name] = value
+
+    def get_property(self, name):
+        return self._properties[name]
+
+
+def test_overlay_controller_sizes_qr_without_a_pipeline(mock_config_manager):
+    """OverlayController sizes the QR element given only the element itself."""
+    mock_config_manager.set("overlay_qr_position", "bottom-right")
+    mock_config_manager.set("overlay_qr_size_percent", 10)
+    qr = _StubOverlayElement()
+
+    overlays = OverlayController(qr, None, mock_config_manager)
+    overlays.update_qr_size_for_resolution(1280, 720)
+
+    # 10% of 720 = 72px, padding is 2% of 720 = 14px, bottom-right corner.
+    assert qr.get_property("overlay-width") == 72
+    assert qr.get_property("overlay-height") == 72
+    assert qr.get_property("offset-x") == 1280 - 72 - 14
+    assert qr.get_property("offset-y") == 720 - 72 - 14
+    assert overlays.qr_current_size == 72
+
+
+def test_overlay_controller_sets_and_clears_text(mock_config_manager):
+    """set_overlay_text drives the text element directly, with no controller."""
+    text = _StubOverlayElement(text="", silent=True)
+
+    overlays = OverlayController(None, text, mock_config_manager)
+
+    overlays.set_overlay_text("Up next: Alice")
+    assert text.get_property("text") == "Up next: Alice"
+    assert text.get_property("silent") is False
+
+    overlays.set_overlay_text("")
+    assert text.get_property("text") == ""
+    assert text.get_property("silent") is True
+
+
+def test_overlay_controller_carries_qr_image_path_across_rebuilds(mock_config_manager):
+    """
+    The remembered QR path is constructor state, so a rebuild can hand it on.
+
+    Set through the public entry point with no element attached, which is the
+    state during a config-change rebuild and whenever GStreamer is missing
+    altogether. The path has to be recorded anyway, or the rebuilt pipeline
+    comes up with no QR code on it.
+    """
+    overlays = OverlayController(None, None, mock_config_manager)
+    overlays.update_qr_overlay("/tmp/qr.png")
+
+    assert overlays.qr_image_path == "/tmp/qr.png"
+
+    rebuilt = OverlayController(
+        None, None, mock_config_manager, qr_image_path=overlays.qr_image_path
+    )
+
+    assert rebuilt.qr_image_path == "/tmp/qr.png"
+
+
+def test_bus_watcher_dispatches_messages_to_its_callback():
+    """BusWatcher owns only the thread: what a message means is the callback's."""
+    Gst = _get_gst()
+
+    class _StubMessage:
+        def __init__(self, type_):
+            self.type = type_
+
+    class _StubBus:
+        def __init__(self, messages):
+            self._messages = list(messages)
+
+        def timed_pop(self, timeout_ns):
+            return self._messages.pop(0) if self._messages else None
+
+    bus = _StubBus([_StubMessage(Gst.MessageType.EOS), _StubMessage(Gst.MessageType.ERROR)])
+    seen = []
+    done = threading.Event()
+
+    def bus_provider():
+        # Once both messages are consumed, report nothing left to poll so the
+        # thread finishes on its own rather than on a timeout.
+        if len(seen) == 2:
+            done.set()
+            return None
+        return bus
+
+    w = BusWatcher("StubBusPoll", bus_provider, lambda b, m: seen.append(m.type))
+    assert w.name == "StubBusPoll"
+    w.start()
+    assert done.wait(timeout=5), f"bus watcher did not drain the bus, saw {seen}"
+    w.stop()
+
+    assert seen == [Gst.MessageType.EOS, Gst.MessageType.ERROR]
+    assert w.running is False
+    assert not w.is_alive()
 
 
 # =========================================================================
@@ -1269,7 +1390,7 @@ def test_display_bus_warning_reaches_handler(controller, caplog):
     was completely silent.
     """
     Gst = _get_gst()
-    pipeline = controller.display_pipeline
+    pipeline = controller.display.pipeline
     assert pipeline is not None
     bus = _quiesce_bus(controller, pipeline)
 
@@ -1277,7 +1398,7 @@ def test_display_bus_warning_reaches_handler(controller, caplog):
     bus.post(Gst.Message.new_warning(pipeline, error, "debug info for display warning"))
 
     with caplog.at_level(logging.WARNING, logger="kbox.streaming"):
-        assert _drain_and_dispatch(bus, controller._dispatch_display_message) == 1
+        assert _drain_and_dispatch(bus, controller.display.dispatch_bus_message) == 1
 
     assert "Display pipeline warning" in caplog.text
     assert "display warning under test" in caplog.text
@@ -1286,7 +1407,7 @@ def test_display_bus_warning_reaches_handler(controller, caplog):
 def test_display_bus_error_reaches_handler(controller, caplog):
     """An ERROR on the display pipeline's bus is logged."""
     Gst = _get_gst()
-    pipeline = controller.display_pipeline
+    pipeline = controller.display.pipeline
     assert pipeline is not None
     bus = _quiesce_bus(controller, pipeline)
 
@@ -1294,7 +1415,7 @@ def test_display_bus_error_reaches_handler(controller, caplog):
     bus.post(Gst.Message.new_error(pipeline, error, "debug info for display error"))
 
     with caplog.at_level(logging.ERROR, logger="kbox.streaming"):
-        assert _drain_and_dispatch(bus, controller._dispatch_display_message) == 1
+        assert _drain_and_dispatch(bus, controller.display.dispatch_bus_message) == 1
 
     assert "Display pipeline error" in caplog.text
     assert "display error under test" in caplog.text
@@ -1322,20 +1443,20 @@ def test_playbin_bus_warning_reaches_handler(controller, caplog):
 
 def test_both_buses_are_polled(controller):
     """Polling covers playbin's bus and the display pipeline's bus."""
-    names = {thread.name for thread in controller._bus_poll_threads}
+    names = {watcher.name for watcher in controller.bus_watchers}
 
     assert names == {"GstBusPoll", "GstDisplayBusPoll"}
-    assert all(thread.is_alive() for thread in controller._bus_poll_threads)
+    assert all(watcher.is_alive() for watcher in controller.bus_watchers)
 
 
 def test_stop_bus_polling_joins_every_thread(controller):
     """Shutdown tears down both poll threads and forgets them."""
-    threads = list(controller._bus_poll_threads)
-    assert threads
+    watchers = list(controller.bus_watchers)
+    assert watchers
 
     controller._stop_bus_polling()
 
-    assert controller._bus_poll_running is False
-    assert controller._bus_poll_threads == []
-    for thread in threads:
-        assert not thread.is_alive(), f"{thread.name} did not exit"
+    assert all(watcher.running is False for watcher in watchers)
+    assert controller.bus_watchers == []
+    for watcher in watchers:
+        assert not watcher.is_alive(), f"{watcher.name} did not exit"
