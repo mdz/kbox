@@ -288,9 +288,21 @@ class PlaybackController:
         Called from the monitor's PeriodicThread. This stays on the controller
         because every branch below reads self.state and self.current_song_id,
         and _check_auto_start_when_idle() / _check_auto_resume_after_replace()
-        call back into play(). The _check_* methods take the playback lock
-        themselves where they need it; this method holds nothing.
+        start playback.
+
+        The whole tick runs under the playback lock, so the state a branch
+        decided on is still the state when it acts: an operator's stop or
+        skip lands either wholly before the tick or wholly after it. What
+        that costs is the lock held across a position query and a few SQLite
+        reads every couple of seconds, which is small next to _play_song()
+        holding it across load_file().
         """
+        with self._locked():
+            self._monitor_tick_locked()
+
+    def _monitor_tick_locked(self):
+        """The body of _on_monitor_tick(). Assumes lock is already held."""
+        self._require_locked()
         if self.state == PlaybackState.PLAYING and self.current_song_id:
             position = self.streaming_controller.get_position()
             if position is not None:
@@ -323,7 +335,10 @@ class PlaybackController:
         Respects queue order: if the next song isn't ready yet, we wait
         rather than skipping ahead to a later song that happened to
         download faster.
+
+        Assumes lock is already held.
         """
+        self._require_locked()
         cursor = self.get_cursor()
         if cursor is not None:
             next_song = self.queue_manager.get_song_at_offset(cursor, +1)
@@ -331,7 +346,7 @@ class PlaybackController:
             next_song = self.queue_manager.get_song_at_offset(None, 0)
         if next_song and next_song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
-            self.play()
+            self._play_locked()
 
     def _check_auto_resume_after_replace(self):
         """
@@ -342,7 +357,10 @@ class PlaybackController:
         replace_song()) and still matches the current song - any other
         control action (play/skip/previous/jump/manual stop) clears it,
         so this never overrides an operator's explicit choice.
+
+        Assumes lock is already held.
         """
+        self._require_locked()
         item_id = self._awaiting_replace_item_id
         if item_id is None or item_id != self.current_song_id:
             return
@@ -351,15 +369,18 @@ class PlaybackController:
         if song and song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Replacement ready for song %s, auto-resuming", item_id)
             self._awaiting_replace_item_id = None
-            self.play()
+            self._play_locked()
 
     def _check_current_singer_notification(self, current_position: int):
         """
         Check if song just started and show "current singer" persistent overlay.
 
+        Assumes lock is already held.
+
         Args:
             current_position: Current playback position in seconds
         """
+        self._require_locked()
         if self._current_singer_shown:
             return  # Already shown for this song
 
@@ -372,28 +393,16 @@ class PlaybackController:
         if current_position > 3:
             return
 
-        song_id = self.current_song_id
-
-        with self._locked():
-            # Re-check under lock: state may have changed (operator skip/
-            # stop, or a song change) since the unlocked check above. Only
-            # set the flag/overlay if the song we decided on is still the
-            # one actually playing.
-            if self._current_singer_shown or self.state != PlaybackState.PLAYING:
-                return
-            if self.current_song_id != song_id:
-                return
-
-            current_song = self.queue_manager.get_item(song_id)
-            if current_song:
-                overlay_text = f"Now singing: {current_song.user_name}"
-                # Add extracted song metadata if available
-                song_info = self._format_song_info(current_song.metadata)
-                if song_info:
-                    overlay_text = f"{overlay_text}\n{song_info}"
-                self._overlay.set_base(overlay_text)
-                self._current_singer_shown = True
-                self.logger.debug("Set current singer overlay for: %s", current_song.user_name)
+        current_song = self.queue_manager.get_item(self.current_song_id)
+        if current_song:
+            overlay_text = f"Now singing: {current_song.user_name}"
+            # Add extracted song metadata if available
+            song_info = self._format_song_info(current_song.metadata)
+            if song_info:
+                overlay_text = f"{overlay_text}\n{song_info}"
+            self._overlay.set_base(overlay_text)
+            self._current_singer_shown = True
+            self.logger.debug("Set current singer overlay for: %s", current_song.user_name)
 
     def _format_song_info(self, metadata) -> Optional[str]:
         """
@@ -415,9 +424,12 @@ class PlaybackController:
         """
         Check if song is ending and update overlay to show "up next".
 
+        Assumes lock is already held.
+
         Args:
             current_position: Current playback position in seconds
         """
+        self._require_locked()
         if self._up_next_shown:
             return  # Already shown for this song
 
@@ -440,62 +452,46 @@ class PlaybackController:
         if time_remaining > 15:
             return
 
-        with self._locked():
-            # Re-check under lock: state may have changed (operator skip/
-            # stop, or a song change) since the unlocked check above. Only
-            # set the flag/overlay if the song we decided on is still the
-            # one actually playing.
-            if self._up_next_shown or self.state != PlaybackState.PLAYING:
-                return
-            if self.current_song_id != song_id:
-                return
-
-            # Get next song by queue position (show who's up next regardless of download status)
-            next_song = self.queue_manager.get_song_at_offset(song_id, +1)
-            if next_song:
-                overlay_text = f"Up next: {next_song.user_name}"
-                self._overlay.set_base(overlay_text)
-                self._up_next_shown = True
-                self.logger.debug("Updated overlay to up next for: %s", next_song.user_name)
+        # Get next song by queue position (show who's up next regardless of download status)
+        next_song = self.queue_manager.get_song_at_offset(song_id, +1)
+        if next_song:
+            overlay_text = f"Up next: {next_song.user_name}"
+            self._overlay.set_base(overlay_text)
+            self._up_next_shown = True
+            self.logger.debug("Updated overlay to up next for: %s", next_song.user_name)
 
     def _check_trailing_silence_skip(self, current_position: int):
         """
         Check if playback has reached the cached trailing-silence trim point
         and, if so, advance to the next song without waiting for literal EOS.
 
+        Assumes lock is already held.
+
         Args:
             current_position: Current playback position in seconds
         """
-        if self._current_trim_point is None:
+        self._require_locked()
+        if self.state != PlaybackState.PLAYING or self._current_trim_point is None:
             return
 
         if current_position < self._current_trim_point:
             return
 
-        with self._locked():
-            # Re-check under lock: state may have changed (operator skip/
-            # stop, or another path already advanced the song) since the
-            # unlocked check above.
-            if self.state != PlaybackState.PLAYING or self._current_trim_point is None:
-                return
+        self.logger.info(
+            "Reached trailing silence at %ss (trim point %ss), advancing early",
+            current_position,
+            self._current_trim_point,
+        )
 
-            self.logger.info(
-                "Reached trailing silence at %ss (trim point %ss), advancing early",
-                current_position,
-                self._current_trim_point,
-            )
+        song = self.queue_manager.get_item(self.current_song_id) if self.current_song_id else None
+        duration = song.metadata.duration_seconds if song else None
+        # Record the full song duration (not the truncated stop position)
+        # for history/completion stats, so trimmed songs still count as
+        # fully played.
+        final_position = duration if duration else self._current_trim_point
 
-            song = (
-                self.queue_manager.get_item(self.current_song_id) if self.current_song_id else None
-            )
-            duration = song.metadata.duration_seconds if song else None
-            # Record the full song duration (not the truncated stop position)
-            # for history/completion stats, so trimmed songs still count as
-            # fully played.
-            final_position = duration if duration else self._current_trim_point
-
-            self.streaming_controller.stop_playback()
-            self._complete_current_song(final_position=final_position)
+        self.streaming_controller.stop_playback()
+        self._complete_current_song(final_position=final_position)
 
     def play(self) -> bool:
         """
@@ -505,42 +501,47 @@ class PlaybackController:
             True if playback started, False otherwise
         """
         with self._locked():
-            if self.state == PlaybackState.PLAYING:
-                self.logger.debug("Already playing")
+            return self._play_locked()
+
+    def _play_locked(self) -> bool:
+        """The body of play(). Assumes lock is already held."""
+        self._require_locked()
+        if self.state == PlaybackState.PLAYING:
+            self.logger.debug("Already playing")
+            return True
+
+        if self.state == PlaybackState.PAUSED:
+            # Resume current song
+            try:
+                self.streaming_controller.resume()
+                self._set_state(PlaybackState.PLAYING, "resumed")
                 return True
+            except Exception as e:
+                self.logger.error("Error resuming playback: %s", e, exc_info=True)
+                return False
 
-            if self.state == PlaybackState.PAUSED:
-                # Resume current song
-                try:
-                    self.streaming_controller.resume()
-                    self._set_state(PlaybackState.PLAYING, "resumed")
-                    return True
-                except Exception as e:
-                    self.logger.error("Error resuming playback: %s", e, exc_info=True)
-                    return False
+        if self.state == PlaybackState.TRANSITION:
+            # Already transitioning to next song, skip the wait
+            self.logger.info("Skipping transition, starting song immediately")
+            if self._transition_timer:
+                self._transition_timer.cancel()
+                self._transition_timer = None
+            if self._next_song_pending:
+                next_song = self._next_song_pending
+                self._next_song_pending = None
+                return self._play_song(next_song)
 
-            if self.state == PlaybackState.TRANSITION:
-                # Already transitioning to next song, skip the wait
-                self.logger.info("Skipping transition, starting song immediately")
-                if self._transition_timer:
-                    self._transition_timer.cancel()
-                    self._transition_timer = None
-                if self._next_song_pending:
-                    next_song = self._next_song_pending
-                    self._next_song_pending = None
-                    return self._play_song(next_song)
+        if self.state == PlaybackState.STOPPED:
+            if self.current_song_id:
+                # Resume the stopped song
+                song = self.queue_manager.get_item(self.current_song_id)
+                if song and song.content_status == "ready":
+                    return self._play_song(song)
+                # Song was deleted or not ready - fall through to load next
+            # No remembered song - fall through to load next
 
-            if self.state == PlaybackState.STOPPED:
-                if self.current_song_id:
-                    # Resume the stopped song
-                    song = self.queue_manager.get_item(self.current_song_id)
-                    if song and song.content_status == "ready":
-                        return self._play_song(song)
-                    # Song was deleted or not ready - fall through to load next
-                # No remembered song - fall through to load next
-
-            # Start new song
-            return self._load_and_play_next()
+        # Start new song
+        return self._load_and_play_next()
 
     def _load_and_play_next(self) -> bool:
         """Load next song in queue order and start playback if it's ready.

@@ -2,15 +2,17 @@
 The QR and text overlay elements composited into the display pipeline.
 
 OverlayController owns everything about the overlays that is not the elements
-themselves: the notification timer and its lock, the remembered QR image path,
-and the QR's current geometry. The elements are built by DisplayPipeline
-(they are linked into it) and handed in here, so this object can equally well
-be constructed with stub elements that only implement set_property /
-get_property.
+themselves: the remembered QR image path and the QR's current geometry. The
+elements are built by DisplayPipeline (they are linked into it) and handed in
+here, so this object can equally well be constructed with stub elements that
+only implement set_property / get_property.
+
+It holds no lock and runs no timer. What the text says, and for how long, is
+decided by kbox.playback.overlay.OverlayCoordinator, which calls
+set_overlay_text() under its own lock.
 """
 
 import logging
-import threading
 from typing import Any, Optional
 
 from .elements import QR_INITIAL_PADDING, QR_INITIAL_SIZE
@@ -46,8 +48,6 @@ class OverlayController:
         self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
 
-        self._notification_timer: Optional[threading.Timer] = None
-        self._notification_lock = threading.Lock()
         self._qr_image_path: Optional[str] = qr_image_path  # Track QR image path for reinit
 
         # QR geometry. Config is read once here; the current size/padding
@@ -62,11 +62,6 @@ class OverlayController:
     def qr_image_path(self) -> Optional[str]:
         """The last QR image handed to update_qr_overlay, if any."""
         return self._qr_image_path
-
-    @property
-    def notification_lock(self) -> threading.Lock:
-        """The lock serialising overlay text changes against the hide timer."""
-        return self._notification_lock
 
     # =========================================================================
     # Sizing
@@ -157,71 +152,9 @@ class OverlayController:
     # Text
     # =========================================================================
 
-    def show_notification(self, text: str, duration_seconds: float = 5.0):
-        """
-        Show transient text notification that auto-hides.
-
-        Args:
-            text: Notification text to display
-            duration_seconds: How long to show the notification (default 5s)
-        """
-        if not self.text_overlay:
-            self.logger.warning("Text overlay not available, skipping notification")
-            return
-
-        with self._notification_lock:
-            # Cancel any pending hide timer
-            if self._notification_timer:
-                self._notification_timer.cancel()
-                self._notification_timer = None
-
-            try:
-                # Show the text
-                self.text_overlay.set_property("text", _escape_overlay_text(text))
-                self.text_overlay.set_property("silent", False)
-                self.logger.info("Showing notification: %s", text)
-
-                # No frame regeneration needed. The text overlay lives in the
-                # display pipeline, which is fed continuously -- by playbin
-                # during a song, by imagefreeze during an interstitial -- so
-                # the overlay is composited onto every frame as it passes.
-                # This used to seek playbin to force a still image to be
-                # redrawn, which is now both unnecessary and wrong: playbin is
-                # in NULL while an interstitial shows.
-
-                # Schedule hide after duration
-                def hide_notification():
-                    self.hide_notification()
-
-                self._notification_timer = threading.Timer(duration_seconds, hide_notification)
-                self._notification_timer.daemon = True
-                self._notification_timer.start()
-
-            except Exception as e:
-                self.logger.warning("Failed to show notification: %s", e)
-
-    def hide_notification(self):
-        """Hide the current notification."""
-        if not self.text_overlay:
-            return
-
-        with self._notification_lock:
-            try:
-                self.text_overlay.set_property("text", "")
-                self.text_overlay.set_property("silent", True)
-                self._notification_timer = None
-
-                # No frame regeneration needed here either -- see
-                # show_notification.
-
-                self.logger.debug("Notification hidden")
-            except Exception as e:
-                self.logger.warning("Failed to hide notification: %s", e)
-
     def set_overlay_text(self, text: str):
         """
-        Set persistent overlay text (does not auto-hide).
-        Use empty string to clear the overlay.
+        Set the overlay text. Use empty string to clear the overlay.
 
         Args:
             text: Text to display, or empty string to hide
@@ -230,29 +163,21 @@ class OverlayController:
             self.logger.debug("Text overlay not available, skipping")
             return
 
-        with self._notification_lock:
-            # Cancel any pending auto-hide timer
-            if self._notification_timer:
-                self._notification_timer.cancel()
-                self._notification_timer = None
-
-            try:
-                if text:
-                    self.text_overlay.set_property("text", _escape_overlay_text(text))
-                    self.text_overlay.set_property("silent", False)
-                    self.logger.debug("Set persistent overlay text: %s", text)
-                else:
-                    self.text_overlay.set_property("text", "")
-                    self.text_overlay.set_property("silent", True)
-                    self.logger.debug("Cleared overlay text")
-            except Exception as e:
-                self.logger.warning("Failed to set overlay text: %s", e)
-
-    def cancel_notification_timer(self):
-        """Cancel any pending auto-hide timer, on shutdown."""
-        if self._notification_timer:
-            self._notification_timer.cancel()
-            self._notification_timer = None
+        # No frame regeneration needed. The text overlay lives in the display
+        # pipeline, which is fed continuously -- by playbin during a song, by
+        # imagefreeze during an interstitial -- so the overlay is composited
+        # onto every frame as it passes.
+        try:
+            if text:
+                self.text_overlay.set_property("text", _escape_overlay_text(text))
+                self.text_overlay.set_property("silent", False)
+                self.logger.debug("Set overlay text: %s", text)
+            else:
+                self.text_overlay.set_property("text", "")
+                self.text_overlay.set_property("silent", True)
+                self.logger.debug("Cleared overlay text")
+        except Exception as e:
+            self.logger.warning("Failed to set overlay text: %s", e)
 
     # =========================================================================
     # QR

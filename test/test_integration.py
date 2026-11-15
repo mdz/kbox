@@ -155,7 +155,6 @@ def full_system(temp_db, temp_storage_dir, fake_source, fake_provider):
     mock_streaming.set_eos_callback = Mock()
     mock_streaming.get_position = Mock(return_value=0)
     mock_streaming.seek = Mock(return_value=True)
-    mock_streaming.show_notification = Mock()
     mock_streaming.display_image = Mock()
     mock_streaming.server = None
 
@@ -546,7 +545,7 @@ def test_next_song_not_ready_waits_then_auto_starts(full_system):
     )
 
     # Simulate the monitor's periodic check (normally runs every 2s on a thread)
-    system["playback"]._check_auto_start_when_idle()
+    system["playback"]._on_monitor_tick()
 
     # Should have auto-started song 2
     assert system["playback"].state == PlaybackState.PLAYING
