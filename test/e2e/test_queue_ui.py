@@ -83,3 +83,15 @@ def test_second_song_nudge(mobile_page, init_user):
 
     # User confirmed, so both songs are queued
     expect(mobile_page.locator(".queue-item")).to_have_count(2)
+
+
+def test_user_name_is_rendered_as_text_not_html(mobile_page, init_user):
+    """A display name containing markup shows literally, not as elements."""
+    init_user("<b>x</b>")
+    _search_and_open_add_modal(mobile_page)
+    mobile_page.locator("button:has-text('Add to Queue')").click()
+    mobile_page.wait_for_selector("#add-song-modal", state="hidden")
+    item = mobile_page.locator(".queue-item")
+    expect(item).to_have_count(1)
+    expect(item.locator(".queue-item-user")).to_contain_text("<b>x</b>")
+    expect(item.locator(".queue-item-user b")).to_have_count(0)

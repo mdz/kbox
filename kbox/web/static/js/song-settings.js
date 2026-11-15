@@ -2,6 +2,7 @@
  * Reusable song settings component for kbox web UI.
  */
 
+import { escapeHtml } from './utils.js';
 import { userId } from './state.js';
 import { getIntervalName, createPitchControlHTML, updatePitchButtons } from './pitch.js';
 
@@ -49,13 +50,13 @@ export function renderSongSettings(containerId, songData, options = {}) {
     const userText = songData.user_name
         ? (isCurrentUser
             ? `🎤 <strong style="color: #4aff6e;">Your song!</strong>`
-            : `Requested by: ${songData.user_name}`)
-        : (songData.channel ? songData.channel : '');
+            : `Requested by: ${escapeHtml(songData.user_name)}`)
+        : (songData.channel ? escapeHtml(songData.channel) : '');
 
     // Build song info HTML
     let thumbnailHTML = '';
     if (showThumbnail && songData.thumbnail_url) {
-        thumbnailHTML = `<img src="${songData.thumbnail_url}" alt="${songData.title || ''}" style="width: 100%; max-width: 240px; height: auto; object-fit: cover; border-radius: 4px; display: block; margin: 0 auto 15px auto;" />`;
+        thumbnailHTML = `<img src="${escapeHtml(songData.thumbnail_url)}" alt="${escapeHtml(songData.title || '')}" style="width: 100%; max-width: 240px; height: auto; object-fit: cover; border-radius: 4px; display: block; margin: 0 auto 15px auto;" />`;
     }
 
     // Progress bar (only when playing)
@@ -70,17 +71,17 @@ export function renderSongSettings(containerId, songData, options = {}) {
 
     // Show original title as secondary if we have extracted metadata
     const originalTitleHTML = songData.original_title
-        ? `<div style="color: #666; font-size: 0.8em; margin-top: 4px; font-style: italic;">${songData.original_title}</div>`
+        ? `<div style="color: #666; font-size: 0.8em; margin-top: 4px; font-style: italic;">${escapeHtml(songData.original_title)}</div>`
         : '';
 
     const infoHTML = `
         <div>
-            <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${songData.title || 'Unknown'}</div>
+            <div style="font-weight: 500; margin-bottom: 8px; font-size: 1.1em;">${escapeHtml(songData.title || 'Unknown')}</div>
             ${originalTitleHTML}
             ${showUser && userText ? `<div style="color: #aaa; margin-bottom: 5px; font-size: 0.9em;">${userText}</div>` : ''}
             <div style="color: #888; font-size: 0.85em;" id="${context}-progress">${position !== undefined && position !== null ? '' : 'Duration: '}${durationText}</div>
             ${progressBarHTML}
-            ${showStatus && songData.content_status ? `<div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${songData.content_status}</div>` : ''}
+            ${showStatus && songData.content_status ? `<div style="color: #888; font-size: 0.85em; margin-top: 3px;">Status: ${escapeHtml(songData.content_status)}</div>` : ''}
         </div>
     `;
 

@@ -110,7 +110,7 @@ export async function showFavoritesModal() {
                 const div = document.createElement('div');
                 div.className = 'favorite-item';
                 div.innerHTML = `
-                    <img src="${fav.thumbnail_url || ''}" alt="${escapeHtml(fav.title)}" />
+                    <img src="${escapeHtml(fav.thumbnail_url || '')}" alt="${escapeHtml(fav.title)}" />
                     <div class="favorite-item-info">
                         <div class="favorite-item-title">${escapeHtml(fav.title)}</div>
                         <div class="favorite-item-channel">${escapeHtml(fav.channel || '')}</div>

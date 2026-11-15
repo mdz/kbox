@@ -2,6 +2,7 @@
  * Playback control functions for kbox web UI.
  */
 
+import { escapeHtml } from './utils.js';
 import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
@@ -358,10 +359,10 @@ export function renderUpNext(statusData, nextSong, myNextTurn) {
     // Build main "Up Next" message
     let html = '';
     if (!currentSong) {
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong></span>`;
+        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : escapeHtml(nextSong.user_name)}</strong></span>`;
     } else {
         const timeStr = formatTime(currentRemaining);
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : nextSong.user_name}</strong> in ${timeStr}</span>`;
+        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : escapeHtml(nextSong.user_name)}</strong> in ${timeStr}</span>`;
     }
 
     // Show when the current user's next song is coming up

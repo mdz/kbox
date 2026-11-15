@@ -2,6 +2,7 @@
  * Queue management functions for kbox web UI.
  */
 
+import { escapeHtml } from './utils.js';
 import {
     isOperator, userId,
     currentQueue, setCurrentQueue,
@@ -400,18 +401,18 @@ export async function loadQueue() {
             // Format song display: use extracted artist/song if available, otherwise title
             const hasExtracted = item.artist && item.song_name;
             const primaryDisplay = hasExtracted
-                ? `<strong>${item.song_name}</strong> <span style="color: #888;">by ${item.artist}</span>`
-                : item.title;
+                ? `<strong>${escapeHtml(item.song_name)}</strong> <span style="color: #888;">by ${escapeHtml(item.artist)}</span>`
+                : escapeHtml(item.title);
             const secondaryDisplay = hasExtracted
-                ? `<div class="queue-item-original" style="color: #666; font-size: 0.8em; margin-top: 2px;">${item.title}</div>`
+                ? `<div class="queue-item-original" style="color: #666; font-size: 0.8em; margin-top: 2px;">${escapeHtml(item.title)}</div>`
                 : '';
 
             div.innerHTML = `
                 <div class="queue-item-info">
-                    <div class="queue-item-user">${item.user_name} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
+                    <div class="queue-item-user">${escapeHtml(item.user_name)} <span style="color: #666; font-size: 0.85em;">(${durationStr})</span></div>
                     ${isOperator ? `<div class="queue-item-title">${primaryDisplay}</div>${secondaryDisplay}` : ''}
                 </div>
-                <span class="queue-item-status ${statusClass}">${item.content_status}</span>
+                <span class="queue-item-status ${statusClass}">${escapeHtml(item.content_status)}</span>
             `;
 
             // Make all queue items clickable to edit
