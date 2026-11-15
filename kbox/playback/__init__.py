@@ -10,6 +10,9 @@ all), following the same shape as kbox/streaming/:
 - song_tuning: per-song trim-point and loudness-gain lookups
 - status: serialization of a queue item for the status API
 - upcoming: which songs play next and an estimated start time for each
+- cursor: QueueCursor, where we are in the queue, persisted
+- overlay: OverlayCoordinator, the base overlay text and notifications over it
+- screens: ScreenPresenter, the interstitial screens
 - controller: PlaybackController, the state machine that wires them together
 """
 

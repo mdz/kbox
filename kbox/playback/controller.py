@@ -17,6 +17,9 @@ from ..database import ConfigRepository
 from ..models import QueueItem
 from ..queue import QueueManager
 from . import history_policy, song_tuning, status
+from .cursor import QueueCursor
+from .overlay import OverlayCoordinator
+from .screens import ScreenPresenter
 from .upcoming import UpcomingItem, upcoming_songs
 
 
@@ -33,9 +36,6 @@ class PlaybackState(Enum):
 
 class PlaybackController:
     """Orchestrates playback and manages state."""
-
-    # Config key for persisting the cursor
-    _CURSOR_CONFIG_KEY = "queue_cursor_song_id"
 
     def __init__(
         self,
@@ -73,11 +73,11 @@ class PlaybackController:
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
 
-        # LOCK ORDERING: self.lock (OUTER) -> self._notification_lock (INNER).
-        # Code holding self.lock may acquire self._notification_lock (e.g.
-        # _stop_internal() -> _set_base_overlay()). The reverse must NEVER
-        # happen: nothing executed while holding self._notification_lock may
-        # call a method that takes self.lock.
+        # LOCK ORDERING: self.lock (OUTER) -> the OverlayCoordinator's
+        # notification lock (INNER). Code holding self.lock may acquire that
+        # one (e.g. _stop_internal() -> self._overlay.set_base()). The reverse
+        # must NEVER happen: nothing executed while holding the overlay lock
+        # may call a method that takes self.lock.
         #
         # This lock is deliberately NOT an RLock. Re-entering it is a bug, and
         # a plain Lock deadlocks loudly instead of silently absorbing it.
@@ -96,15 +96,14 @@ class PlaybackController:
         # Queue cursor: the ID of the song currently playing (or last played).
         # Songs before the cursor's position are "played", songs after are "upcoming".
         # Persisted to the config table for restart resilience.
-        self._config_repository = ConfigRepository(queue_manager.database)
-        self._cursor_song_id: Optional[int] = self._load_cursor()
+        self._cursor = QueueCursor(ConfigRepository(queue_manager.database))
 
         # Transition/interstitial state
         self._transition_timer: Optional[threading.Timer] = None
         self._next_song_pending = None  # Song to play after transition
 
-        # Interstitial generator (lazy-initialized)
-        self._interstitial_generator = None
+        # Interstitial screens (idle, transition, end-of-queue, messages)
+        self._screens = ScreenPresenter(config_manager, streaming_controller)
 
         # Background monitor thread (handles notifications, auto-start, etc.)
         self._monitor_thread = None
@@ -118,13 +117,10 @@ class PlaybackController:
         # content; the monitor auto-resumes once that item's content is ready.
         self._awaiting_replace_item_id: Optional[int] = None
 
-        # Overlay management - PlaybackController owns overlay state
-        self._base_overlay_text = ""  # Persistent overlay (current singer, up next, etc.)
-        self._notification_timer: Optional[threading.Timer] = None
-        # INNER lock - see the lock-ordering note on self.lock above. May be
-        # acquired while self.lock is held; must never be held while acquiring
-        # self.lock.
-        self._notification_lock = threading.Lock()
+        # Overlay management - the coordinator owns the base text, the
+        # hide timer, and the INNER lock protecting both. See the
+        # lock-ordering note on self.lock above.
+        self._overlay = OverlayCoordinator(streaming_controller)
 
         self._start_monitor()
 
@@ -176,41 +172,20 @@ class PlaybackController:
     # Queue Cursor
     # =========================================================================
 
-    def _load_cursor(self) -> Optional[int]:
-        """Load cursor song ID from persistent storage."""
-        entry = self._config_repository.get(self._CURSOR_CONFIG_KEY)
-        if entry and entry.value:
-            try:
-                return int(entry.value)
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    def _save_cursor(self, song_id: Optional[int]) -> None:
-        """Persist cursor song ID to storage."""
-        self._config_repository.set(
-            self._CURSOR_CONFIG_KEY, str(song_id) if song_id is not None else ""
-        )
-
     def set_cursor(self, song_id: int) -> None:
         """
         Set the queue cursor to a song.
-
-        The cursor tracks where we are in the queue. Songs before the cursor's
-        position are "played", songs after are "upcoming".
 
         Called by _play_song() whenever a song starts playing.
 
         Args:
             song_id: ID of the song now playing
         """
-        self._cursor_song_id = song_id
-        self._save_cursor(song_id)
-        self.logger.debug("Queue cursor set to song ID %s", song_id)
+        self._cursor.set(song_id)
 
     def get_cursor(self) -> Optional[int]:
         """Get the current cursor song ID."""
-        return self._cursor_song_id
+        return self._cursor.get()
 
     def get_upcoming(self) -> List[UpcomingItem]:
         """Songs after the cursor, with estimated start times (see upcoming_songs)."""
@@ -228,9 +203,7 @@ class PlaybackController:
 
     def clear_cursor(self) -> None:
         """Clear the queue cursor (e.g., when queue is cleared)."""
-        self._cursor_song_id = None
-        self._save_cursor(None)
-        self.logger.debug("Queue cursor cleared")
+        self._cursor.clear()
 
     def _set_state(self, new_state: PlaybackState, reason: str = ""):
         """
@@ -257,22 +230,6 @@ class PlaybackController:
     # Overlay Management
     # =========================================================================
 
-    def _set_base_overlay(self, text: str):
-        """
-        Set the base (persistent) overlay text.
-
-        This is the text that should be shown when no transient notification
-        is active (e.g., "Now singing: Alice", "Up next: Bob").
-
-        Args:
-            text: The base overlay text, or empty string to clear
-        """
-        with self._notification_lock:
-            self._base_overlay_text = text
-            # Only update display if no notification is active
-            if self._notification_timer is None:
-                self.streaming_controller.set_overlay_text(text)
-
     def show_notification(self, text: str, duration_seconds: float = 5.0):
         """
         Show a transient notification that auto-hides and restores the base overlay.
@@ -281,26 +238,7 @@ class PlaybackController:
             text: Notification text to display
             duration_seconds: How long to show the notification (default 5s)
         """
-        with self._notification_lock:
-            # Cancel any pending timer
-            if self._notification_timer:
-                self._notification_timer.cancel()
-                self._notification_timer = None
-
-            # Show the notification
-            self.streaming_controller.set_overlay_text(text)
-            self.logger.info("Showing notification: %s", text)
-
-            # Schedule restoration of base overlay
-            def restore_base_overlay():
-                with self._notification_lock:
-                    self._notification_timer = None
-                    self.streaming_controller.set_overlay_text(self._base_overlay_text)
-                    self.logger.debug("Restored base overlay: %s", self._base_overlay_text)
-
-            self._notification_timer = threading.Timer(duration_seconds, restore_base_overlay)
-            self._notification_timer.daemon = True
-            self._notification_timer.start()
+        self._overlay.show_notification(text, duration_seconds)
 
     def _start_monitor(self):
         """Start background thread to monitor playback state and react accordingly."""
@@ -422,7 +360,7 @@ class PlaybackController:
                 song_info = self._format_song_info(current_song.metadata)
                 if song_info:
                     overlay_text = f"{overlay_text}\n{song_info}"
-                self._set_base_overlay(overlay_text)
+                self._overlay.set_base(overlay_text)
                 self._current_singer_shown = True
                 self.logger.debug("Set current singer overlay for: %s", current_song.user_name)
 
@@ -485,7 +423,7 @@ class PlaybackController:
             next_song = self.queue_manager.get_song_at_offset(song_id, +1)
             if next_song:
                 overlay_text = f"Up next: {next_song.user_name}"
-                self._set_base_overlay(overlay_text)
+                self._overlay.set_base(overlay_text)
                 self._up_next_shown = True
                 self.logger.debug("Updated overlay to up next for: %s", next_song.user_name)
 
@@ -715,7 +653,7 @@ class PlaybackController:
         """
         self._require_locked()
         self.streaming_controller.stop_playback()
-        self._set_base_overlay("")  # Clear the singer/up next overlay
+        self._overlay.set_base("")  # Clear the singer/up next overlay
         # Note: current_song_id is NOT cleared - we remember the song for resume
         self._set_state(PlaybackState.STOPPED, "stopped by operator")
         self.show_idle_screen()
@@ -809,9 +747,7 @@ class PlaybackController:
             self._next_song_pending = None
 
             # Re-show the interstitial for the newly-chosen song.
-            self._show_transition_or_end(
-                finished_song_id=self._cursor_song_id, next_song=target_song
-            )
+            self._show_transition_or_end(finished_song_id=self._cursor.get(), next_song=target_song)
             return True
 
         if not self.current_song_id:
@@ -962,10 +898,10 @@ class PlaybackController:
 
             if is_current:
                 self.logger.info("Replacing currently playing song %s", item_id)
-                self._set_base_overlay("")
+                self._overlay.set_base("")
                 self._set_state(PlaybackState.STOPPED, "replacing current song")
                 self._awaiting_replace_item_id = item_id
-                self._show_message_screen(f"Loading new video for {item.user_name}...")
+                self._screens.show_message(f"Loading new video for {item.user_name}...")
 
             return self.queue_manager.replace_song(
                 item_id, video_id, title, duration_seconds, thumbnail_url, channel
@@ -1199,14 +1135,14 @@ class PlaybackController:
         # Whoever was singing is no longer singing. The overlay says who is on
         # *now*, so it must not survive into the transition screen or the start
         # of the next song; _play_song brings it back a few seconds in.
-        self._set_base_overlay("")
+        self._overlay.set_base("")
 
         if next_song is None:
             # Get next song by position after the one that finished.
             # If finished_song_id is None, we have no reference point, so show end screen
             if finished_song_id is None:
                 self._set_state(PlaybackState.IDLE, "queue exhausted")
-                self._show_end_of_queue_screen()
+                self._screens.show_end_of_queue()
                 return
 
             next_song = self.queue_manager.get_song_at_offset(finished_song_id, +1)
@@ -1214,13 +1150,13 @@ class PlaybackController:
         if not next_song:
             # No more songs - show end-of-queue screen
             self._set_state(PlaybackState.IDLE, "queue exhausted")
-            self._show_end_of_queue_screen()
+            self._screens.show_end_of_queue()
             return
 
         if next_song.content_status != QueueManager.STATUS_READY:
             # Next song exists but isn't ready yet - go idle, auto-start will handle it
             self._set_state(PlaybackState.IDLE, f"next song not ready ({next_song.content_status})")
-            self._show_end_of_queue_screen()
+            self._screens.show_end_of_queue()
             return
 
         # Store next song for transition
@@ -1243,7 +1179,7 @@ class PlaybackController:
         # Use extracted metadata if available, otherwise fall back to original title
         song_title = next_song.metadata.song_name or next_song.metadata.title
         artist = next_song.metadata.artist
-        self._show_transition_screen(
+        self._screens.show_transition(
             singer_name=next_song.user_name, song_title=song_title, artist=artist
         )
 
@@ -1280,102 +1216,9 @@ class PlaybackController:
     # Interstitial Display
     # =========================================================================
 
-    def _get_interstitial_generator(self):
-        """Get or create the interstitial generator (lazy initialization)."""
-        if self._interstitial_generator is None:
-            import os
-
-            from ..interstitials import InterstitialGenerator
-
-            cache_dir = os.path.join(
-                str(self.config_manager.get_cache_directory()), "interstitials"
-            )
-            self._interstitial_generator = InterstitialGenerator(cache_dir=cache_dir)
-        return self._interstitial_generator
-
-    def _get_web_url(self) -> Optional[str]:
-        """Get the web interface URL for QR codes."""
-        # Access server through streaming controller
-        server = getattr(self.streaming_controller, "server", None)
-        if server:
-            return getattr(server, "external_url", None)
-        return None
-
     def show_idle_screen(self):
         """Show the idle screen interstitial with QR code instructions."""
-        self.logger.info("Showing idle screen")
-
-        generator = self._get_interstitial_generator()
-        party_theme = self.config_manager.get("suggestion_theme") or None
-        image_path = generator.generate_idle_screen(party_theme=party_theme)
-
-        if image_path:
-            self.streaming_controller.display_image(image_path)
-        else:
-            self.logger.warning("Could not generate idle screen")
-
-    def _show_transition_screen(
-        self, singer_name: str, song_title: Optional[str] = None, artist: Optional[str] = None
-    ):
-        """
-        Display the between-songs transition screen.
-
-        Args:
-            singer_name: Name of the next singer
-            song_title: Optional song title (can be None for surprise)
-            artist: Optional artist name (from extracted metadata)
-        """
-        self.logger.info("Showing transition screen for: %s", singer_name)
-
-        generator = self._get_interstitial_generator()
-        web_url = self._get_web_url()
-
-        image_path = generator.generate_transition_screen(
-            singer_name=singer_name, song_title=song_title, artist=artist, web_url=web_url
-        )
-
-        if image_path:
-            self.streaming_controller.display_image(image_path)
-        else:
-            self.logger.warning("Could not generate transition screen")
-
-    def _show_message_screen(self, message: str):
-        """
-        Display a generic centered-message interstitial screen.
-
-        Used for transient system messages (e.g. "Loading new video for X...")
-        where the pipeline has no video loaded and a blank screen would
-        otherwise result.
-
-        Args:
-            message: Message to display
-        """
-        self.logger.info("Showing message screen: %s", message)
-
-        generator = self._get_interstitial_generator()
-        image_path = generator.generate_message_screen(message)
-
-        if image_path:
-            self.streaming_controller.display_image(image_path)
-        else:
-            self.logger.warning("Could not generate message screen")
-
-    def _show_end_of_queue_screen(self, message: str = "That's all for now!"):
-        """
-        Display the end-of-queue interstitial screen.
-
-        Args:
-            message: Message to display
-        """
-        self.logger.info("Showing end-of-queue screen: %s", message)
-
-        generator = self._get_interstitial_generator()
-        image_path = generator.generate_end_of_queue_screen(message=message)
-
-        if image_path:
-            self.streaming_controller.display_image(image_path)
-        else:
-            self.logger.warning("Could not generate end-of-queue screen")
+        self._screens.show_idle()
 
     def get_status(self) -> Dict[str, Any]:
         """
