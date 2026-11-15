@@ -742,6 +742,32 @@
             margin-bottom: 15px;
         }
 
+        .identity-line {
+            text-align: center;
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+
+        .identity-line[hidden] {
+            display: none;
+        }
+
+        .identity-line strong {
+            color: #e0e0e0;
+        }
+
+        .identity-change {
+            background: none;
+            border: none;
+            padding: 4px 2px;
+            width: auto;
+            color: #4a9eff;
+            font-size: 13px;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
         #recognition-candidate-list {
             display: flex;
             flex-direction: column;
@@ -1115,6 +1141,7 @@
             longSongWarningMinutes: {{ long_song_warning_minutes }},
             duplicateSingerNudgeEnabled: {{ duplicate_singer_nudge_enabled | tojson }},
             searchSuggestionsEnabled: {{ search_suggestions_enabled | tojson }},
+            aiSuggestionsEnabled: {{ ai_suggestions_enabled | tojson }},
         };
     </script>
     <script type="module" src="/static/{{ static_version }}/js/app.js"></script>

@@ -13,7 +13,13 @@ from fastapi.templating import Jinja2Templates
 
 from ...config_manager import ConfigManager
 from ...playback import PlaybackController
-from ..dependencies import get_config_manager, get_playback_controller, get_templates
+from ...suggestions import SuggestionEngine
+from ..dependencies import (
+    get_config_manager,
+    get_playback_controller,
+    get_suggestion_engine,
+    get_templates,
+)
 
 router = APIRouter()
 
@@ -57,6 +63,7 @@ def index(
     request: Request,
     config: ConfigManager = Depends(get_config_manager),
     templates: Jinja2Templates = Depends(get_templates),
+    suggestion_engine: SuggestionEngine = Depends(get_suggestion_engine),
 ):
     """Serve web UI."""
     return templates.TemplateResponse(
@@ -69,5 +76,7 @@ def index(
             ),
             "search_suggestions_enabled": config.get_bool("search_suggestions_enabled", True),
             "suggestion_theme": config.get("suggestion_theme"),
+            # Hide "Suggest for me" when there is no LLM to answer it.
+            "ai_suggestions_enabled": bool(suggestion_engine and suggestion_engine.is_configured()),
         },
     )

@@ -14,6 +14,10 @@ import { generateUUID } from './utils.js';
 // flight and until they resolve it (pick a candidate or say "I'm new").
 let _pendingTypedName = null;
 
+// True while a guest who already has an identity is switching to another one
+// ("Not you?"), as opposed to the first-visit welcome prompt.
+let _switchingIdentity = false;
+
 // Resolves once identity registration has landed server-side (session cookie
 // has user_id). initializeUserIdentity()/app.js await this before starting
 // any recurring polling, which is what prevents the session-cookie race
@@ -131,6 +135,75 @@ async function finishIdentityResolution(uid, displayName) {
 
     _resolveIdentityReady();
 
+    if (_switchingIdentity) {
+        // Everything on the page (queue ownership, favorites, history, polling
+        // session) is keyed to the previous identity. Starting over from
+        // localStorage is simpler and safer than patching each piece.
+        location.reload();
+        return;
+    }
+    updateIdentityLine();
+
+    for (const id of ['name-modal', 'recognition-modal']) {
+        const modal = document.getElementById(id);
+        if (modal) {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+    }
+}
+
+// Show who the guest is singing as, with a way to switch.
+export function updateIdentityLine() {
+    const line = document.getElementById('identity-line');
+    const nameEl = document.getElementById('identity-name');
+    if (!line || !nameEl) return;
+    nameEl.textContent = userName || '';
+    line.hidden = !userName;
+}
+
+// "Not you?" — reopen the name prompt for someone else (or another name).
+// Songs already queued stay attributed to the current identity: they belong
+// to that person, who can pick the name again later and get them back. See
+// docs/development/guest-identity.md ("Switching identity").
+export function showChangeNameModal() {
+    _switchingIdentity = true;
+    const title = document.getElementById('name-modal-title');
+    const blurb = document.getElementById('name-modal-blurb');
+    const cancel = document.getElementById('name-modal-cancel');
+    const input = document.getElementById('name-modal-input');
+    if (title) title.textContent = 'Who is singing?';
+    if (blurb) blurb.textContent = `You're signed in as ${userName}. Enter a different name to switch. Songs you've already queued stay under ${userName}.`;
+    if (cancel) cancel.hidden = false;
+    if (input) input.value = '';
+    const modal = document.getElementById('name-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+    }
+    if (input) setTimeout(() => input.focus(), 100);
+}
+
+// Back out of a switch without changing anything.
+export function cancelChangeName() {
+    if (!_switchingIdentity) {
+        // First visit: there's nothing to go back to, so "Cancel" on the
+        // recognition list means "let me retype the name".
+        _pendingTypedName = null;
+        const recognition = document.getElementById('recognition-modal');
+        if (recognition) {
+            recognition.classList.add('hidden');
+            recognition.style.display = 'none';
+        }
+        const nameModal = document.getElementById('name-modal');
+        if (nameModal) {
+            nameModal.classList.remove('hidden');
+            nameModal.style.display = 'flex';
+        }
+        return;
+    }
+    _switchingIdentity = false;
+    _pendingTypedName = null;
     for (const id of ['name-modal', 'recognition-modal']) {
         const modal = document.getElementById(id);
         if (modal) {
@@ -219,7 +292,10 @@ export async function saveUserName() {
 
     const candidates = await lookupCandidates(name);
     if (candidates.length === 0) {
-        await finishIdentityResolution(userId || generateUUID(), name);
+        // First visit keeps any pre-existing UUID; a deliberate switch is a
+        // different person, so it must not rename the current identity.
+        const uid = _switchingIdentity ? generateUUID() : (userId || generateUUID());
+        await finishIdentityResolution(uid, name);
         return;
     }
 
@@ -360,14 +436,8 @@ export async function initializeUserIdentity() {
         if (modal) {
             modal.classList.remove('hidden');
             modal.style.display = 'flex';
-            // Handle Enter key in name input
             const nameInput = document.getElementById('name-modal-input');
             if (nameInput) {
-                nameInput.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') {
-                        saveUserName();
-                    }
-                });
                 // Focus the input
                 setTimeout(() => nameInput.focus(), 100);
             }
@@ -381,6 +451,7 @@ export async function initializeUserIdentity() {
         // Must await so the session cookie with user_id is set before other API calls
         await registerUser(userId, userName);
         _resolveIdentityReady();
+        updateIdentityLine();
     }
 }
 

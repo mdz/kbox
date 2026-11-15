@@ -23,7 +23,7 @@ pytestmark = pytest.mark.e2e
 SUGGESTIONS = [
     "bohemian rhapsody",
     "bohemian rhapsody piano",
-    "bohemian rhapsody lyrics",
+    "bohemian rhapsody acoustic",
 ]
 
 
