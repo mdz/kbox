@@ -7,6 +7,8 @@ or request model drifts back into needing an application instance, these
 fail before the API tests do.
 """
 
+import inspect
+
 
 def test_dependency_providers_import_without_an_app():
     """The Depends providers resolve app state at call time, so importing
@@ -32,13 +34,17 @@ def test_dependency_providers_import_without_an_app():
         assert callable(getattr(dependencies, name)), name
 
 
-def test_server_uses_the_shared_dependency_providers():
-    """create_app's handlers must depend on the providers in
-    kbox.web.dependencies, not on private copies."""
-    from kbox.web import dependencies, server
+def test_routes_use_the_shared_dependency_providers():
+    """Route handlers must depend on the providers in kbox.web.dependencies,
+    not on private copies. Checked through FastAPI's resolved dependency
+    graph, so it holds wherever a handler happens to live."""
+    from kbox.web import dependencies
+    from kbox.web.routes.queue import router
 
-    assert server.get_queue_manager is dependencies.get_queue_manager
-    assert server.require_user is dependencies.require_user
+    shared = {f for _, f in inspect.getmembers(dependencies, inspect.isfunction)}
+    used = {d.call for r in router.routes for d in r.dependant.dependencies}
+    assert used, "expected the queue routes to declare dependencies"
+    assert used <= shared, used - shared
 
 
 def test_request_models_import_without_an_app():
@@ -83,3 +89,16 @@ def test_guest_auth_middleware_runs_without_create_app():
 
     assert client.get("/?key=tok", follow_redirects=False).status_code == 302
     assert client.get("/").json() == {"ok": True}
+
+
+def test_queue_router_carries_the_queue_routes_on_its_own():
+    """The queue routes live on a module-level APIRouter, so they can be
+    imported and inspected without building an app."""
+    from kbox.web.routes.queue import router
+
+    routes = {(r.path, m) for r in router.routes for m in r.methods}
+    assert ("/api/queue", "GET") in routes
+    assert ("/api/queue", "POST") in routes
+    assert ("/api/queue/{item_id}", "DELETE") in routes
+    assert ("/api/queue/clear", "POST") in routes
+    assert all(r.path.startswith("/api/queue") for r in router.routes)
