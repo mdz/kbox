@@ -2,6 +2,7 @@
  * Search and add song functions for kbox web UI.
  */
 
+import { escapeHtml } from './utils.js';
 import {
     userName, userId, currentVideoToAdd, setCurrentVideoToAdd,
     queueDepthSeconds, queueDepthCount, currentQueue,
@@ -28,10 +29,10 @@ function renderResultsList(container, videos) {
         div.setAttribute('role', 'button');
         div.setAttribute('aria-label', `Select ${video.title} by ${video.channel}`);
         div.innerHTML = `
-            <img src="${video.thumbnail}" alt="${video.title}" />
+            <img src="${escapeHtml(video.thumbnail)}" alt="${escapeHtml(video.title)}" />
             <div class="search-result-info">
-                <div class="search-result-title">${video.title}</div>
-                <div class="search-result-channel">${video.channel}</div>
+                <div class="search-result-title">${escapeHtml(video.title)}</div>
+                <div class="search-result-channel">${escapeHtml(video.channel)}</div>
             </div>
             ${renderFavoriteStar(video)}
         `;
@@ -68,7 +69,7 @@ export async function getSuggestions() {
 
         if (!response.ok) {
             const error = await response.json();
-            resultsDiv.innerHTML = `<div class="suggestions-error">${error.detail || 'Could not get suggestions'}</div>`;
+            resultsDiv.innerHTML = `<div class="suggestions-error">${escapeHtml(error.detail || 'Could not get suggestions')}</div>`;
             return;
         }
 
@@ -157,7 +158,7 @@ export async function showAddSongModal(video) {
         // depth needed, just make it unmistakable what's being replaced.
         titleEl.textContent = 'Replace Song';
         confirmBtn.textContent = 'Replace';
-        additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">Replacing “${currentSelectionTarget.label}” for ${currentSelectionTarget.userName}</div>`;
+        additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">Replacing “${escapeHtml(currentSelectionTarget.label)}” for ${escapeHtml(currentSelectionTarget.userName)}</div>`;
     } else {
         titleEl.textContent = 'Add to Queue';
         confirmBtn.textContent = 'Add to Queue';
