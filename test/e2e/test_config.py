@@ -49,7 +49,7 @@ def test_config_round_trip(mobile_page, init_user, operator_unlock):
     # Close and reopen config to verify persistence.
     # The config screen covers the header, so close it with its own Close
     # button (scoped to the screen to avoid the other modals' Close buttons).
-    mobile_page.locator("#config-screen button:has-text('Close')").click()
+    mobile_page.locator("#config-screen .config-header button:has-text('Close')").click()
     expect(mobile_page.locator("#config-screen")).to_be_hidden()
     mobile_page.locator("#operator-menu-button").click()
     mobile_page.locator("#config-toggle-button").click()
