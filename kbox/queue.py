@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
@@ -68,6 +68,7 @@ class QueueManager:
         silence_analyzer: Optional["TrailingSilenceAnalyzer"] = None,
         loudness_analyzer: Optional["LoudnessAnalyzer"] = None,
         session_manager: Optional["SessionManager"] = None,
+        before_clear: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize QueueManager.
@@ -81,8 +82,12 @@ class QueueManager:
             session_manager: Optional SessionManager; when provided, new queue
                 items are tagged with the current session and clear_queue
                 rotates the session.
+            before_clear: Optional callback run just before clear_queue
+                deletes anything (used to snapshot the database). Failures
+                are logged and never block the clear.
         """
         self.database = database
+        self.before_clear = before_clear
         self.repository = QueueRepository(database)
         self.user_repository = UserRepository(database)
         self.video_library = video_library
@@ -574,6 +579,11 @@ class QueueManager:
         session is marked ended and a fresh session is started (snapshotting
         the currently-configured party theme, if any).
         """
+        if self.before_clear is not None:
+            try:
+                self.before_clear()
+            except Exception:
+                self.logger.exception("before_clear callback failed; clearing queue anyway")
         count = self.repository.clear()
         if self.session_manager is not None:
             self.session_manager.end_and_rotate()

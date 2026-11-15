@@ -8,9 +8,11 @@ import logging
 import os
 import secrets
 import sys
+from pathlib import Path
 
 import uvicorn
 
+from .backup import create_snapshot
 from .config_manager import ConfigManager
 from .database import Database
 from .favorites import FavoritesManager
@@ -143,6 +145,7 @@ class KboxServer:
             silence_analyzer=self.silence_analyzer,
             loudness_analyzer=self.loudness_analyzer,
             session_manager=self.session_manager,
+            before_clear=self._snapshot_database,
         )
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
@@ -190,6 +193,11 @@ class KboxServer:
         self.server_thread = None
 
         logger.info("kbox server initialized")
+
+    def _snapshot_database(self):
+        """Snapshot the database before the queue is cleared (end of a party)."""
+        db_path = Path(self.database.db_path)
+        create_snapshot(db_path, db_path.parent / "backups")
 
     def _regenerate_qr_overlay(self, access_token: str):
         """Generate a QR code for the given access token and push it to the
