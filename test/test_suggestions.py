@@ -6,6 +6,7 @@ Uses dependency injection for the LLM client.
 """
 
 import json
+import logging
 import os
 import tempfile
 from typing import Any, Dict, List
@@ -287,6 +288,47 @@ class TestBuildContext:
 
         assert "theme" not in context or context.get("theme") == ""
 
+    def test_history_failure_warns_rather_than_degrading_quietly(
+        self, suggestion_engine, monkeypatch, caplog
+    ):
+        """
+        A failed history read warns and still returns usable context.
+
+        These are local SQLite reads, so a failure is unexpected. It used to
+        log at debug, which made a broken read indistinguishable from a user
+        who has simply never sung before -- the model gets a prompt with no
+        taste in it either way.
+        """
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("history table is locked")
+
+        monkeypatch.setattr(suggestion_engine.history, "get_user_history", boom)
+
+        with caplog.at_level(logging.WARNING, logger="kbox.suggestions"):
+            context = suggestion_engine._build_context("any-user")
+
+        assert "user_history" not in context
+        assert "Could not read history" in caplog.text
+        assert "history table is locked" in caplog.text
+
+    def test_queue_failure_warns_rather_than_degrading_quietly(
+        self, suggestion_engine, monkeypatch, caplog
+    ):
+        """A failed queue read warns and still returns usable context."""
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("queue table is locked")
+
+        monkeypatch.setattr(suggestion_engine.queue, "get_queue", boom)
+
+        with caplog.at_level(logging.WARNING, logger="kbox.suggestions"):
+            context = suggestion_engine._build_context("any-user")
+
+        assert "current_queue" not in context
+        assert "Could not read the current queue" in caplog.text
+        assert "queue table is locked" in caplog.text
+
 
 class TestParseLlmResponse:
     """Tests for _parse_llm_response() method."""
@@ -426,6 +468,51 @@ class TestSearchSuggestions:
         assert len(results) == 3
         # Should stop after finding 3 results
         assert call_count == 3
+
+    def test_search_failure_warns(self, suggestion_engine, mock_video_library, caplog):
+        """A failed lookup warns and names the query that failed."""
+        mock_video_library.search.side_effect = [
+            RuntimeError("quota exceeded"),
+            [{"id": "youtube:ok", "title": "Song 2 Karaoke"}],
+        ]
+
+        suggestions = [
+            {"title": "Song 1", "artist": "Artist 1"},
+            {"title": "Song 2", "artist": "Artist 2"},
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="kbox.suggestions"):
+            results = suggestion_engine._search_suggestions(suggestions, max_results=8)
+
+        assert [video["id"] for video in results] == ["youtube:ok"]
+        assert "Song 1 Artist 1" in caplog.text
+        assert "quota exceeded" in caplog.text
+        # One failure out of two is not a broken backend.
+        assert "Every suggestion lookup failed" not in caplog.text
+
+    def test_every_search_failing_is_reported_as_a_backend_problem(
+        self, suggestion_engine, mock_video_library, caplog
+    ):
+        """
+        All lookups failing logs an error naming the backend.
+
+        get_suggestions() turns an empty result into "Could not find karaoke
+        videos for the suggested songs", which blames the model. When every
+        lookup raised, that message is wrong and only the log can say so.
+        """
+        mock_video_library.search.side_effect = RuntimeError("quota exceeded")
+
+        suggestions = [
+            {"title": "Song 1", "artist": "Artist 1"},
+            {"title": "Song 2", "artist": "Artist 2"},
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="kbox.suggestions"):
+            results = suggestion_engine._search_suggestions(suggestions, max_results=8)
+
+        assert results == []
+        assert "Every suggestion lookup failed (2 of 2)" in caplog.text
+        assert "search backend is the likely cause" in caplog.text
 
 
 class TestGetSuggestions:
