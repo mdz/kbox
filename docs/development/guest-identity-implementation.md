@@ -18,7 +18,7 @@ answers "how do we build it."
   (`kbox/user.py:28-52`) look up **only by `id`**. There is no lookup-by-name
   path anywhere in the codebase — identity resolution is 100% "whatever UUID
   the client happens to send."
-- `POST /api/users` (`kbox/web/server.py:1021-1061`): first call from a browser
+- `POST /api/users` (`kbox/web/routes/users.py`): first call from a browser
   binds `request.session["user_id"]` (Starlette signed-cookie session) to
   whatever `user_id` the client sends; every subsequent call from that
   session ignores the request body's `user_id` and uses the session's. This
@@ -189,7 +189,7 @@ New. Body: `{"user_id": "<uuid>", "display_name": "<raw typed name>"}`. This
 is the **only** thing that gates on it. Behaviorally identical to today's
 `get_or_create_user` at the manager layer (create if absent, else touch
 `display_name`/`normalized_name`), but with one deliberate difference in
-`server.py`: it **unconditionally overwrites**
+`kbox/web/routes/users.py`: it **unconditionally overwrites**
 `request.session["user_id"]`, even if the session already has a different
 `user_id` bound.
 
@@ -337,9 +337,9 @@ Behavior at every one of these sites is unchanged — only the framing:
 
 | Location | Current framing | Update to |
 |---|---|---|
-| `register_user` docstring, `kbox/web/server.py:1027-1032` | "This prevents user impersonation" | Explain it prevents a *stale request* from switching a session's already-bound identity — not guest-vs-guest impersonation, which this system doesn't defend against |
-| `get_user_history`, `kbox/web/server.py:~1064-1080` | "prevent impersonation" | "identity is self-declared and unverified; this gates writes/reads to the session that currently holds this UUID, nothing more" |
-| `get_user_favorites`, `kbox/web/server.py:~1135-1148` | same | same |
+| `register_user` docstring, `kbox/web/routes/users.py` | "This prevents user impersonation" | Explain it prevents a *stale request* from switching a session's already-bound identity — not guest-vs-guest impersonation, which this system doesn't defend against |
+| `get_user_history`, `kbox/web/routes/history.py` | "prevent impersonation" | "identity is self-declared and unverified; this gates writes/reads to the session that currently holds this UUID, nothing more" |
+| `get_user_favorites`, `kbox/web/routes/favorites.py` | same | same |
 | Any `# ignore request_data.user_id to prevent impersonation` comments on mutating endpoints (e.g. `add_song`) | same | same |
 
 ## Explicitly not changing / out of scope

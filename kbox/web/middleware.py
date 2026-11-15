@@ -4,7 +4,7 @@ Middleware and static-file handling for the kbox web app.
 Everything here is a real class that owns its state: collaborators arrive
 through the constructor (``app.add_middleware(Cls, **kwargs)`` forwards
 keyword arguments), not from an enclosing scope. Ordering is not decided
-here -- :func:`kbox.web.server.create_app` adds these in a specific LIFO
+here -- :func:`kbox.web.app.create_app` adds these in a specific LIFO
 order that guest authentication depends on.
 """
 

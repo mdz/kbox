@@ -4,7 +4,7 @@ Pure helpers for name-keyed guest identity.
 Name normalization (for matching a typed name against existing identities)
 and the deterministic default icon/color (for telling same-named guests
 apart in a recognition list). No dependencies on the rest of the app so it
-can be imported from database.py, user.py, and server.py without creating
+can be imported from database.py, user.py, and the web routes without creating
 import cycles.
 
 See docs/development/guest-identity.md (product/UX design) and

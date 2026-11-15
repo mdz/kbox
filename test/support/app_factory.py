@@ -25,7 +25,7 @@ from kbox.search_suggest import SearchSuggester
 from kbox.suggestions import SuggestionEngine, SuggestionError
 from kbox.user import UserManager
 from kbox.video_library import VideoLibrary
-from kbox.web.server import create_app
+from kbox.web.app import create_app
 
 
 def _mock_streaming():

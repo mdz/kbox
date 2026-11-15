@@ -33,7 +33,7 @@ from kbox.playback import (
 from kbox.queue import MoveOutcome, MoveResult, QueueManager
 from kbox.suggestions import SuggestionError
 from kbox.user import UserManager
-from kbox.web.server import create_app
+from kbox.web.app import create_app
 
 # Test user IDs
 ALICE_ID = "alice-uuid-1234"

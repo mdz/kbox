@@ -2,7 +2,7 @@
 FastAPI dependency providers for the kbox HTTP API.
 
 Every collaborator a route handler needs is reachable from
-``request.app.state``, which :func:`kbox.web.server.create_app` populates.
+``request.app.state``, which :func:`kbox.web.app.create_app` populates.
 Routers depend on these providers rather than on the app object, so a router
 module can be imported and inspected without building an application.
 """

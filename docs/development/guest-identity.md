@@ -93,7 +93,7 @@ days of actual Safari usage** without a first-party visit to the site — a
 deliberate anti-tracking feature, not a disk-space measure, but it produces
 exactly this symptom, and guests returning months apart are far past that
 window. This was checked against the code directly: kbox's own registration
-logic (`/api/users` in `kbox/web/server.py`) already falls back correctly to
+logic (`/api/users` in `kbox/web/routes/users.py`) already falls back correctly to
 the client's stored UUID whenever the server-side session has expired, so
 the churn isn't a bug in that fallback path — it only fails when
 `localStorage` itself is gone. Consistent with this: the operator's own
