@@ -9,9 +9,12 @@ fail before the API tests do.
 
 import importlib
 import inspect
+import logging
 import pkgutil
+import re
 
 import pytest
+from starlette.routing import Match
 
 import kbox.web.routes
 
@@ -102,34 +105,64 @@ def test_guest_auth_middleware_runs_without_create_app():
     assert client.get("/").json() == {"ok": True}
 
 
-@pytest.mark.parametrize(
-    "module, expected",
-    [
-        (
-            "queue",
-            {
-                ("/api/queue", "GET"),
-                ("/api/queue", "POST"),
-                ("/api/queue/{item_id}", "DELETE"),
-                ("/api/queue/clear", "POST"),
-            },
-        ),
-        (
-            "playback",
-            {
-                ("/api/playback/status", "GET"),
-                ("/api/playback/play", "POST"),
-                ("/api/playback/skip", "POST"),
-                ("/api/playback/seek", "POST"),
-            },
-        ),
-    ],
-)
-def test_router_carries_its_routes_on_its_own(module, expected):
-    """Each area's routes live on a module-level APIRouter, so they can be
-    imported and inspected without building an app."""
-    router = importlib.import_module(f"kbox.web.routes.{module}").router
+@pytest.fixture
+def app(tmp_path):
+    from support.app_factory import build_test_app
 
-    routes = {(r.path, m) for r in router.routes for m in r.methods}
-    assert expected <= routes
-    assert all(r.path.startswith(f"/api/{module}") for r in router.routes)
+    app, db, queue = build_test_app(tmp_path / "kbox.db", tmp_path / "cache")
+    yield app
+    queue.stop_content_monitor()
+    db.close()
+
+
+def _route_keys(routes):
+    """(path, method) for every HTTP route, ignoring HEAD and FastAPI's own docs."""
+    return {
+        (r.path, m)
+        for r in routes
+        if getattr(r, "methods", None) and r.path not in FASTAPI_OWN_PATHS
+        for m in r.methods - {"HEAD"}
+    }
+
+
+FASTAPI_OWN_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+
+
+def test_every_route_lives_in_exactly_one_router(app):
+    """Each area's routes live on its own module-level APIRouter, the routers
+    don't overlap, and create_app registers no route of its own outside them."""
+    per_router = {
+        m: _route_keys(importlib.import_module(f"kbox.web.routes.{m}").router.routes)
+        for m in ROUTER_MODULES
+    }
+    for module, keys in per_router.items():
+        assert keys, f"routes.{module} registers no routes"
+    union = set().union(*per_router.values())
+    assert sum(len(k) for k in per_router.values()) == len(union), "two routers share a route"
+    assert _route_keys(app.routes) == union
+
+
+@pytest.mark.parametrize("value", ["x", "1", "a/b"])
+def test_no_two_routes_match_the_same_request(app, value):
+    """create_app's include_router order doesn't decide which handler serves a
+    request, because no request is matched by more than one route. Sampled per
+    path parameter with a plain token, a number and a multi-segment value (the
+    last catches ``:path`` converters)."""
+    routes = [r for r in app.routes if getattr(r, "methods", None)]
+    for route in routes:
+        path = re.sub(r"\{[^}]+\}", value, route.path)
+        for method in route.methods - {"HEAD"}:
+            scope = {"type": "http", "path": path, "method": method, "root_path": ""}
+            matches = [o.path for o in routes if o.matches(scope)[0] is Match.FULL]
+            assert len(matches) <= 1, f"{method} {path} matched by {matches}"
+
+
+def test_route_modules_log_at_debug():
+    """The web layer opts into DEBUG on the kbox.web package logger. Before the
+    router split every handler logged through kbox.web.server, which was set
+    to DEBUG itself; the routers must inherit that, or debug lines such as
+    register_user's identity-creation diagnostic silently disappear."""
+    import kbox.web.server  # noqa: F401  (applies the level)
+
+    for module in ROUTER_MODULES:
+        assert logging.getLogger(f"kbox.web.routes.{module}").isEnabledFor(logging.DEBUG)
