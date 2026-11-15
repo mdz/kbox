@@ -6,7 +6,6 @@ import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock } from './controls.js';
-import { escapeHtml } from './utils.js';
 
 // Track the currently displayed song to detect song changes
 let currentDisplayedSongId = null;
@@ -381,59 +380,10 @@ function applyTurnStatus(status) {
     lastTurnLevel = status.level;
 }
 
-// Render Up Next section
-// nextSong and myNextTurn are provided by the backend (single source of truth)
+// Update the turn-alert bar and tab title.
+// nextSong and myNextTurn are provided by the backend (single source of truth).
+// (This replaced the mid-page "Up Next" box: the display and the queue list
+// already show who is singing next.)
 export function renderUpNext(statusData, nextSong, myNextTurn) {
-    const section = document.getElementById('up-next-section');
-    const content = document.getElementById('up-next-content');
-    if (!section || !content) return;
-
-    section.style.display = 'block';
-
     applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId));
-
-    const currentSong = statusData.current_song;
-
-    // Helper to format time
-    function formatTime(secs) {
-        const m = Math.floor(secs / 60);
-        const s = secs % 60;
-        return `${m}:${s.toString().padStart(2, '0')}`;
-    }
-
-    if (!nextSong) {
-        content.innerHTML = `<span style="font-size: 1.1em; color: #666;">Up Next: No one in queue</span>`;
-        return;
-    }
-
-    // Calculate time remaining in current song
-    const position = statusData.position_seconds || 0;
-    const currentDuration = currentSong ? (currentSong.duration_seconds || 0) : 0;
-    const currentRemaining = Math.max(0, currentDuration - position);
-
-    const isNextYou = nextSong.user_id === userId;
-    const nameStyle = isNextYou ? 'color: #4aff6e; font-size: 1.2em;' : 'color: #4a9eff;';
-    const youLabel = isNextYou ? '🎤 ' : '';
-
-    // Build main "Up Next" message
-    let html = '';
-    if (!currentSong && isNextYou) {
-        html = `<span style="font-size: 1.1em;">🎤 <strong style="${nameStyle}">You're first</strong> — waiting for the host to start</span>`;
-    } else if (!currentSong) {
-        html = `<span style="font-size: 1.1em;">Up Next: <strong style="${nameStyle}">${escapeHtml(nextSong.user_name)}</strong></span>`;
-    } else {
-        const timeStr = formatTime(currentRemaining);
-        html = `<span style="font-size: 1.1em;">${youLabel}Up Next: <strong style="${nameStyle}">${isNextYou ? 'YOU!' : escapeHtml(nextSong.user_name)}</strong> in ${timeStr}</span>`;
-    }
-
-    // Show when the current user's next song is coming up
-    // (backend only provides this when user is not already the immediate next singer)
-    if (myNextTurn) {
-        const timeStr = formatTime(myNextTurn.estimated_seconds);
-        const songsAway = myNextTurn.songs_away;
-        const songsLabel = songsAway === 1 ? '1 song' : `${songsAway} songs`;
-        html += `<br><span style="font-size: 0.95em; color: #4aff6e;">🎤 Your turn in ~${timeStr} (${songsLabel} away)</span>`;
-    }
-
-    content.innerHTML = html;
 }
