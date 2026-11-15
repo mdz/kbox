@@ -21,46 +21,35 @@ this page is a checkout where `uv run pytest` passes with no failures and
    Homebrew's GStreamer is required, not optional: the copy of GStreamer that
    comes with macOS is too old and is missing plugins kbox's pipeline needs.
 
-3. **Python, from Homebrew — not uv's managed interpreter.** This is the
-   step most likely to bite you, and it is worth getting right before
-   anything else:
+3. **Python, from Homebrew**, then the venv:
 
    ```bash
    brew install python@3.14
-   uv venv --python $(brew --prefix python@3.14)/bin/python3.14
    uv sync --group dev
    ```
 
-   PyGObject is a C extension that has to pair with Homebrew's glib. uv's
-   managed interpreters are [python-build-standalone][pbs] builds, and they
-   **cannot load Homebrew's PyGObject** — but uv prefers its own managed
-   interpreter by default, so a plain `uv venv` may well pick one. Whether a
-   checkout works then comes down to which interpreter uv happened to
-   choose.
+   No `uv venv --python ...` step is needed. PyGObject is a C extension that
+   has to pair with Homebrew's glib, and uv's managed interpreters are
+   [python-build-standalone][pbs] builds that **cannot load Homebrew's
+   PyGObject** (same wheels, same environment: Homebrew `python@3.14` works,
+   uv-managed CPython 3.14.5 fails with an `AssertionError` in
+   `gi/overrides`). uv's default is to prefer its own managed builds, so
+   `pyproject.toml` sets `[tool.uv] python-preference = "system"`, which
+   makes `uv sync` build a new `.venv` on the first Homebrew Python on your
+   `PATH`.
 
    [pbs]: https://github.com/astral-sh/python-build-standalone
 
-   Measured on one machine, two worktrees of this repo, byte-identical
-   PyGObject wheels (same sha256) and identical environments — the base
-   interpreter was the only variable:
-
-   | Venv base interpreter | `from gi.repository import Gst` |
-   | --- | --- |
-   | Homebrew `python@3.14` | works |
-   | uv-managed standalone CPython 3.14.5 | `AssertionError` in `gi/overrides` |
-
-   Confirmed in both directions by running each interpreter against the
-   other's `site-packages`: the interpreter decides, the installed packages
-   do not.
-
-   To check an existing venv:
+   uv reuses a `.venv` that already exists, so one created before that
+   setting, or before Homebrew Python was installed, stays broken. To check:
 
    ```bash
    grep home .venv/pyvenv.cfg
    ```
 
-   A path under `~/.local/share/uv/python/` is the broken case — delete
-   `.venv` and recreate it as above. A path under `/opt/homebrew` is fine.
+   A path under `~/.local/share/uv/python/` is the broken case; fix it with
+   `rm -rf .venv && uv sync --group dev`. A path under `/opt/homebrew` is
+   fine.
 
    PyGObject and pycairo themselves are declared in `pyproject.toml` under
    `sys_platform == 'darwin'`, so `uv sync` handles them. Don't
@@ -114,8 +103,9 @@ Dozens of failures across `test_streaming.py`, `test_config_manager.py` and
 `test_api.py` with that signature mean the setup didn't take, not that the
 host install is broken. In order of likelihood:
 
-1. **The venv is on uv's managed interpreter** — see prerequisite 3 above.
-   This is now caught: `configure_macos_gstreamer_env()` raises a
+1. **The venv is on uv's managed interpreter**, which is only possible for
+   a venv created before Homebrew Python was installed or before the
+   `pyproject.toml` setting existed. See prerequisite 3 above. This is caught: `configure_macos_gstreamer_env()` raises a
    `RuntimeError` naming the interpreter and the fix, rather than letting it
    surface as a wall of `assert g_type != TYPE_NONE`.
 2. Something imported `gi` at module scope before
