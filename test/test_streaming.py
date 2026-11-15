@@ -1179,7 +1179,7 @@ def test_only_one_source_feeds_the_bridge(controller, interstitial_image, test_v
     assert controller.still_image.pipeline is None
 
 
-def test_query_display_size_handles_sinks_without_mode_properties(controller):
+def test_query_display_size_handles_sinks_without_mode_properties(caplog):
     """
     Sinks that cannot report a mode leave output unconstrained.
 
@@ -1191,7 +1191,56 @@ def test_query_display_size_handles_sinks_without_mode_properties(controller):
         def find_property(self, name):
             return None
 
-    assert pipelines.query_display_size(_SinkWithoutModeProperties()) is None
+    with caplog.at_level(logging.WARNING, logger="kbox.streaming"):
+        assert pipelines.query_display_size(_SinkWithoutModeProperties()) is None
+
+    # The expected path must stay quiet, or the warnings below are noise.
+    assert caplog.text == ""
+
+
+def test_query_display_size_warns_when_the_sink_cannot_answer(caplog):
+    """
+    A sink that advertises a display mode but cannot report it warns.
+
+    Reaching this means kmssink opened the DRM device and then failed the
+    query, which leaves the render size unknown -- and an unknown render size
+    unpins the capsfilter, which is what kills the display pipeline on the
+    next resolution change. It must not be a debug-level line.
+    """
+
+    class _SinkThatFailsTheQuery:
+        def find_property(self, name):
+            return object()
+
+        def get_property(self, name):
+            raise RuntimeError("DRM device has no mode set")
+
+    with caplog.at_level(logging.WARNING, logger="kbox.streaming"):
+        assert pipelines.query_display_size(_SinkThatFailsTheQuery()) is None
+
+    assert "Failed to query the display mode" in caplog.text
+    assert "DRM device has no mode set" in caplog.text
+
+
+def test_query_display_size_warns_when_the_sink_reports_no_mode(caplog):
+    """
+    A sink reporting a zero-sized mode warns rather than falling through.
+
+    Same consequence as a failed query, and plausible on a Pi whose HDMI has
+    not negotiated by the time the pipeline reaches READY.
+    """
+
+    class _SinkWithoutAMode:
+        def find_property(self, name):
+            return object()
+
+        def get_property(self, name):
+            return 0
+
+    with caplog.at_level(logging.WARNING, logger="kbox.streaming"):
+        assert pipelines.query_display_size(_SinkWithoutAMode()) is None
+
+    assert "advertises a display mode but reported" in caplog.text
 
 
 def test_text_layout_leaves_font_size_to_auto_resize(controller):

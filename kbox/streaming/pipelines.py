@@ -74,6 +74,26 @@ def query_display_size(sink):
     kmssink exposes display-width/display-height once it has opened the
     DRM device. Other sinks (autovideosink on macOS, fakesink in tests)
     have no such properties, in which case output stays unconstrained.
+
+    Three paths return None and only the first is expected, so they are not
+    logged alike. A sink with no such property is the ordinary macOS and
+    test case. A sink that advertises the property but cannot answer it, or
+    answers with a falsy size, is a kmssink that opened the DRM device
+    without settling on a usable mode -- which is worth a warning, because
+    an unknown display size is not a cosmetic degrade on that hardware:
+
+      - choose_render_size() has nothing to work with, so the capsfilter is
+        never pinned and the frame size stops being fixed for the session.
+        That is the condition its docstring describes, where changing caps
+        leave kmssink unable to reallocate its DRM framebuffers ("failed to
+        activate bufferpool") and the display pipeline dies, typically at
+        the first song whose resolution differs from the last.
+      - Nothing pads the frame to the display's aspect ratio, so the kernel
+        console shows through the bars again (issue #93).
+      - Rendering is no longer capped at MAX_RENDER_HEIGHT, so a 1080p
+        source costs ~46 ms/frame and cannot sustain 30fps.
+      - StreamingController skips overlay sizing, leaving the QR code at
+        QR_INITIAL_SIZE on a full-size screen.
     """
     try:
         if sink.find_property("display-width") is None:
@@ -82,8 +102,22 @@ def query_display_size(sink):
         height = sink.get_property("display-height")
         if width and height:
             return (int(width), int(height))
-    except Exception as e:
-        logger.debug("Could not query display size: %s", e)
+        logger.warning(
+            "Sink advertises a display mode but reported %r x %r; "
+            "render size will be left unconstrained",
+            width,
+            height,
+        )
+    except Exception:
+        # Deliberately broad. This is a query, not a state change, and
+        # failing to answer it must never stop the display pipeline coming
+        # up -- an unconstrained screen is bad, no screen is worse. The
+        # level, not the breadth, is what makes it diagnosable.
+        logger.warning(
+            "Failed to query the display mode from a sink that advertises one; "
+            "render size will be left unconstrained",
+            exc_info=True,
+        )
     return None
 
 
