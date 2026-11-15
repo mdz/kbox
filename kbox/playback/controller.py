@@ -120,11 +120,8 @@ class PlaybackController:
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
 
-        # LOCK ORDERING: self.lock (OUTER) -> the OverlayCoordinator's
-        # notification lock (INNER). Code holding self.lock may acquire that
-        # one (e.g. _stop_internal() -> self._overlay.set_base()). The reverse
-        # must NEVER happen: nothing executed while holding the overlay lock
-        # may call a method that takes self.lock.
+        # The one lock in the playback layer: the collaborators below
+        # (cursor, overlay, screens) have none of their own and rely on it.
         #
         # This lock is deliberately NOT an RLock. Re-entering it is a bug, and
         # a plain Lock deadlocks loudly instead of silently absorbing it.
@@ -171,9 +168,9 @@ class PlaybackController:
         # content; the monitor auto-resumes once that item's content is ready.
         self._awaiting_replace_item_id: Optional[int] = None
 
-        # Overlay management - the coordinator owns the base text, the
-        # hide timer, and the INNER lock protecting both. See the
-        # lock-ordering note on self.lock above.
+        # Overlay management - the coordinator owns the base text and the
+        # active notification's deadline. Only ever called under self.lock;
+        # the monitor tick expires notifications.
         self._overlay = OverlayCoordinator(streaming_controller)
 
         self._monitor.start()
@@ -195,8 +192,8 @@ class PlaybackController:
         the lock, rather than merely that somebody does.
 
         self.lock is not reentrant, so nesting this (directly or via a method
-        that uses it) deadlocks. That is intentional - see the lock-ordering
-        note in __init__.
+        that uses it) deadlocks. That is intentional - see the note on
+        self.lock in __init__.
         """
         with self.lock:
             self._lock_owner = threading.get_ident()
@@ -278,8 +275,19 @@ class PlaybackController:
     # =========================================================================
 
     def show_notification(self, text: str, duration_seconds: float = 5.0):
-        """Show a transient notification. See OverlayCoordinator.show_notification."""
-        self._overlay.show_notification(text, duration_seconds)
+        """
+        Show a transient notification over the base overlay text.
+
+        The notification is cleared by the monitor tick, so it stays up for
+        duration_seconds rounded up to the next tick: up to
+        MONITOR_INTERVAL_SECONDS longer than asked for.
+
+        Args:
+            text: Notification text to display
+            duration_seconds: Minimum time to show the notification
+        """
+        with self._locked():
+            self._overlay.show_notification(text, duration_seconds)
 
     def _on_monitor_tick(self):
         """
@@ -303,6 +311,9 @@ class PlaybackController:
     def _monitor_tick_locked(self):
         """The body of _on_monitor_tick(). Assumes lock is already held."""
         self._require_locked()
+        # In every state, not just PLAYING: a notification shown over an
+        # interstitial screen must clear too.
+        self._overlay.expire_notification()
         if self.state == PlaybackState.PLAYING and self.current_song_id:
             position = self.streaming_controller.get_position()
             if position is not None:

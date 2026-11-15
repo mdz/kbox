@@ -9,7 +9,7 @@ only implement set_property / get_property.
 
 It holds no lock and runs no timer. What the text says, and for how long, is
 decided by kbox.playback.overlay.OverlayCoordinator, which calls
-set_overlay_text() under its own lock.
+set_overlay_text() under the playback lock.
 """
 
 import logging
