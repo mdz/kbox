@@ -13,6 +13,7 @@ all), following the same shape as kbox/streaming/:
 - cursor: QueueCursor, where we are in the queue, persisted
 - overlay: OverlayCoordinator, the base overlay text and notifications over it
 - screens: ScreenPresenter, the interstitial screens
+- monitor: PlaybackMonitor, the background tick thread's lifecycle
 - controller: PlaybackController, the state machine that wires them together
 """
 

@@ -18,6 +18,7 @@ from ..models import QueueItem
 from ..queue import QueueManager
 from . import history_policy, song_tuning, status
 from .cursor import QueueCursor
+from .monitor import PlaybackMonitor
 from .overlay import OverlayCoordinator
 from .screens import ScreenPresenter
 from .upcoming import UpcomingItem, upcoming_songs
@@ -105,9 +106,11 @@ class PlaybackController:
         # Interstitial screens (idle, transition, end-of-queue, messages)
         self._screens = ScreenPresenter(config_manager, streaming_controller)
 
-        # Background monitor thread (handles notifications, auto-start, etc.)
-        self._monitor_thread = None
-        self._monitoring = False
+        # Background monitor thread (handles notifications, auto-start, etc.).
+        # The monitor owns the thread; the policy of what each tick does is
+        # _on_monitor_tick() below, because it reads and writes the state
+        # machine.
+        self._monitor = PlaybackMonitor(self._on_monitor_tick)
         self._up_next_shown = False  # Track if "up next" notification was shown for current song
         self._current_singer_shown = (
             False  # Track if "current singer" notification was shown for current song
@@ -122,7 +125,7 @@ class PlaybackController:
         # lock-ordering note on self.lock above.
         self._overlay = OverlayCoordinator(streaming_controller)
 
-        self._start_monitor()
+        self._monitor.start()
 
         # Set EOS callback
         self.streaming_controller.set_eos_callback(self.on_song_end)
@@ -240,43 +243,33 @@ class PlaybackController:
         """
         self._overlay.show_notification(text, duration_seconds)
 
-    def _start_monitor(self):
-        """Start background thread to monitor playback state and react accordingly."""
-        if self._monitor_thread and self._monitor_thread.is_alive():
-            return
+    def _on_monitor_tick(self):
+        """
+        One pass of the background monitor: handle notifications, auto-start, etc.
 
-        def monitor():
-            """Periodically check playback state and handle notifications, auto-start, etc."""
-            import time
-
-            while self._monitoring:
-                try:
-                    if self.state == PlaybackState.PLAYING and self.current_song_id:
-                        position = self.streaming_controller.get_position()
-                        if position is not None:
-                            # Check if we should show "current singer" notification at start
-                            self._check_current_singer_notification(position)
-                            # Check if we should show "up next" notification near end
-                            self._check_up_next_notification(position)
-                            # Check if we've reached trailing silence and can advance early
-                            self._check_trailing_silence_skip(position)
-                    elif self.state == PlaybackState.IDLE:
-                        # Auto-start playback if we're idle and there are ready songs
-                        # This handles the "that's all" screen -> someone adds a song case
-                        self._check_auto_start_when_idle()
-                    elif self.state == PlaybackState.STOPPED and self._awaiting_replace_item_id:
-                        # Auto-resume a song that was stopped to replace its content,
-                        # once the replacement has finished downloading
-                        self._check_auto_resume_after_replace()
-                    time.sleep(2)  # Check every 2 seconds
-                except Exception as e:
-                    self.logger.error("Error in monitor: %s", e, exc_info=True)
-                    time.sleep(5)  # Wait longer on error
-
-        self._monitoring = True
-        self._monitor_thread = threading.Thread(target=monitor, daemon=True, name="PlaybackMonitor")
-        self._monitor_thread.start()
-        self.logger.info("Playback monitor started")
+        Called from PlaybackMonitor's thread. This stays on the controller
+        because every branch below reads self.state and self.current_song_id,
+        and _check_auto_start_when_idle() / _check_auto_resume_after_replace()
+        call back into play(). The _check_* methods take the playback lock
+        themselves where they need it; this method holds nothing.
+        """
+        if self.state == PlaybackState.PLAYING and self.current_song_id:
+            position = self.streaming_controller.get_position()
+            if position is not None:
+                # Check if we should show "current singer" notification at start
+                self._check_current_singer_notification(position)
+                # Check if we should show "up next" notification near end
+                self._check_up_next_notification(position)
+                # Check if we've reached trailing silence and can advance early
+                self._check_trailing_silence_skip(position)
+        elif self.state == PlaybackState.IDLE:
+            # Auto-start playback if we're idle and there are ready songs
+            # This handles the "that's all" screen -> someone adds a song case
+            self._check_auto_start_when_idle()
+        elif self.state == PlaybackState.STOPPED and self._awaiting_replace_item_id:
+            # Auto-resume a song that was stopped to replace its content,
+            # once the replacement has finished downloading
+            self._check_auto_resume_after_replace()
 
     def _check_auto_start_when_idle(self):
         """
@@ -1388,7 +1381,10 @@ class PlaybackController:
     def shutdown(self):
         """Shutdown the playback controller and cleanup all resources."""
         self.logger.info("Shutting down playback controller")
-        self._monitoring = False
+        # Take the monitor out of play before anything else, but cancel the
+        # transition timer before waiting for its thread -- otherwise the
+        # timer could fire and start a song during the join.
+        self._monitor.request_stop()
 
         # Cancel transition timer
         if self._transition_timer:
@@ -1396,10 +1392,7 @@ class PlaybackController:
             self._transition_timer = None
 
         # Stop monitor thread
-        if self._monitor_thread and self._monitor_thread.is_alive():
-            self._monitor_thread.join(timeout=2.0)
-            if self._monitor_thread.is_alive():
-                self.logger.warning("Monitor thread did not stop within timeout")
+        self._monitor.join()
 
         # Stop streaming
         if self.streaming_controller:

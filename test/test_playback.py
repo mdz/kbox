@@ -103,7 +103,7 @@ def playback_controller(mock_queue_manager, mock_streaming_controller, mock_conf
         mock_queue_manager, mock_streaming_controller, mock_config_manager
     )
     # Stop monitor thread to avoid interference in tests
-    controller._monitoring = False
+    controller._monitor.request_stop()
     return controller
 
 
@@ -1522,7 +1522,7 @@ class TestShutdown:
         pc.shutdown()
         mock_streaming_controller.stop.assert_called_once()
 
-    def test_shutdown_sets_monitoring_false(
+    def test_shutdown_stops_the_monitor(
         self, mock_queue_manager, mock_streaming_controller, mock_config_manager
     ):
         mock_history = Mock()
@@ -1530,7 +1530,7 @@ class TestShutdown:
             mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
         )
         pc.shutdown()
-        assert pc._monitoring is False
+        assert pc._monitor.running is False
 
 
 class TestTrailingSilenceSkip:
@@ -1548,7 +1548,7 @@ class TestTrailingSilenceSkip:
             mock_config_manager,
             silence_analyzer=mock_silence_analyzer,
         )
-        pc._monitoring = False
+        pc._monitor.request_stop()
         return pc, mock_silence_analyzer
 
     def test_lookup_trim_point_no_analyzer(self, playback_controller, mock_config_manager):
@@ -1668,7 +1668,7 @@ class TestTrailingSilenceSkip:
             history_manager=mock_history,
             silence_analyzer=mock_silence_analyzer,
         )
-        pc._monitoring = False
+        pc._monitor.request_stop()
 
         current_song = create_mock_queue_item(id=1, video_id="youtube:abc123", duration_seconds=180)
         pc.state = PlaybackState.PLAYING
@@ -1925,7 +1925,7 @@ class TestVolumeNormalization:
             mock_config_manager,
             loudness_analyzer=mock_loudness_analyzer,
         )
-        pc._monitoring = False
+        pc._monitor.request_stop()
         return pc, mock_loudness_analyzer
 
     @staticmethod
