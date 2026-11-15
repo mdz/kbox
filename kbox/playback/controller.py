@@ -1,19 +1,23 @@
 """
-Playback controller for kbox.
+The playback state machine.
 
-Orchestrates playback, manages state transitions, and handles error recovery.
+PlaybackController orchestrates playback, manages state transitions, and
+handles error recovery. It is the only place self.state and
+self.current_song_id are touched; everything that does not need them lives in
+a sibling module (see the package docstring).
 """
 
 import logging
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterator, List, Optional
 
-from .database import ConfigRepository
-from .models import QueueItem
-from .queue import QueueManager
+from ..database import ConfigRepository
+from ..models import QueueItem
+from ..queue import QueueManager
+from . import history_policy, song_tuning, status
+from .upcoming import UpcomingItem, upcoming_songs
 
 
 class PlaybackState(Enum):
@@ -25,43 +29,6 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     TRANSITION = "transition"  # Between songs, showing interstitial
     ERROR = "error"
-
-
-@dataclass(frozen=True)
-class UpcomingItem:
-    """A queued song that hasn't played yet, with when it is expected to start."""
-
-    item: QueueItem
-    position: int  # 1-based among upcoming songs (1 = up next)
-    wait_seconds: int  # estimated time until this song starts
-
-
-def upcoming_songs(
-    queue: Sequence[QueueItem],
-    cursor_id: Optional[int],
-    current_song_id: Optional[int],
-    position_seconds: Optional[float],
-) -> List[UpcomingItem]:
-    """
-    The songs after the cursor, each with an estimated time until it starts.
-
-    The estimate is the time left in the song now playing plus the durations
-    of the upcoming songs ahead of it. With no cursor (or a cursor song no
-    longer in the queue) the whole queue is upcoming.
-    """
-    cursor_idx = next((i for i, s in enumerate(queue) if s.id == cursor_id), None)
-    upcoming_items = queue[(cursor_idx + 1) if cursor_idx is not None else 0 :]
-
-    wait = 0.0
-    current = next((s for s in queue if s.id == current_song_id), None)
-    if current is not None:
-        wait = max(0.0, (current.metadata.duration_seconds or 0) - (position_seconds or 0))
-
-    upcoming = []
-    for position, item in enumerate(upcoming_items, start=1):
-        upcoming.append(UpcomingItem(item, position, int(wait)))
-        wait += item.metadata.duration_seconds or 0
-    return upcoming
 
 
 class PlaybackController:
@@ -522,51 +489,6 @@ class PlaybackController:
                 self._up_next_shown = True
                 self.logger.debug("Updated overlay to up next for: %s", next_song.user_name)
 
-    def _lookup_trim_point(self, video_id: str) -> Optional[int]:
-        """
-        Look up the cached trailing-silence trim point for a video.
-
-        Returns None (no early skip) if the feature is disabled, no analyzer
-        is configured, or analysis hasn't found any exploitable silence.
-        Never raises -- a lookup failure just means normal end-of-file
-        playback, same as before this feature existed.
-        """
-        if not self.silence_analyzer:
-            return None
-        if not self.config_manager.get_bool("skip_trailing_silence_enabled", True):
-            return None
-        try:
-            return self.silence_analyzer.get_cached_trim_point(video_id)
-        except Exception as e:
-            self.logger.warning("Error looking up trim point for %s: %s", video_id, e)
-            return None
-
-    def _lookup_volume_gain_db(self, video_id: str) -> float:
-        """
-        Look up the loudness-normalization gain for a video, in dB.
-
-        Returns 0.0 (no adjustment) if normalization is disabled, no
-        analyzer is configured, or the video hasn't been measured yet - a
-        freshly-added song plays at its native level until analysis catches
-        up, rather than blocking playback. Never raises.
-        """
-        if not self.loudness_analyzer:
-            return 0.0
-        if not self.config_manager.get_bool("loudness_normalization_enabled", True):
-            return 0.0
-        try:
-            loudness = self.loudness_analyzer.get_cached_loudness(video_id)
-            if loudness is None:
-                return 0.0
-
-            from .loudness import DEFAULT_TARGET_LUFS, compute_gain_db
-
-            target_lufs = self.config_manager.get_float("loudness_target_lufs", DEFAULT_TARGET_LUFS)
-            return compute_gain_db(loudness, target_lufs=target_lufs)
-        except Exception as e:
-            self.logger.warning("Error looking up volume gain for %s: %s", video_id, e)
-            return 0.0
-
     def _check_trailing_silence_skip(self, current_position: int):
         """
         Check if playback has reached the cached trailing-silence trim point
@@ -721,7 +643,9 @@ class PlaybackController:
             # Apply loudness-normalization gain for this song, if measured
             try:
                 self.streaming_controller.set_volume_gain_db(
-                    self._lookup_volume_gain_db(song.video_id)
+                    song_tuning.lookup_volume_gain_db(
+                        self.loudness_analyzer, self.config_manager, song.video_id
+                    )
                 )
             except Exception as e:
                 self.logger.warning("Could not set volume gain: %s", e)
@@ -744,7 +668,9 @@ class PlaybackController:
             self.current_song_id = song.id
 
             # Look up trailing-silence trim point for the monitor loop to act on
-            self._current_trim_point = self._lookup_trim_point(song.video_id)
+            self._current_trim_point = song_tuning.lookup_trim_point(
+                self.silence_analyzer, self.config_manager, song.video_id
+            )
 
             # Advance the queue cursor - this is the single place the cursor moves.
             # All navigation (skip, previous, jump_to_song) goes through _play_song(),
@@ -911,15 +837,7 @@ class PlaybackController:
 
         if current_song:
             current_position = self.streaming_controller.get_position() or 0
-            if self.history_manager and self._should_record_history(
-                current_song.metadata.duration_seconds, current_position
-            ):
-                completion_pct = self._calculate_completion_percentage(
-                    current_position, current_song.metadata.duration_seconds
-                )
-                self._record_performance_history(
-                    current_song, current_position, current_position, completion_pct
-                )
+            self._record_history_if_eligible(current_song, current_position)
 
         self.logger.debug(
             "_navigate: before stop_playback, current=%s target=%s offset=%s",
@@ -1085,38 +1003,7 @@ class PlaybackController:
             - new_position: New position
         """
         with self._locked():
-            self.logger.info("Moving down song %s", item_id)
-
-            # Get current item
-            item = self.queue_manager.get_item(item_id)
-            if not item:
-                self.logger.warning("Song %s not found", item_id)
-                return {"status": "not_found"}
-
-            current_position = item.position
-
-            # Get max position
-            queue = self.queue_manager.get_queue()
-            max_position = max((q.position for q in queue), default=0)
-
-            # Calculate new position (down 1, but not past the end)
-            new_position = min(current_position + 1, max_position)
-
-            if new_position == current_position:
-                # Already at the end
-                self.logger.info("Song %s already at end of queue", item_id)
-                return {"status": "already_at_end", "position": current_position}
-
-            # Reorder the song
-            if not self.queue_manager.reorder_song(item_id, new_position):
-                self.logger.error("Failed to reorder song %s", item_id)
-                return {"status": "error"}
-
-            return {
-                "status": "moved_down",
-                "old_position": current_position,
-                "new_position": new_position,
-            }
+            return self.queue_manager.move_down(item_id)
 
     def move_up(self, item_id: int) -> Dict[str, Any]:
         """
@@ -1134,38 +1021,7 @@ class PlaybackController:
             - new_position: New position
         """
         with self._locked():
-            self.logger.info("Moving up song %s", item_id)
-
-            # Get current item
-            item = self.queue_manager.get_item(item_id)
-            if not item:
-                self.logger.warning("Song %s not found", item_id)
-                return {"status": "not_found"}
-
-            current_position = item.position
-
-            # Get min position
-            queue = self.queue_manager.get_queue()
-            min_position = min((q.position for q in queue), default=1)
-
-            # Calculate new position (up 1, but not past the start)
-            new_position = max(current_position - 1, min_position)
-
-            if new_position == current_position:
-                # Already at the start
-                self.logger.info("Song %s already at start of queue", item_id)
-                return {"status": "already_at_start", "position": current_position}
-
-            # Reorder the song
-            if not self.queue_manager.reorder_song(item_id, new_position):
-                self.logger.error("Failed to reorder song %s", item_id)
-                return {"status": "error"}
-
-            return {
-                "status": "moved_up",
-                "old_position": current_position,
-                "new_position": new_position,
-            }
+            return self.queue_manager.move_up(item_id)
 
     def move_to_next(self, item_id: int) -> bool:
         """
@@ -1184,38 +1040,19 @@ class PlaybackController:
         with self._locked():
             self.logger.info("Moving song %s to play next", item_id)
 
-            # Determine target position based on current playback
-            if self.current_song_id:
-                # Query fresh position from database
-                current_song = self.queue_manager.get_item(self.current_song_id)
-                if not current_song:
-                    self.logger.error("Current song ID %s not found", self.current_song_id)
-                    return False
-                target_position = current_song.position + 1
-
-                # If the current song is last in the queue, "next" is simply
-                # the end of the queue - clamp so we don't request a
-                # position past the max (which reorder() would reject).
-                queue = self.queue_manager.get_queue()
-                max_position = max((q.position for q in queue), default=target_position)
-                target_position = min(target_position, max_position)
-            else:
-                target_position = 1
-
             # Check if this is the currently playing song
             is_currently_playing = (
                 self.current_song_id is not None and self.current_song_id == item_id
             )
 
-            # Reorder the song
-            if not self.queue_manager.reorder_song(item_id, target_position):
-                self.logger.error("Failed to move song %s to next", item_id)
+            new_position = self.queue_manager.move_after(item_id, self.current_song_id)
+            if new_position is None:
                 return False
 
             # Note: No need to update current_song_id - the ID doesn't change,
             # only the position in the database changes
             if is_currently_playing:
-                self.logger.info("Currently playing song moved to position %s", target_position)
+                self.logger.info("Currently playing song moved to position %s", new_position)
 
             return True
 
@@ -1233,30 +1070,19 @@ class PlaybackController:
             True if successful, False if item not found
         """
         with self._locked():
-            self.logger.info("Moving song %s to end of queue", item_id)
-
-            # Get max position
-            queue = self.queue_manager.get_queue()
-            if not queue:
-                self.logger.warning("Cannot move to end - queue is empty")
-                return False
-
-            max_position = max((item.position for item in queue), default=0)
-
             # Check if this is the currently playing song
             is_currently_playing = (
                 self.current_song_id is not None and self.current_song_id == item_id
             )
 
-            # Reorder the song
-            if not self.queue_manager.reorder_song(item_id, max_position):
-                self.logger.error("Failed to move song %s to end", item_id)
+            new_position = self.queue_manager.move_to_end(item_id)
+            if new_position is None:
                 return False
 
             # Note: No need to update current_song_id - the ID doesn't change,
             # only the position in the database changes
             if is_currently_playing:
-                self.logger.info("Currently playing song moved to position %s", max_position)
+                self.logger.info("Currently playing song moved to position %s", new_position)
 
             return True
 
@@ -1317,15 +1143,7 @@ class PlaybackController:
                 )
 
                 # Record history if threshold met
-                if self.history_manager and self._should_record_history(
-                    finished_song.metadata.duration_seconds, record_position
-                ):
-                    completion_pct = self._calculate_completion_percentage(
-                        record_position, finished_song.metadata.duration_seconds
-                    )
-                    self._record_performance_history(
-                        finished_song, record_position, record_position, completion_pct
-                    )
+                self._record_history_if_eligible(finished_song, record_position)
             else:
                 self.logger.warning("Finished song ID %s not found", finished_song_id)
         else:
@@ -1467,7 +1285,7 @@ class PlaybackController:
         if self._interstitial_generator is None:
             import os
 
-            from .interstitials import InterstitialGenerator
+            from ..interstitials import InterstitialGenerator
 
             cache_dir = os.path.join(
                 str(self.config_manager.get_cache_directory()), "interstitials"
@@ -1579,8 +1397,6 @@ class PlaybackController:
         Returns:
             Dictionary with playback state and current song info
         """
-        from dataclasses import asdict
-
         with self._locked():
             state = self.state
             current_song_id = self.current_song_id
@@ -1594,26 +1410,13 @@ class PlaybackController:
         if current_song_id:
             queue_item = self.queue_manager.get_item(current_song_id)
             if queue_item:
-                # Convert QueueItem to dict for JSON serialization
-                current_song = asdict(queue_item)
-                # Convert datetime objects to ISO format strings for JSON
-                if current_song.get("created_at"):
-                    current_song["created_at"] = current_song["created_at"].isoformat()
-                # Flatten metadata and settings for easier frontend access
-                current_song["title"] = queue_item.metadata.title
-                current_song["duration_seconds"] = queue_item.metadata.duration_seconds
-                current_song["thumbnail_url"] = queue_item.metadata.thumbnail_url
-                current_song["channel"] = queue_item.metadata.channel
-                current_song["artist"] = queue_item.metadata.artist
-                current_song["song_name"] = queue_item.metadata.song_name
-                current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
+                current_song = status.serialize_current_song(queue_item)
 
-        status = {
+        return {
             "state": state.value,
             "current_song": current_song,
             "position_seconds": position,
         }
-        return status
 
     def set_pitch(self, semitones: int) -> bool:
         """
@@ -1702,111 +1505,41 @@ class PlaybackController:
                 return {"status": "error"}
             return {"status": "seeked", "position": new_position}
 
-    def _should_record_history(self, duration_seconds: Optional[int], played_seconds: int) -> bool:
+    def _record_history_if_eligible(self, song: QueueItem, position: int) -> None:
         """
-        Check if a performance should be recorded in history.
+        Record a performance in history if it played long enough to count.
 
-        Records if played duration meets threshold:
-        - 70% of total duration (default), OR
-        - 90+ seconds (default)
+        Shared by the skip path (_navigate) and the end-of-song path
+        (_complete_current_song), which previously ran identical copies of
+        this. The thresholds are read from config here and handed to
+        history_policy, which decides on numbers alone.
+
+        Assumes lock is already held.
 
         Args:
-            duration_seconds: Total song duration (None if unknown)
-            played_seconds: How long the song was played
-
-        Returns:
-            True if performance should be recorded
+            song: Queue item being recorded
+            position: Playback position to record as the played duration
         """
-        # Get thresholds from config
-        threshold_pct = self.config_manager.get("history_threshold_percentage")
-        threshold_seconds = self.config_manager.get("history_threshold_seconds")
+        self._require_locked()
+        if not self.history_manager:
+            return
 
-        # Use defaults if not configured
-        if threshold_pct is None:
-            threshold_pct = 70
-        else:
-            try:
-                threshold_pct = int(threshold_pct)
-            except (ValueError, TypeError):
-                threshold_pct = 70
+        threshold_pct, threshold_seconds = history_policy.history_thresholds(self.config_manager)
+        if not history_policy.should_record_history(
+            song.metadata.duration_seconds, position, threshold_pct, threshold_seconds
+        ):
+            return
 
-        if threshold_seconds is None:
-            threshold_seconds = 90
-        else:
-            try:
-                threshold_seconds = int(threshold_seconds)
-            except (ValueError, TypeError):
-                threshold_seconds = 90
-
-        # Check time threshold
-        if played_seconds >= threshold_seconds:
-            self.logger.debug(
-                "History threshold met: %s seconds >= %s seconds", played_seconds, threshold_seconds
-            )
-            return True
-
-        # Check percentage threshold if duration known
-        if duration_seconds and duration_seconds > 0:
-            percentage = (played_seconds / duration_seconds) * 100
-            if percentage >= threshold_pct:
-                self.logger.debug(
-                    "History threshold met: %.1f%% >= %s%%", percentage, threshold_pct
-                )
-                return True
-
-        self.logger.debug(
-            "History threshold NOT met: %s seconds (threshold: %s%% or %s seconds)",
-            played_seconds,
-            threshold_pct,
-            threshold_seconds,
+        completion_pct = history_policy.calculate_completion_percentage(
+            position, song.metadata.duration_seconds
         )
-        return False
-
-    def _calculate_completion_percentage(
-        self, played_seconds: int, duration_seconds: Optional[int]
-    ) -> float:
-        """
-        Calculate completion percentage.
-
-        Args:
-            played_seconds: How long the song was played
-            duration_seconds: Total song duration
-
-        Returns:
-            Completion percentage (0.0-100.0)
-        """
-        if not duration_seconds or duration_seconds <= 0:
-            return 0.0
-
-        return min(100.0, (played_seconds / duration_seconds) * 100.0)
-
-    def _record_performance_history(
-        self,
-        queue_item: QueueItem,
-        played_duration_seconds: int,
-        playback_end_position_seconds: int,
-        completion_percentage: float,
-    ):
-        """
-        Record a performance in history.
-
-        Args:
-            queue_item: Queue item with song details
-            played_duration_seconds: How long the song was played
-            playback_end_position_seconds: Where playback ended
-            completion_percentage: Percentage of song completed
-        """
-        theme = self.config_manager.get("suggestion_theme") or None
-        self.history_manager.record_performance(
-            user_id=queue_item.user_id,
-            user_name=queue_item.user_name,
-            video_id=queue_item.video_id,
-            metadata=queue_item.metadata,
-            settings=queue_item.settings,
-            played_duration_seconds=played_duration_seconds,
-            playback_end_position_seconds=playback_end_position_seconds,
-            completion_percentage=completion_percentage,
-            theme=theme,
+        history_policy.record_performance_history(
+            self.history_manager,
+            song,
+            position,
+            position,
+            completion_pct,
+            self.config_manager.get("suggestion_theme") or None,
         )
 
     def shutdown(self):

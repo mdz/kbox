@@ -207,6 +207,135 @@ def test_reorder_invalid_position(queue_manager, test_users):
     assert result is False
 
 
+def test_move_down(queue_manager, test_users):
+    """Test moving a song down one position."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
+
+    result = queue_manager.move_down(id1)
+
+    assert result == {"status": "moved_down", "old_position": 1, "new_position": 2}
+    queue = queue_manager.get_queue()
+    assert [item.id for item in queue] == [id2, id1, queue[2].id]
+
+
+def test_move_down_at_end_of_queue(queue_manager, test_users):
+    """The last song has nowhere to go, and says so rather than failing."""
+    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+
+    result = queue_manager.move_down(id2)
+
+    assert result == {"status": "already_at_end", "position": 2}
+
+
+def test_move_down_nonexistent_song(queue_manager):
+    assert queue_manager.move_down(9999) == {"status": "not_found"}
+
+
+def test_move_up(queue_manager, test_users):
+    """Test moving a song up one position."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+
+    result = queue_manager.move_up(id2)
+
+    assert result == {"status": "moved_up", "old_position": 2, "new_position": 1}
+    assert [item.id for item in queue_manager.get_queue()] == [id2, id1]
+
+
+def test_move_up_at_start_of_queue(queue_manager, test_users):
+    """The first song has nowhere to go, and says so rather than failing."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+
+    result = queue_manager.move_up(id1)
+
+    assert result == {"status": "already_at_start", "position": 1}
+
+
+def test_move_up_nonexistent_song(queue_manager):
+    assert queue_manager.move_up(9999) == {"status": "not_found"}
+
+
+def test_move_after_uses_fresh_reference_position(queue_manager, test_users):
+    """move_after queries the reference song's position fresh, not from a cache.
+
+    Regression test: after an earlier reorder, a position the caller is
+    holding has gone stale, so the reference must be looked up again.
+    """
+    ids = [
+        queue_manager.add_song(test_users["alice"], f"youtube:vid{n}", f"Song {n}")
+        for n in range(1, 7)
+    ]
+    reference_id = ids[4]  # position 5
+    song_to_move = ids[1]  # position 2
+
+    # Shuffle the queue so any position captured before now is stale: moving
+    # the first song to the end shifts everything behind it up one.
+    queue_manager.reorder_song(ids[0], 6)
+    assert queue_manager.get_item(reference_id).position == 4
+
+    new_position = queue_manager.move_after(song_to_move, reference_id)
+
+    # Fresh position of the reference (4) + 1, not its stale 5 + 1
+    assert new_position == 5
+    assert queue_manager.get_item(song_to_move).position == 5
+
+
+def test_move_after_last_song_clamps_to_end_of_queue(queue_manager, test_users):
+    """Regression test for https://github.com/mdz/kbox/issues/89.
+
+    When the reference song is last in the queue, reference.position + 1
+    exceeds the max position, so reorder() would reject it as an "invalid
+    position" - which the API layer misreports as "Queue item not found".
+    "After" the last song should simply mean the end of the queue.
+    """
+    song_to_move = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    reference_id = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+
+    new_position = queue_manager.move_after(song_to_move, reference_id)
+
+    # Clamped to max position (2), not 3 (which would be rejected as invalid)
+    assert new_position == 2
+    assert queue_manager.get_item(song_to_move).position == 2
+
+
+def test_move_after_with_no_reference_moves_to_front(queue_manager, test_users):
+    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+
+    assert queue_manager.move_after(id2, None) == 1
+    assert queue_manager.get_queue()[0].id == id2
+
+
+def test_move_after_nonexistent_reference(queue_manager, test_users):
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+
+    assert queue_manager.move_after(id1, 9999) is None
+
+
+def test_move_to_end(queue_manager, test_users):
+    """Test moving a song to the end of the queue."""
+    id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+    id2 = queue_manager.add_song(test_users["bob"], "youtube:vid2", "Song 2")
+    id3 = queue_manager.add_song(test_users["charlie"], "youtube:vid3", "Song 3")
+
+    assert queue_manager.move_to_end(id1) == 3
+    assert [item.id for item in queue_manager.get_queue()] == [id2, id3, id1]
+
+
+def test_move_to_end_empty_queue(queue_manager):
+    assert queue_manager.move_to_end(9999) is None
+
+
+def test_move_to_end_nonexistent_song(queue_manager, test_users):
+    queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
+
+    assert queue_manager.move_to_end(9999) is None
+
+
 def test_get_song_at_offset(queue_manager, test_users):
     """Test getting song at offset (regardless of download status)."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")

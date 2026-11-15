@@ -530,6 +530,39 @@
             background: #3a3a3a;
         }
 
+        .queue-item.readonly {
+            cursor: default;
+        }
+
+        .queue-item.readonly:hover {
+            border-color: transparent;
+            background: #333;
+        }
+
+        .queue-item.mine {
+            border-left: 4px solid #f1c40f;
+        }
+
+        .queue-item-position {
+            flex: 0 0 auto;
+            min-width: 1.6em;
+            margin-right: 10px;
+            text-align: center;
+            font-weight: 600;
+            color: #888;
+        }
+
+        .queue-item-you {
+            margin-left: 6px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            background: #f1c40f;
+            color: #222;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
         .queue-item.playing {
             background: #2a4a6a;
             border-color: #4a9eff;
@@ -804,6 +837,33 @@
             color: #aaa;
             font-size: 0.9em;
         }
+        /* Sticky turn alert. Fixed, so the round header buttons are pushed
+           down by the bar's height while it is visible. */
+        .turn-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 44px;
+            z-index: 1100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 12px;
+            font-weight: 600;
+            font-size: 15px;
+            text-align: center;
+            background: #2a3a55;
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+        .turn-bar[hidden] { display: none; }
+        .turn-bar.turn-next { background: #c77d00; font-size: 17px; }
+        .turn-bar.turn-playing { background: #1f9d4c; font-size: 17px; }
+        .turn-bar.turn-idle-first { background: #6b4fa0; }
+        body.has-turn-bar { padding-top: 54px; }
+        body.has-turn-bar > header > button { top: 54px; }
+
         .main-content {
             transition: opacity 0.3s ease;
         }
