@@ -162,7 +162,7 @@ def test_route_modules_log_at_debug():
     router split every handler logged through kbox.web.server, which was set
     to DEBUG itself; the routers must inherit that, or debug lines such as
     register_user's identity-creation diagnostic silently disappear."""
-    import kbox.web.server  # noqa: F401  (applies the level)
+    import kbox.web.app  # noqa: F401  (applies the level)
 
     for module in ROUTER_MODULES:
         assert logging.getLogger(f"kbox.web.routes.{module}").isEnabledFor(logging.DEBUG)
