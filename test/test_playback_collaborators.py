@@ -12,11 +12,6 @@ its callback can be invoked directly.
 from unittest.mock import Mock, patch
 
 from kbox.playback.cursor import QueueCursor
-from kbox.playback.monitor import (
-    ERROR_BACKOFF_SECONDS,
-    INTERVAL_SECONDS,
-    PlaybackMonitor,
-)
 from kbox.playback.overlay import OverlayCoordinator
 
 
@@ -131,75 +126,3 @@ class TestQueueCursor:
 
         assert cursor.get() is None
         repo.set.assert_called_once_with(QueueCursor.CONFIG_KEY, "")
-
-
-class TestPlaybackMonitor:
-    """PlaybackMonitor needs nothing but a callable.
-
-    These drive _loop() directly on the test thread with time.sleep patched
-    out, so the loop's behavior is checked without a second thread and
-    without waiting on anything.
-    """
-
-    @staticmethod
-    def _run_loop(monitor, on_tick_count, stop_after):
-        """Run monitor._loop() synchronously, stopping after `stop_after` ticks."""
-        slept = []
-
-        def fake_sleep(seconds):
-            slept.append(seconds)
-            if len(on_tick_count) >= stop_after:
-                monitor.request_stop()
-
-        with patch("kbox.playback.monitor.time.sleep", fake_sleep):
-            monitor._loop()
-        return slept
-
-    def test_loop_ticks_until_request_stop(self):
-        ticks = []
-        monitor = PlaybackMonitor(on_tick=lambda: ticks.append(1))
-        monitor._running = True
-
-        slept = self._run_loop(monitor, ticks, stop_after=3)
-
-        assert len(ticks) == 3
-        assert slept == [INTERVAL_SECONDS] * 3
-        assert monitor.running is False
-
-    def test_a_raising_tick_does_not_stop_the_loop(self):
-        """One bad tick must not kill the monitor -- auto-start depends on it."""
-        ticks = []
-
-        def on_tick():
-            ticks.append(1)
-            if len(ticks) == 1:
-                raise RuntimeError("boom")
-
-        monitor = PlaybackMonitor(on_tick=on_tick)
-        monitor._running = True
-
-        slept = self._run_loop(monitor, ticks, stop_after=2)
-
-        assert len(ticks) == 2
-        # Longer pause after the failure, normal interval after the good tick
-        assert slept == [ERROR_BACKOFF_SECONDS, INTERVAL_SECONDS]
-
-    def test_start_does_not_start_a_second_thread(self):
-        monitor = PlaybackMonitor(on_tick=Mock())
-
-        with patch("kbox.playback.monitor.threading.Thread") as thread_cls:
-            thread_cls.return_value.is_alive.return_value = True
-            monitor.start()
-            monitor.start()
-
-        thread_cls.assert_called_once()
-
-    def test_join_warns_when_the_thread_outlives_the_timeout(self, caplog):
-        monitor = PlaybackMonitor(on_tick=Mock())
-        monitor._thread = Mock()
-        monitor._thread.is_alive.return_value = True
-
-        monitor.join(timeout=0)
-
-        monitor._thread.join.assert_called_once_with(timeout=0)
-        assert "did not stop within timeout" in caplog.text

@@ -5,7 +5,6 @@ Handles song queue operations with persistence and content preparation.
 """
 
 import logging
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
+from .periodic import PeriodicThread
 
 if TYPE_CHECKING:
     from .loudness import LoudnessAnalyzer
@@ -20,6 +20,11 @@ if TYPE_CHECKING:
     from .silence_detection import TrailingSilenceAnalyzer
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
+
+# How often the content monitor looks for items to download/prepare.
+CONTENT_MONITOR_INTERVAL_SECONDS = 2.0
+# Wait longer after a pass raised, so a persistent failure doesn't spin.
+CONTENT_MONITOR_ERROR_BACKOFF_SECONDS = 5.0
 
 
 class MoveOutcome(Enum):
@@ -88,9 +93,12 @@ class QueueManager:
         self.logger = logging.getLogger(__name__)
 
         self._content_timeout = timedelta(minutes=10)
-        self._content_monitor_thread = None
-        self._monitoring = False
-        self._stop_event = threading.Event()
+        self._content_monitor = PeriodicThread(
+            self._process_pending_content,
+            interval_seconds=CONTENT_MONITOR_INTERVAL_SECONDS,
+            error_backoff_seconds=CONTENT_MONITOR_ERROR_BACKOFF_SECONDS,
+            name="ContentMonitor",
+        )
 
         # When the current content-preparation attempt for an item started,
         # keyed by item id. Tracks the active attempt (reset on every restart,
@@ -108,26 +116,7 @@ class QueueManager:
 
     def _start_content_monitor(self):
         """Start background thread to monitor queue and trigger content preparation."""
-        if self._monitoring:
-            return
-
-        self._monitoring = True
-        self._stop_event.clear()
-
-        def monitor():
-            while self._monitoring:
-                try:
-                    self._process_pending_content()
-                    self._stop_event.wait(2.0)
-                except Exception as e:
-                    self.logger.error("Error in content monitor: %s", e, exc_info=True)
-                    self._stop_event.wait(5.0)
-
-        self._content_monitor_thread = threading.Thread(
-            target=monitor, daemon=True, name="ContentMonitor"
-        )
-        self._content_monitor_thread.start()
-        self.logger.info("Content monitor started")
+        self._content_monitor.start()
 
     def _process_pending_content(self):
         """Process pending and stuck content preparations."""
@@ -258,20 +247,8 @@ class QueueManager:
                 self.logger.warning("Loudness analysis failed for item %s: %s", item_id, e)
 
     def stop_content_monitor(self):
-        """Stop the content monitor thread."""
-        if not self._monitoring:
-            return
-
-        self.logger.info("Stopping content monitor...")
-        self._monitoring = False
-        self._stop_event.set()
-
-        if self._content_monitor_thread and self._content_monitor_thread.is_alive():
-            self._content_monitor_thread.join(timeout=0.5)
-            if self._content_monitor_thread.is_alive():
-                self.logger.warning("Content monitor thread did not stop within timeout")
-
-        self.logger.info("Content monitor stopped")
+        """Stop the content monitor thread and wait for it to exit."""
+        self._content_monitor.stop()
 
     def _cleanup_storage(self) -> None:
         """Trigger storage cleanup with all queue items protected from eviction."""
