@@ -7,7 +7,17 @@ or request model drifts back into needing an application instance, these
 fail before the API tests do.
 """
 
+import importlib
 import inspect
+import pkgutil
+
+import pytest
+
+import kbox.web.routes
+
+# Every router module under kbox/web/routes/, discovered rather than listed,
+# so a newly added router is covered without anyone remembering to add it.
+ROUTER_MODULES = sorted(m.name for m in pkgutil.iter_modules(kbox.web.routes.__path__))
 
 
 def test_dependency_providers_import_without_an_app():
@@ -34,16 +44,17 @@ def test_dependency_providers_import_without_an_app():
         assert callable(getattr(dependencies, name)), name
 
 
-def test_routes_use_the_shared_dependency_providers():
+@pytest.mark.parametrize("module", ROUTER_MODULES)
+def test_routes_use_the_shared_dependency_providers(module):
     """Route handlers must depend on the providers in kbox.web.dependencies,
     not on private copies. Checked through FastAPI's resolved dependency
     graph, so it holds wherever a handler happens to live."""
     from kbox.web import dependencies
-    from kbox.web.routes.queue import router
 
+    router = importlib.import_module(f"kbox.web.routes.{module}").router
     shared = {f for _, f in inspect.getmembers(dependencies, inspect.isfunction)}
     used = {d.call for r in router.routes for d in r.dependant.dependencies}
-    assert used, "expected the queue routes to declare dependencies"
+    assert used, f"expected the {module} routes to declare dependencies"
     assert used <= shared, used - shared
 
 
@@ -91,14 +102,34 @@ def test_guest_auth_middleware_runs_without_create_app():
     assert client.get("/").json() == {"ok": True}
 
 
-def test_queue_router_carries_the_queue_routes_on_its_own():
-    """The queue routes live on a module-level APIRouter, so they can be
+@pytest.mark.parametrize(
+    "module, expected",
+    [
+        (
+            "queue",
+            {
+                ("/api/queue", "GET"),
+                ("/api/queue", "POST"),
+                ("/api/queue/{item_id}", "DELETE"),
+                ("/api/queue/clear", "POST"),
+            },
+        ),
+        (
+            "playback",
+            {
+                ("/api/playback/status", "GET"),
+                ("/api/playback/play", "POST"),
+                ("/api/playback/skip", "POST"),
+                ("/api/playback/seek", "POST"),
+            },
+        ),
+    ],
+)
+def test_router_carries_its_routes_on_its_own(module, expected):
+    """Each area's routes live on a module-level APIRouter, so they can be
     imported and inspected without building an app."""
-    from kbox.web.routes.queue import router
+    router = importlib.import_module(f"kbox.web.routes.{module}").router
 
     routes = {(r.path, m) for r in router.routes for m in r.methods}
-    assert ("/api/queue", "GET") in routes
-    assert ("/api/queue", "POST") in routes
-    assert ("/api/queue/{item_id}", "DELETE") in routes
-    assert ("/api/queue/clear", "POST") in routes
-    assert all(r.path.startswith("/api/queue") for r in router.routes)
+    assert expected <= routes
+    assert all(r.path.startswith(f"/api/{module}") for r in router.routes)
