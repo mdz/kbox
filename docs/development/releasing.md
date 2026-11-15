@@ -33,3 +33,12 @@ git push origin v0.3.0-rc.1
 git tag -a v0.3.0 -m "Verified at <event name>"
 git push origin v0.3.0
 ```
+
+## What a tag does automatically
+
+Pushing a tag (or publishing a GitHub release, which creates one) is the only
+step. The workflow builds and pushes the image and also re-syncs the Docker Hub
+overview from [docker-hub-overview.md](../../docker-hub-overview.md). The README
+and that overview deliberately name no specific version, so neither needs
+editing per release. Edit `docker-hub-overview.md` only when the instructions
+themselves change.

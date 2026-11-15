@@ -54,7 +54,7 @@ All settings are managed through the web UI with a schema-driven settings panel:
 
 ## Quick Start (Docker)
 
-Multi-arch (amd64 and arm64, so Raspberry Pi works) images are published to Docker Hub as [`mdzz/kbox`](https://hub.docker.com/r/mdzz/kbox) for each tagged release. Tags follow the release version (`0.1.0`, `0.1`, `0`); `latest` points at the newest non-pre-release version, so until a stable release exists (currently only `0.1.0-alpha.2`), pull an explicit version tag.
+Multi-arch (amd64 and arm64, so Raspberry Pi works) images are published to Docker Hub as [`mdzz/kbox`](https://hub.docker.com/r/mdzz/kbox) for each tagged release. Tags follow the release version (`0.1.0`, `0.1`, `0`); `latest` points at the newest non-pre-release version, so use `latest` for the newest verified release or pick an exact version from the [tags page](https://hub.docker.com/r/mdzz/kbox/tags). Replace `<version>` below accordingly.
 
 ```bash
 docker run -d --name kbox --restart unless-stopped \
@@ -62,7 +62,7 @@ docker run -d --name kbox --restart unless-stopped \
   -p 8000:8000 \
   -v kbox-data:/root/.kbox \
   -v kbox-library:/root/.kbox/library \
-  mdzz/kbox:0.1.0-alpha.2
+  mdzz/kbox:<version>
 ```
 
 Or build from source with Compose:
