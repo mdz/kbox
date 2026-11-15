@@ -162,6 +162,7 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
         "state": "idle",
         "current_song": None,
         "position_seconds": 0,
+        "remaining_seconds": 0,
         "duration_seconds": 0,
     }
 

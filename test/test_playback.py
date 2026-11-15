@@ -603,14 +603,17 @@ def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_strea
 
 def test_get_status(playback_controller, mock_queue_manager):
     """Test getting playback status returns properly serialized dict."""
-    song = create_mock_queue_item(id=1, title="Test Song")
+    song = create_mock_queue_item(id=1, title="Test Song", duration_seconds=180)
     playback_controller.current_song_id = 1
     playback_controller.state = PlaybackState.PLAYING
+    playback_controller.streaming_controller.get_position.return_value = 30
 
     # Mock get_item to return song data
     mock_queue_manager.get_item.return_value = song
 
     status = playback_controller.get_status()
+
+    assert status["remaining_seconds"] == 150
 
     assert status["state"] == "playing"
     # current_song should be a dict (for JSON serialization), not a QueueItem object

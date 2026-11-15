@@ -247,6 +247,35 @@ def test_get_song_at_offset(queue_manager, test_users):
     assert queue_manager.get_song_at_offset(None, 0) is None
 
 
+def test_get_upcoming(queue_manager, test_users):
+    """Songs after the reference song, with cumulative wait estimates."""
+    alice, bob = test_users["alice"], test_users["bob"]
+    id1 = queue_manager.add_song(alice, "youtube:vid1", "Song 1", duration_seconds=100)
+    id2 = queue_manager.add_song(bob, "youtube:vid2", "Song 2", duration_seconds=200)
+    id3 = queue_manager.add_song(alice, "youtube:vid3", "Song 3", duration_seconds=300)
+
+    # No cursor: whole queue is upcoming
+    upcoming = queue_manager.get_upcoming(None)
+    assert [(u.item.id, u.position, u.wait_seconds) for u in upcoming] == [
+        (id1, 1, 0),
+        (id2, 2, 100),
+        (id3, 3, 300),
+    ]
+
+    # Cursor on song 1 with 40s left: songs 2 and 3 follow it
+    upcoming = queue_manager.get_upcoming(id1, current_remaining_seconds=40)
+    assert [(u.item.id, u.position, u.wait_seconds) for u in upcoming] == [
+        (id2, 1, 40),
+        (id3, 2, 240),
+    ]
+
+    # Cursor on the last song: nothing upcoming
+    assert queue_manager.get_upcoming(id3) == []
+
+    # Cursor song no longer in the queue: whole queue is upcoming
+    assert [u.item.id for u in queue_manager.get_upcoming(9999)] == [id1, id2, id3]
+
+
 def test_update_content_status(queue_manager, test_users):
     """Test updating download status."""
     item_id = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")

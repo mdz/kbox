@@ -350,6 +350,7 @@ class TestQueueEndpoints:
             "state": "playing",
             "current_song": {"id": id1},
             "position_seconds": 30,
+            "remaining_seconds": 90,
             "duration_seconds": 120,
         }
 
@@ -381,6 +382,7 @@ class TestQueueEndpoints:
             "state": "playing",
             "current_song": {"id": id1, "duration_seconds": 120},
             "position_seconds": 30,
+            "remaining_seconds": 90,
             "duration_seconds": 120,
         }
 
@@ -1563,6 +1565,7 @@ class TestPitchEndpoint:
                 "title": "Test Song",
             },
             "position_seconds": 60,
+            "remaining_seconds": 120,
             "duration_seconds": 180,
         }
         app_components["playback"].set_pitch.return_value = True

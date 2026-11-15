@@ -46,6 +46,7 @@ def _mock_playback():
         "state": PlaybackState.IDLE.value,
         "current_song": None,
         "position_seconds": 0,
+        "remaining_seconds": 0,
         "duration_seconds": 0,
     }
     playback.get_cursor.return_value = None

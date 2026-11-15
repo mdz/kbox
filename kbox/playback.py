@@ -1556,10 +1556,16 @@ class PlaybackController:
                 current_song["song_name"] = queue_item.metadata.song_name
                 current_song["pitch_semitones"] = queue_item.settings.pitch_semitones
 
+        # Time left in the current song, for wait estimates on upcoming songs
+        remaining = 0
+        if current_song:
+            remaining = max(0, (current_song["duration_seconds"] or 0) - (position or 0))
+
         status = {
             "state": state.value,
             "current_song": current_song,
             "position_seconds": position,
+            "remaining_seconds": remaining,
         }
         return status
 
