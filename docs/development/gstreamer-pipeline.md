@@ -574,7 +574,7 @@ pipeline with a bus worth watching, give it a poller; do not reach for a signal
 watch unless you are also introducing a main loop, which is a much larger
 change to how the app runs.
 
-`_stop_bus_polling()` stops and joins every watcher, and each loop re-reads
+`stop_bus_polling()` stops and joins every watcher, and each loop re-reads
 its bus every pass so that teardown setting `self.playbin = None` ends the loop
 rather than crashing it.
 
