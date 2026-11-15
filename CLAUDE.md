@@ -11,10 +11,9 @@ PRs are **squash merged** into `main`. A squash rewrites the SHA, so every
 branch stacked on top of a merged PR is instantly based on a commit that is
 not an ancestor of `main` and has to be rebased by hand.
 
-So when a piece of work splits into several small sequential PRs, do **not**
-open the whole stack up front. Open one PR, get it merged, rebase/branch the
-next from the new `main`, and repeat. The small-PR preference is about the
-size of each PR, not about having them all in flight at once.
+So when a piece of work splits into several sequential PRs, do **not** open
+the whole stack up front. Open one PR, get it merged, rebase/branch the next
+from the new `main`, and repeat.
 
 ## What NOT to do
 
