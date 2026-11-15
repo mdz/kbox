@@ -195,7 +195,9 @@ class KboxServer:
         qr_dir = str(self.config_manager.get_app_data_dir())
         qr_path = generate_qr_code(qr_url, output_dir=qr_dir, size=100)
         if qr_path:
-            self.streaming_controller.update_qr_overlay(qr_path)
+            # Through the playback controller, under its lock, so this cannot
+            # land in the middle of a config-change pipeline rebuild.
+            self.playback_controller.update_qr_overlay(qr_path)
             logger.info("QR code overlay configured: %s", qr_url)
         else:
             logger.warning("QR code generation failed, overlay disabled")

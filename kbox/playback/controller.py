@@ -678,7 +678,7 @@ class PlaybackController:
         self._overlay.set_base("")  # Clear the singer/up next overlay
         # Note: current_song_id is NOT cleared - we remember the song for resume
         self._set_state(PlaybackState.STOPPED, "stopped by operator")
-        self.show_idle_screen()
+        self._show_idle_screen_locked()
 
     def stop_playback(self) -> bool:
         """
@@ -690,25 +690,67 @@ class PlaybackController:
             True if stopped, False otherwise
         """
         with self._locked():
-            # Cancel any pending transition
-            if self._transition_timer:
-                self._transition_timer.cancel()
-                self._transition_timer = None
-            self._next_song_pending = None
+            return self._stop_playback_locked()
 
-            if self.state in (PlaybackState.IDLE, PlaybackState.STOPPED):
-                self.logger.debug("Already stopped, nothing to stop")
-                return False
+    def _stop_playback_locked(self) -> bool:
+        """stop_playback() for a caller that already holds the lock."""
+        self._require_locked()
 
-            self.logger.info("Stopping playback")
-            try:
-                # An explicit operator stop overrides any pending auto-resume
-                self._awaiting_replace_item_id = None
-                self._stop_internal()
-                return True
-            except Exception as e:
-                self.logger.error("Error stopping playback: %s", e, exc_info=True)
-                return False
+        # Cancel any pending transition
+        if self._transition_timer:
+            self._transition_timer.cancel()
+            self._transition_timer = None
+        self._next_song_pending = None
+
+        if self.state in (PlaybackState.IDLE, PlaybackState.STOPPED):
+            self.logger.debug("Already stopped, nothing to stop")
+            return False
+
+        self.logger.info("Stopping playback")
+        try:
+            # An explicit operator stop overrides any pending auto-resume
+            self._awaiting_replace_item_id = None
+            self._stop_internal()
+            return True
+        except Exception as e:
+            self.logger.error("Error stopping playback: %s", e, exc_info=True)
+            return False
+
+    def apply_streaming_config(self) -> None:
+        """
+        Stop playback, rebuild the pipeline with fresh config, show idle.
+
+        Called when an operator changes a setting the GStreamer pipeline
+        only reads at build time (audio device, QR geometry, ...).
+
+        All three steps run under ONE hold of self.lock. Done as three
+        separate calls, another request thread could slip in between them:
+        an operator Play landing after the stop would start a song that the
+        rebuild then silently kills, leaving this controller in PLAYING
+        over an idle pipeline; and the idle screen would be drawn over
+        whatever state that left behind.
+
+        The cost is that get_status() polls, and every other playback
+        operation, block for the length of the teardown and rebuild. That
+        is acceptable for a rare, operator-initiated config change, and is
+        the point: nothing else should touch playback while the pipeline
+        it drives does not exist.
+
+        Raises whatever reinitialize_pipeline() raises, so the caller can
+        report that the setting was saved but not applied.
+        """
+        # Join the bus watcher threads BEFORE taking self.lock. A watcher
+        # can be inside the EOS callback (on_song_end) waiting for self.lock;
+        # joining it while holding the lock would stall for the join timeout
+        # and strand that thread. reinitialize_pipeline() joins them too,
+        # but by then there are none left, and it starts fresh ones. See the
+        # lock-ordering note in StreamingController.__init__.
+        self.streaming_controller.stop_bus_polling()
+
+        with self._locked():
+            self._stop_playback_locked()
+            self.streaming_controller.reinitialize_pipeline()
+            self._show_idle_screen_locked()
 
     def _navigate(self, offset: int, record_history: bool) -> bool:
         """
@@ -1019,7 +1061,7 @@ class PlaybackController:
         # Stop playback so operator can investigate
         self._set_state(PlaybackState.STOPPED, f"error: {error_message}")
         self.current_song_id = None
-        self.show_idle_screen()
+        self._show_idle_screen_locked()
 
     def on_song_end(self):
         """Called when current song ends (EOS)."""
@@ -1199,7 +1241,28 @@ class PlaybackController:
 
     def show_idle_screen(self):
         """Show the idle screen interstitial with QR code instructions."""
+        with self._locked():
+            self._show_idle_screen_locked()
+
+    def _show_idle_screen_locked(self):
+        """show_idle_screen() for a caller that already holds the lock."""
+        self._require_locked()
         self._screens.show_idle()
+
+    def update_qr_overlay(self, image_path: str):
+        """
+        Point the display's QR overlay at a new image.
+
+        Goes through here, under self.lock, rather than straight to the
+        streaming controller, so it cannot interleave with
+        apply_streaming_config(). A rebuild replaces the OverlayController,
+        copying the old one's QR path into the new one; a QR update landing
+        mid-rebuild could record its path on the old, discarded controller
+        after that copy, leaving the previous QR -- for a token that has
+        just been revoked -- on screen.
+        """
+        with self._locked():
+            self.streaming_controller.update_qr_overlay(image_path)
 
     def get_status(self) -> PlaybackStatus:
         """

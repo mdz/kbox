@@ -885,15 +885,9 @@ def create_app(
             try:
                 logger.info("Applying streaming config change: %s", request_data.key)
 
-                # Stop playback
-                playback.stop_playback()
-
-                # Reinitialize the pipeline with new config
-                streaming = request.app.state.streaming_controller
-                streaming.reinitialize_pipeline()
-
-                # Show idle screen so display stays active
-                playback.show_idle_screen()
+                # Stop, rebuild and show idle as one locked step, so no other
+                # request can touch playback while the pipeline is gone.
+                playback.apply_streaming_config()
 
                 logger.info("Streaming configuration applied successfully")
 

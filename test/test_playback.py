@@ -2114,3 +2114,103 @@ class TestLockingContract:
 
         assert playback_controller._lock_owner is None
         assert not playback_controller.lock.locked()
+
+
+class TestStreamingConfigRebuildLocking:
+    """The config-change rebuild, and things that must not interleave with it,
+    run under the playback lock."""
+
+    def _record_lock_owner(self, playback_controller, calls, name):
+        def side_effect(*args, **kwargs):
+            calls.append((name, playback_controller._lock_owner == threading.get_ident()))
+
+        return side_effect
+
+    def test_apply_streaming_config_runs_all_steps_under_one_lock_hold(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """Stop, rebuild and idle screen happen in order, all with the lock held."""
+        song = create_mock_queue_item(id=5)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+        playback_controller.play()
+        assert playback_controller.state == PlaybackState.PLAYING
+
+        calls: list[tuple[str, bool]] = []
+        for name in ("stop_playback", "reinitialize_pipeline", "display_image"):
+            getattr(mock_streaming_controller, name).side_effect = self._record_lock_owner(
+                playback_controller, calls, name
+            )
+        mock_streaming_controller.display_image.reset_mock()
+
+        playback_controller.apply_streaming_config()
+
+        names = [name for name, _ in calls]
+        assert names[0] == "stop_playback"
+        assert "reinitialize_pipeline" in names
+        # The idle screen is drawn after the rebuild, onto the new pipeline.
+        assert names[-1] == "display_image"
+        assert names.index("reinitialize_pipeline") < len(names) - 1
+        assert all(held for _, held in calls), calls
+        assert playback_controller.state == PlaybackState.STOPPED
+        assert playback_controller._lock_owner is None
+
+    def test_apply_streaming_config_joins_bus_watchers_before_taking_lock(
+        self, playback_controller, mock_streaming_controller
+    ):
+        """Bus watchers are joined outside the lock: one may be blocked in the
+        EOS callback waiting for it."""
+        calls: list[tuple[str, bool]] = []
+        mock_streaming_controller.stop_bus_polling.side_effect = self._record_lock_owner(
+            playback_controller, calls, "stop_bus_polling"
+        )
+        mock_streaming_controller.reinitialize_pipeline.side_effect = self._record_lock_owner(
+            playback_controller, calls, "reinitialize_pipeline"
+        )
+
+        playback_controller.apply_streaming_config()
+
+        assert calls == [("stop_bus_polling", False), ("reinitialize_pipeline", True)]
+
+    def test_apply_streaming_config_when_idle_still_rebuilds(
+        self, playback_controller, mock_streaming_controller
+    ):
+        """Nothing playing: no stop needed, but the rebuild and idle screen happen."""
+        playback_controller.apply_streaming_config()
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+        mock_streaming_controller.reinitialize_pipeline.assert_called_once()
+        mock_streaming_controller.display_image.assert_called()
+
+    def test_apply_streaming_config_propagates_rebuild_failure_and_releases_lock(
+        self, playback_controller, mock_streaming_controller
+    ):
+        """The route reports a failed rebuild, so it must see the exception."""
+        mock_streaming_controller.reinitialize_pipeline.side_effect = RuntimeError("no device")
+
+        with pytest.raises(RuntimeError, match="no device"):
+            playback_controller.apply_streaming_config()
+
+        assert not playback_controller.lock.locked()
+        assert playback_controller._lock_owner is None
+
+    def test_show_idle_screen_takes_lock(self, playback_controller, mock_streaming_controller):
+        calls: list[tuple[str, bool]] = []
+        mock_streaming_controller.display_image.side_effect = self._record_lock_owner(
+            playback_controller, calls, "display_image"
+        )
+
+        playback_controller.show_idle_screen()
+
+        assert calls == [("display_image", True)]
+
+    def test_update_qr_overlay_takes_lock(self, playback_controller, mock_streaming_controller):
+        calls: list[tuple[str, bool]] = []
+        mock_streaming_controller.update_qr_overlay.side_effect = self._record_lock_owner(
+            playback_controller, calls, "update_qr_overlay"
+        )
+
+        playback_controller.update_qr_overlay("/tmp/qr.png")
+
+        assert calls == [("update_qr_overlay", True)]
+        mock_streaming_controller.update_qr_overlay.assert_called_once_with("/tmp/qr.png")
