@@ -12,7 +12,6 @@ import itsdangerous
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -26,6 +25,33 @@ from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine, SuggestionError
 from ..user import UserManager
 from ..video_library import VideoLibrary
+from .dependencies import (
+    check_operator,
+    get_config_manager,
+    get_current_user_id,
+    get_event_repo,
+    get_favorites_manager,
+    get_history_manager,
+    get_playback_controller,
+    get_queue_manager,
+    get_search_suggester,
+    get_suggestion_engine,
+    get_user_manager,
+    get_video_library,
+    require_user,
+)
+from .models import (
+    AddFavoriteRequest,
+    AddSongRequest,
+    ConfigUpdateRequest,
+    OperatorAuthRequest,
+    PitchRequest,
+    ReorderRequest,
+    ReplaceSongRequest,
+    SeekRequest,
+    UpdateQueueItemRequest,
+    UserRequest,
+)
 from .serializers import serialize_queue_item
 
 logger = logging.getLogger(__name__)
@@ -90,163 +116,6 @@ class ClockTolerantSessionMiddleware(SessionMiddleware):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.signer.__class__ = _ClockTolerantTimestampSigner
-
-
-# Request models
-class AddSongRequest(BaseModel):
-    user_id: str  # UUID for identity
-    video_id: str  # Opaque video ID like "youtube:abc123"
-    title: str
-    duration_seconds: Optional[int] = None
-    thumbnail_url: Optional[str] = None
-    channel: Optional[str] = None
-    pitch_semitones: int = 0
-
-
-class ReplaceSongRequest(BaseModel):
-    """Request model for replacing a queue item's video in place."""
-
-    video_id: str  # Opaque video ID like "youtube:abc123"
-    title: str
-    duration_seconds: Optional[int] = None
-    thumbnail_url: Optional[str] = None
-    channel: Optional[str] = None
-
-
-class ReorderRequest(BaseModel):
-    new_position: int
-
-
-class PitchRequest(BaseModel):
-    semitones: int
-    user_id: str  # UUID for identity
-
-
-class UpdateQueueItemRequest(BaseModel):
-    """Request model for updating queue item properties."""
-
-    pitch_semitones: Optional[int] = None
-    user_id: Optional[str] = None  # UUID for permission checking
-
-
-class UserRequest(BaseModel):
-    """Request model for user registration/update."""
-
-    user_id: str  # UUID
-    display_name: str
-
-
-class OperatorAuthRequest(BaseModel):
-    pin: str
-
-
-class ConfigUpdateRequest(BaseModel):
-    key: str
-    value: str
-
-
-class SeekRequest(BaseModel):
-    delta_seconds: int
-
-
-class AddFavoriteRequest(BaseModel):
-    """Request model for starring a song."""
-
-    video_id: str  # Opaque video ID like "youtube:abc123"
-    title: str
-    duration_seconds: Optional[int] = None
-    thumbnail_url: Optional[str] = None
-    channel: Optional[str] = None
-
-
-# Dependency to get components
-def get_queue_manager(request: Request) -> QueueManager:
-    """Get QueueManager from app state."""
-    return request.app.state.queue_manager
-
-
-def get_video_library(request: Request) -> VideoLibrary:
-    """Get VideoLibrary from app state."""
-    return request.app.state.video_library
-
-
-def get_playback_controller(request: Request) -> PlaybackController:
-    """Get PlaybackController from app state."""
-    return request.app.state.playback_controller
-
-
-def get_config_manager(request: Request) -> ConfigManager:
-    """Get ConfigManager from app state."""
-    return request.app.state.config_manager
-
-
-def get_streaming_controller(request: Request) -> StreamingController:
-    """Get StreamingController from app state."""
-    return request.app.state.streaming_controller
-
-
-def get_user_manager(request: Request) -> UserManager:
-    """Get UserManager from app state."""
-    return request.app.state.user_manager
-
-
-def get_history_manager(request: Request):
-    """Get HistoryManager from app state."""
-    return request.app.state.history_manager
-
-
-def get_suggestion_engine(request: Request) -> SuggestionEngine:
-    """Get SuggestionEngine from app state."""
-    return request.app.state.suggestion_engine
-
-
-def get_favorites_manager(request: Request):
-    """Get FavoritesManager from app state."""
-    return request.app.state.favorites_manager
-
-
-def get_search_suggester(request: Request) -> SearchSuggester:
-    """Get SearchSuggester from app state."""
-    return request.app.state.search_suggester
-
-
-def get_event_repo(request: Request) -> EventRepository:
-    """Get EventRepository, lazily created from the database."""
-    if not hasattr(request.app.state, "_event_repo"):
-        db = request.app.state.history_manager.database
-        request.app.state._event_repo = EventRepository(db)
-    return request.app.state._event_repo
-
-
-def check_operator(request: Request) -> bool:
-    """
-    Check if user is authenticated as operator.
-    """
-    return request.session.get("operator", False)
-
-
-def get_current_user_id(request: Request) -> Optional[str]:
-    """Get current user ID from session, or None if not authenticated."""
-    return request.session.get("user_id")
-
-
-def require_user(request: Request) -> str:
-    """
-    Require authenticated user, returning their user ID.
-
-    Raises HTTPException 401 if user is not authenticated (no user_id in session).
-    Guest identity here is self-declared and unverified, by design (see
-    docs/development/guest-identity.md) — this just requires *some* identity
-    to be bound to the session before allowing a write; it's not proof of
-    who that identity belongs to.
-    """
-    user_id = request.session.get("user_id")
-    if not user_id:
-        raise HTTPException(
-            status_code=401,
-            detail="Not authenticated. Please refresh the page.",
-        )
-    return user_id
 
 
 def create_app(

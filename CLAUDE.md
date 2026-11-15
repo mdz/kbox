@@ -5,6 +5,16 @@
 1. Add new files with `git add <specific-file>` before committing
 2. Commit with `git commit -a` (all modified tracked files) or `git commit <files>` (subset)
 
+## Pull Requests
+
+PRs are **squash merged** into `main`. A squash rewrites the SHA, so every
+branch stacked on top of a merged PR is instantly based on a commit that is
+not an ancestor of `main` and has to be rebased by hand.
+
+So when a piece of work splits into several sequential PRs, do **not** open
+the whole stack up front. Open one PR, get it merged, rebase/branch the next
+from the new `main`, and repeat.
+
 ## What NOT to do
 
 - NEVER use `git add -A`, `git add .`, or `git add --all`
