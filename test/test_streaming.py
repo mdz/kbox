@@ -112,6 +112,43 @@ def test_video_3s():
     return str(video_path)
 
 
+@pytest.fixture(scope="session")
+def test_video_3s_decodable(tmp_path_factory):
+    """
+    A 3-second VP8/Vorbis WebM whose video every test environment can decode.
+
+    The libx264 fixtures above decode on a dev machine with gst-libav, but
+    the Docker image CI runs in has no H.264 decoder, so there they play as
+    audio only and no frame ever reaches the display bridge. Tests that need
+    real frames crossing the bridge use this one: vp8dec is in plugins-good.
+    """
+    video_path = tmp_path_factory.mktemp("video") / "test_3s.webm"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=d=3:s=320x240:r=30",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=f=440:d=3",
+            "-c:v",
+            "libvpx",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "libvorbis",
+            "-shortest",
+            str(video_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return str(video_path)
+
+
 @pytest.fixture
 def mock_config_manager():
     """Create a ConfigManager backed by a real temp-file database.
@@ -283,7 +320,7 @@ def _still_image_state(controller):
     return state
 
 
-def test_pause_holds_last_frame_on_display_bridge(controller, test_video_3s):
+def test_pause_holds_last_frame_on_display_bridge(controller, test_video_3s_decodable):
     """
     Pausing must not starve the display bridge.
 
@@ -293,7 +330,7 @@ def test_pause_holds_last_frame_on_display_bridge(controller, test_video_3s):
     frame going itself, the way interstitials keep their image going.
     """
     Gst = _get_gst()
-    controller.load_file(test_video_3s)
+    controller.load_file(test_video_3s_decodable)
     # load_file waits for PLAYING, which needs a prerolled frame, so one has
     # already crossed the bridge.
     assert controller._last_video_sample is not None
@@ -305,10 +342,10 @@ def test_pause_holds_last_frame_on_display_bridge(controller, test_video_3s):
     assert controller.still_image.pipeline is None
 
 
-def test_seek_while_paused_holds_the_new_frame(controller, test_video_3s):
+def test_seek_while_paused_holds_the_new_frame(controller, test_video_3s_decodable):
     """A seek while paused replaces the held frame with one from the new position."""
     Gst = _get_gst()
-    controller.load_file(test_video_3s)
+    controller.load_file(test_video_3s_decodable)
     controller.pause()
     held_before = controller._last_video_sample
 
@@ -319,9 +356,9 @@ def test_seek_while_paused_holds_the_new_frame(controller, test_video_3s):
     controller.resume()
 
 
-def test_stop_playback_while_paused_drops_the_held_frame(controller, test_video_3s):
+def test_stop_playback_while_paused_drops_the_held_frame(controller, test_video_3s_decodable):
     """Stopping from pause drops the hold and the cached frame with the song."""
-    controller.load_file(test_video_3s)
+    controller.load_file(test_video_3s_decodable)
     controller.pause()
 
     controller.stop_playback()
