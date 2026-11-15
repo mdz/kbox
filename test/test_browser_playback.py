@@ -134,7 +134,7 @@ def test_display_song_ended_endpoint(temp_db, user_manager):
     from kbox.history import HistoryManager
     from kbox.playback import PlaybackController, PlaybackState, PlaybackStatus
     from kbox.video_library import VideoLibrary
-    from kbox.web.server import create_app
+    from kbox.web.app import create_app
 
     config = ConfigManager(temp_db)
     config.set("youtube_api_key", "test_key")

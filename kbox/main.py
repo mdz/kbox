@@ -33,7 +33,7 @@ from .suggestions import SuggestionEngine
 from .user import UserManager
 from .video_library import VideoLibrary
 from .video_source import YouTubeSource
-from .web.server import create_app
+from .web.app import create_app
 from .youtube import YouTubeAPI
 from .ytdlp import YtDlpClient
 

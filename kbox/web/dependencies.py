@@ -2,7 +2,7 @@
 FastAPI dependency providers for the kbox HTTP API.
 
 Every collaborator a route handler needs is reachable from
-``request.app.state``, which :func:`kbox.web.server.create_app` populates.
+``request.app.state``, which :func:`kbox.web.app.create_app` populates.
 Routers depend on these providers rather than on the app object, so a router
 module can be imported and inspected without building an application.
 """
@@ -10,6 +10,7 @@ module can be imported and inspected without building an application.
 from typing import Optional
 
 from fastapi import HTTPException, Request
+from fastapi.templating import Jinja2Templates
 
 from ..config_manager import ConfigManager
 from ..database import EventRepository
@@ -70,6 +71,11 @@ def get_favorites_manager(request: Request):
 def get_search_suggester(request: Request) -> SearchSuggester:
     """Get SearchSuggester from app state."""
     return request.app.state.search_suggester
+
+
+def get_templates(request: Request) -> Jinja2Templates:
+    """Get the page templates from app state."""
+    return request.app.state.templates
 
 
 def get_event_repo(request: Request) -> EventRepository:

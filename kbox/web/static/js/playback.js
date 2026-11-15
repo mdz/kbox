@@ -5,7 +5,7 @@
 import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
-import { toggleControlsLock } from './controls.js';
+import { toggleControlsLock, pitchLockLabel } from './controls.js';
 
 // Track the currently displayed song to detect song changes
 let currentDisplayedSongId = null;
@@ -253,7 +253,7 @@ export function renderNowPlaying(statusData) {
         // Update lock button
         const lockButton = document.getElementById('now-playing-lock-button');
         if (lockButton) {
-            lockButton.innerHTML = controlsLocked ? '🔒 Unlock Controls' : '🔓 Lock Controls';
+            lockButton.innerHTML = pitchLockLabel(controlsLocked);
             lockButton.style.background = controlsLocked ? '#555' : '#666';
         }
         return;
@@ -311,13 +311,8 @@ export function renderNowPlaying(statusData) {
         lockButton.onclick = toggleControlsLock;
         lockButton.style.cssText = 'width: 100%; margin-top: 15px; padding: 12px; font-size: 16px;';
 
-        if (controlsLocked) {
-            lockButton.innerHTML = '🔒 Unlock Controls';
-            lockButton.style.background = '#555';
-        } else {
-            lockButton.innerHTML = '🔓 Lock Controls';
-            lockButton.style.background = '#666';
-        }
+        lockButton.innerHTML = pitchLockLabel(controlsLocked);
+        lockButton.style.background = controlsLocked ? '#555' : '#666';
 
         container.appendChild(lockButton);
     }

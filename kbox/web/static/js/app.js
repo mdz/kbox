@@ -8,7 +8,8 @@ import { escapeHtml } from './utils.js';
 import {
     saveUserName, checkOperatorStatus, showOperatorPinModal, cancelOperatorPin,
     submitOperatorPin, promptOperatorAuth, updateOperatorButton,
-    initializeUserIdentity, setupPinInputHandler, chooseNewIdentity
+    initializeUserIdentity, setupPinInputHandler, chooseNewIdentity,
+    showChangeNameModal, cancelChangeName
 } from './auth.js';
 import { adjustPitch } from './pitch.js';
 import { toggleControlsLock, togglePlaybackControlsLock, resetPlaybackAutoLockTimer } from './controls.js';
@@ -35,6 +36,8 @@ import { loadFavorites, showFavoritesModal, hideFavoritesModal } from './favorit
 // Auth
 window.saveUserName = saveUserName;
 window.chooseNewIdentity = chooseNewIdentity;
+window.showChangeNameModal = showChangeNameModal;
+window.cancelChangeName = cancelChangeName;
 window.showOperatorPinModal = showOperatorPinModal;
 window.cancelOperatorPin = cancelOperatorPin;
 window.submitOperatorPin = submitOperatorPin;

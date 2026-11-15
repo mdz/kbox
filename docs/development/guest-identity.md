@@ -93,7 +93,7 @@ days of actual Safari usage** without a first-party visit to the site — a
 deliberate anti-tracking feature, not a disk-space measure, but it produces
 exactly this symptom, and guests returning months apart are far past that
 window. This was checked against the code directly: kbox's own registration
-logic (`/api/users` in `kbox/web/server.py`) already falls back correctly to
+logic (`/api/users` in `kbox/web/routes/users.py`) already falls back correctly to
 the client's stored UUID whenever the server-side session has expired, so
 the churn isn't a bug in that fallback path — it only fails when
 `localStorage` itself is gone. Consistent with this: the operator's own
@@ -358,3 +358,25 @@ Vlad/Lessa's within-night churn becomes a re-prompt rather than silent loss;
 renaming is unsupported). Not yet addressed: the concrete UI for the
 collision-recognition list (icon picker, context shown), and the one-time
 migration plan for existing duplicate identities.
+
+## Switching identity ("Not you?")
+
+The guest page shows "Singing as <name> · Not you?" at the top. Tapping it
+reopens the name prompt (with a Cancel button) and runs the same flow as a
+first visit: `lookupCandidates` and, on a match, the recognition list, then
+`claimUser`.
+
+Choices made, and why:
+
+- **Queued songs stay with the old identity.** A queue entry belongs to the
+  UUID that added it, so switching does not move anything. The usual reason to
+  switch is a shared phone, where those songs really are the previous person's;
+  moving them would silently hand one guest's turn to another. Whoever
+  switches back (by typing the old name and picking it from the recognition
+  list) gets them back, along with their favorites and history.
+- **A typed name with no match creates a new identity**, rather than renaming
+  the current one. Renaming is a different action (fixing a typo) and is not
+  offered here.
+- **The page reloads after a switch.** Queue ownership, favorites, history and
+  the polling session are all keyed to the old identity; a reload re-derives
+  them from the newly stored one instead of patching each piece.

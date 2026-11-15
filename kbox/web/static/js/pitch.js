@@ -7,7 +7,7 @@ import { userId } from './state.js';
 // Convert semitones to musical interval name
 export function getIntervalName(semitones) {
     const intervals = {
-        0: 'Unison',
+        0: 'Original key',
         1: 'Minor Second',
         2: 'Major Second',
         3: 'Minor Third',

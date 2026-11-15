@@ -13,7 +13,7 @@ not; the ones that genuinely are judgement calls say so.
 ```mermaid
 flowchart LR
     GUEST[/guest types/] --> JS[search.js<br/>debounce + max wait]
-    JS -->|GET /api/search/suggest| API[server.py<br/>min length gate]
+    JS -->|GET /api/search/suggest| API[routes/search.py<br/>min length gate]
     API --> SS[SearchSuggester<br/>cache, single-flight, breaker]
     SS -->|miss| GOOG[suggestqueries.google.com<br/>client=firefox&ds=yt]
     SS -->|strings| API
