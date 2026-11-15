@@ -21,6 +21,16 @@ import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
 // Used for search results and suggestions - selecting a row always goes
 // through showAddSongModal, which adds or replaces depending on whether
 // a replace target is currently set (see state.js: currentSelectionTarget).
+// m:ss (h:mm:ss for an hour or more); empty when the length is unknown.
+function formatDuration(totalSeconds) {
+    const secs = Math.round(Number(totalSeconds));
+    if (!Number.isFinite(secs) || secs <= 0) return '';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = String(secs % 60).padStart(2, '0');
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
 function renderResultsList(container, videos) {
     container.innerHTML = '';
     videos.forEach(video => {
@@ -28,12 +38,15 @@ function renderResultsList(container, videos) {
         div.className = 'search-result';
         div.tabIndex = 0;
         div.setAttribute('role', 'button');
-        div.setAttribute('aria-label', `Select ${video.title} by ${video.channel}`);
+        const duration = formatDuration(video.duration_seconds);
+        const details = [video.channel, duration].filter(Boolean).join(' · ');
+        div.setAttribute('aria-label',
+            `Select ${video.title}${details ? ` (${details})` : ''}`);
         div.innerHTML = `
             <img src="${escapeHtml(video.thumbnail)}" alt="${escapeHtml(video.title)}" />
             <div class="search-result-info">
                 <div class="search-result-title">${escapeHtml(video.title)}</div>
-                <div class="search-result-channel">${escapeHtml(video.channel)}</div>
+                <div class="search-result-channel">${escapeHtml(details)}</div>
             </div>
             ${renderFavoriteStar(video)}
         `;
