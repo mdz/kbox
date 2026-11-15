@@ -403,6 +403,24 @@ def test_create_pitch_shift_falls_back_to_identity_when_unavailable(controller, 
     assert type(result).__name__ == "GstIdentity"
 
 
+@pytest.fixture
+def signalsmith_elem(controller):
+    """A native signalsmithpitch element at 0 semitones.
+
+    Fails, never skips, when the plugin is unavailable, so missing coverage
+    shows up red rather than silently vanishing.
+    """
+    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
+    assert elem is not None, (
+        "signalsmithpitch plugin not available -- `uv sync` builds it, but "
+        "won't retry a failed build by itself: run "
+        "native/gst-signalsmith-pitch/build.sh to see why it failed (needs a C++ "
+        "compiler, pkg-config and the GStreamer dev packages), or check the "
+        "Docker image build"
+    )
+    return elem
+
+
 def _estimate_frequency_hz(pcm_bytes: bytes, channels: int, sample_rate: int) -> float:
     """Estimate the dominant frequency of one channel via zero-crossing rate."""
     import array
@@ -481,68 +499,43 @@ def _run_pitch_element_and_measure_frequency(
     return _estimate_frequency_hz(b"".join(chunks), channels=channels, sample_rate=sample_rate)
 
 
-def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
+def test_signalsmith_pitch_shift_actually_shifts_frequency(signalsmith_elem):
     """The native signalsmith element should genuinely change pitch, not just pass audio through."""
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- `uv sync` builds it, but "
-        "won't retry a failed build by itself: run "
-        "native/gst-signalsmith-pitch/build.sh to see why it failed (needs a C++ "
-        "compiler, pkg-config and the GStreamer dev packages), or check the "
-        "Docker image build"
-    )
-
-    semitones = 12  # one octave up -> should double the frequency
-    input_freq = 220.0
-    measured_freq = _run_pitch_element_and_measure_frequency(elem, semitones, input_freq)
-
-    expected_freq = input_freq * (2 ** (semitones / 12))
-    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
-
-
-def test_signalsmith_pitch_shift_mono_channel(controller):
-    """The element declares support for any channel count (see caps in
-    gstsignalsmithpitch.cpp) -- confirm mono actually works, not just the
-    stereo path exercised by the other frequency test."""
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- `uv sync` builds it, but "
-        "won't retry a failed build by itself: run "
-        "native/gst-signalsmith-pitch/build.sh to see why it failed (needs a C++ "
-        "compiler, pkg-config and the GStreamer dev packages), or check the "
-        "Docker image build"
-    )
-
     semitones = 12  # one octave up -> should double the frequency
     input_freq = 220.0
     measured_freq = _run_pitch_element_and_measure_frequency(
-        elem, semitones, input_freq, channels=1
+        signalsmith_elem, semitones, input_freq
     )
 
     expected_freq = input_freq * (2 ** (semitones / 12))
     assert measured_freq == pytest.approx(expected_freq, rel=0.05)
 
 
-def test_signalsmith_pitch_shift_semitones_boundary_values(controller):
-    """The semitones property is declared with range [-24, 24]; confirm both
-    extremes round-trip through set/get without being rejected or clamped."""
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- `uv sync` builds it, but "
-        "won't retry a failed build by itself: run "
-        "native/gst-signalsmith-pitch/build.sh to see why it failed (needs a C++ "
-        "compiler, pkg-config and the GStreamer dev packages), or check the "
-        "Docker image build"
+def test_signalsmith_pitch_shift_mono_channel(signalsmith_elem):
+    """The element declares support for any channel count (see caps in
+    gstsignalsmithpitch.cpp) -- confirm mono actually works, not just the
+    stereo path exercised by the other frequency test."""
+    semitones = 12  # one octave up -> should double the frequency
+    input_freq = 220.0
+    measured_freq = _run_pitch_element_and_measure_frequency(
+        signalsmith_elem, semitones, input_freq, channels=1
     )
 
-    elem.set_property("semitones", -24.0)
-    assert elem.get_property("semitones") == pytest.approx(-24.0)
-
-    elem.set_property("semitones", 24.0)
-    assert elem.get_property("semitones") == pytest.approx(24.0)
+    expected_freq = input_freq * (2 ** (semitones / 12))
+    assert measured_freq == pytest.approx(expected_freq, rel=0.05)
 
 
-def test_signalsmith_flush_stop_resets_state(controller):
+def test_signalsmith_pitch_shift_semitones_boundary_values(signalsmith_elem):
+    """The semitones property is declared with range [-24, 24]; confirm both
+    extremes round-trip through set/get without being rejected or clamped."""
+    signalsmith_elem.set_property("semitones", -24.0)
+    assert signalsmith_elem.get_property("semitones") == pytest.approx(-24.0)
+
+    signalsmith_elem.set_property("semitones", 24.0)
+    assert signalsmith_elem.get_property("semitones") == pytest.approx(24.0)
+
+
+def test_signalsmith_flush_stop_resets_state(signalsmith_elem):
     """FLUSH_STOP must reset the element's internal signalsmith-stretch state
     end-to-end -- this is the behavior kbox's old rubberband destroy/recreate
     workaround existed to approximate, and the reason this element is used
@@ -551,15 +544,6 @@ def test_signalsmith_flush_stop_resets_state(controller):
     flushing seeks (as happen on quick track transitions) must not error out
     or leave the pipeline in a broken state.
     """
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- `uv sync` builds it, but "
-        "won't retry a failed build by itself: run "
-        "native/gst-signalsmith-pitch/build.sh to see why it failed (needs a C++ "
-        "compiler, pkg-config and the GStreamer dev packages), or check the "
-        "Docker image build"
-    )
-
     Gst = _get_gst()
     pipeline = Gst.Pipeline.new("pitch-shift-flush-test")
     src = Gst.ElementFactory.make("audiotestsrc")
@@ -569,11 +553,11 @@ def test_signalsmith_flush_stop_resets_state(controller):
     conv_out = Gst.ElementFactory.make("audioconvert")
     sink = Gst.ElementFactory.make("fakesink")
 
-    for e in (src, conv_in, elem, conv_out, sink):
+    for e in (src, conv_in, signalsmith_elem, conv_out, sink):
         pipeline.add(e)
     src.link(conv_in)
-    conv_in.link(elem)
-    elem.link(conv_out)
+    conv_in.link(signalsmith_elem)
+    signalsmith_elem.link(conv_out)
     conv_out.link(sink)
 
     pipeline.set_state(Gst.State.PLAYING)
