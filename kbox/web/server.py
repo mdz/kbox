@@ -158,6 +158,24 @@ class AddFavoriteRequest(BaseModel):
     channel: Optional[str] = None
 
 
+def split_at_cursor(queue_items, cursor_id):
+    """Return (cursor_idx, upcoming): the cursor's index (None if unset) and
+    everything after it (the whole queue if there is no cursor)."""
+    cursor_idx = next((i for i, item in enumerate(queue_items) if item.id == cursor_id), None)
+    upcoming = queue_items[(cursor_idx + 1) if cursor_idx is not None else 0 :]
+    return cursor_idx, upcoming
+
+
+def estimated_wait_seconds(upcoming, index, current_song, position_seconds):
+    """Seconds until ``upcoming[index]`` starts: the current song's remaining
+    time plus the durations of the upcoming songs ahead of it."""
+    seconds = 0
+    if current_song:
+        seconds = max(0, (current_song.get("duration_seconds") or 0) - (position_seconds or 0))
+    seconds += sum(item.metadata.duration_seconds or 0 for item in upcoming[:index])
+    return int(seconds)
+
+
 # Dependency to get components
 def get_queue_manager(request: Request) -> QueueManager:
     """Get QueueManager from app state."""
@@ -483,8 +501,8 @@ def create_app(
         position_seconds = status.get("position_seconds") or 0
         cursor_id = playback.get_cursor()
 
-        # Find cursor index — everything before it is "played"
-        cursor_idx = next((i for i, item in enumerate(queue_items) if item.id == cursor_id), None)
+        # Everything before the cursor is "played"; everything after is upcoming
+        cursor_idx, upcoming = split_at_cursor(queue_items, cursor_id)
 
         # Serialize queue items for the frontend
         queue = []
@@ -500,10 +518,6 @@ def create_app(
             item_dict["is_current"] = item.id == current_song_id
             item_dict["is_played"] = cursor_idx is not None and i < cursor_idx
             queue.append(item_dict)
-
-        # Upcoming items: everything after the cursor (or the whole list if no cursor)
-        upcoming_start = (cursor_idx + 1) if cursor_idx is not None else 0
-        upcoming = queue_items[upcoming_start:]
 
         # Next song
         next_song = None
@@ -521,16 +535,16 @@ def create_app(
         my_next_turn = None
         is_next_me = next_song and current_user_id and next_song["user_id"] == current_user_id
         if current_user_id and not is_next_me:
-            current_duration = (current_song.get("duration_seconds") or 0) if current_song else 0
-            time_until = max(0, current_duration - position_seconds) if current_song else 0
-            for songs_away, item in enumerate(upcoming):
-                if item.user_id == current_user_id:
-                    my_next_turn = {
-                        "estimated_seconds": int(time_until),
-                        "songs_away": songs_away,
-                    }
-                    break
-                time_until += item.metadata.duration_seconds or 0
+            songs_away = next(
+                (i for i, item in enumerate(upcoming) if item.user_id == current_user_id), None
+            )
+            if songs_away is not None:
+                my_next_turn = {
+                    "estimated_seconds": estimated_wait_seconds(
+                        upcoming, songs_away, current_song, position_seconds
+                    ),
+                    "songs_away": songs_away,
+                }
 
         # Queue depth: count and total duration of upcoming items
         queue_depth_count = len(upcoming)
@@ -563,27 +577,20 @@ def create_app(
     def queue_slot(queue_mgr: QueueManager, playback: PlaybackController, item_id: int):
         """Where a queue item sits among upcoming songs and roughly when it plays.
 
-        Same basis as ``my_next_turn`` in GET /api/queue: remaining time of the
-        current song plus the durations of the upcoming songs ahead of it.
+        Shares its wait estimate with ``my_next_turn`` in GET /api/queue.
         Returns None if the item isn't upcoming (e.g. already played).
         """
-        queue_items = queue_mgr.get_queue()
-        cursor_id = playback.get_cursor()
-        cursor_idx = next((i for i, it in enumerate(queue_items) if it.id == cursor_id), None)
-        upcoming = queue_items[(cursor_idx + 1) if cursor_idx is not None else 0 :]
-        index = next((i for i, it in enumerate(upcoming) if it.id == item_id), None)
+        _, upcoming = split_at_cursor(queue_mgr.get_queue(), playback.get_cursor())
+        index = next((i for i, item in enumerate(upcoming) if item.id == item_id), None)
         if index is None:
             return None
         status = playback.get_status()
-        current_song = status.get("current_song")
-        seconds = 0
-        if current_song:
-            seconds = max(
-                0,
-                (current_song.get("duration_seconds") or 0) - (status.get("position_seconds") or 0),
-            )
-        seconds += sum(it.metadata.duration_seconds or 0 for it in upcoming[:index])
-        return {"position": index + 1, "estimated_seconds": int(seconds)}
+        return {
+            "position": index + 1,
+            "estimated_seconds": estimated_wait_seconds(
+                upcoming, index, status.get("current_song"), status.get("position_seconds")
+            ),
+        }
 
     @app.post("/api/queue")
     def add_song(
