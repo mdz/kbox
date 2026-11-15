@@ -35,7 +35,7 @@ def test_add_song_appears_in_queue(mobile_page, init_user):
 
 
 def test_already_queued_warning(mobile_page, init_user):
-    """Adding the same song a second time shows a confirmation dialog."""
+    """Adding the same song a second time shows an inline warning in the modal."""
     init_user("Alice")
 
     # Add the song once
@@ -47,22 +47,20 @@ def test_already_queued_warning(mobile_page, init_user):
     # Try to add it again
     _search_and_open_add_modal(mobile_page)
 
-    # Click "Add to Queue" — JS checks currentQueue and calls confirm().
-    # Register handler before click; confirm() fires synchronously (no await
-    # precedes it in confirmAddToQueue), so messages is populated by the time
-    # click() returns.
-    messages = []
-    mobile_page.on("dialog", lambda d: (messages.append(d.message), d.dismiss()))
-    mobile_page.locator("button:has-text('Add to Queue')").click()
-    assert messages, "expected a confirm() dialog for the duplicate song"
-    assert "already in the queue" in messages[0]
+    # The warning is shown inline in the modal and the button becomes
+    # "Add anyway"; no native dialog is involved.
+    expect(
+        mobile_page.locator("#add-song-modal .add-song-warning", has_text="already in the queue")
+    ).to_have_count(1)
+    expect(mobile_page.locator("#add-song-modal-confirm")).to_have_text("Add anyway")
 
-    # Song count stays at 1 (user dismissed the confirmation)
+    # Cancelling leaves the song count at 1
+    mobile_page.locator("#add-song-modal button:has-text('Cancel')").click()
     expect(mobile_page.locator(".queue-item")).to_have_count(1)
 
 
 def test_second_song_nudge(mobile_page, init_user):
-    """Adding a second, different song while one is still unplayed nudges (soft, dismissible)."""
+    """Adding a second, different song while one is still unplayed nudges (soft, inline, never blocking)."""
     init_user("Alice")
 
     # Add a first song
@@ -73,13 +71,11 @@ def test_second_song_nudge(mobile_page, init_user):
 
     # Add a different song - should nudge since the first is still unplayed
     _search_and_open_add_modal(mobile_page, query="second song")
-    messages = []
-    mobile_page.on("dialog", lambda d: (messages.append(d.message), d.accept()))
-    mobile_page.locator("button:has-text('Add to Queue')").click()
+    expect(mobile_page.locator("#add-song-modal .add-song-warning")).to_contain_text(
+        "already have a song queued"
+    )
+    mobile_page.locator("#add-song-modal-confirm").click()
     mobile_page.wait_for_selector("#add-song-modal", state="hidden")
-
-    assert messages, "expected a confirm() dialog for the second-song nudge"
-    assert "already have a song queued" in messages[0]
 
     # User confirmed, so both songs are queued
     expect(mobile_page.locator(".queue-item")).to_have_count(2)

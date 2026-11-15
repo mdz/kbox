@@ -18,7 +18,7 @@ import {
     toggleCustomInput, updateSliderDisplay, selectPosition
 } from './config.js';
 import {
-    loadQueue, showEditQueueItemModal, cancelEditQueueItem, saveQueueItemPitch,
+    loadQueue, showEditQueueItemModal, cancelEditQueueItem,
     jumpToQueueItem, playNextQueueItem, moveToEndQueueItem, removeQueueItem,
     moveUpQueueItem, moveDownQueueItem, clearQueue, replaceQueueItem
 } from './queue.js';
@@ -61,7 +61,6 @@ window.selectPosition = selectPosition;
 // Queue
 window.showEditQueueItemModal = showEditQueueItemModal;
 window.cancelEditQueueItem = cancelEditQueueItem;
-window.saveQueueItemPitch = saveQueueItemPitch;
 window.jumpToQueueItem = jumpToQueueItem;
 window.playNextQueueItem = playNextQueueItem;
 window.moveToEndQueueItem = moveToEndQueueItem;

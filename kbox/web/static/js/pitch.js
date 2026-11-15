@@ -3,6 +3,7 @@
  */
 
 import { userId } from './state.js';
+import { queueEditPitchChanged } from './queue.js';
 
 // Convert semitones to musical interval name
 export function getIntervalName(semitones) {
@@ -146,5 +147,6 @@ export function adjustPitch(context, delta) {
     // Update button states
     if (context === 'edit-queue-item') {
         updatePitchButtons('edit-queue-item', newValue);
+        queueEditPitchChanged();
     }
 }

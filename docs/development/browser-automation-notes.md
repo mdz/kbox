@@ -6,23 +6,19 @@ end-to-end. These are quirks of automating *this app* specifically, not general 
 
 ## Native `confirm()` dialogs are silently declined
 
-kbox uses native `window.confirm()` for a couple of destructive/notable actions:
-- Adding a song over a certain length ("This song is X long. Are you sure...")
-- Removing a song from the queue ("Remove '...' from queue?")
+Guest flows no longer use native dialogs: add-song warnings (already queued,
+second song, long song) appear inline in the add-song modal with an "Add anyway"
+button, and removing a song is a two-step button ("Remove from Queue" → "Tap again
+to remove"). Pitch changes in the edit-song dialog apply immediately.
 
-Automated browsers typically can't display native dialogs and auto-decline them
-(`confirm()` returns `false`), which makes the action silently no-op — no error, no
-network request, the UI just looks like nothing happened. This is easy to mistake for a
-broken button or a failed click.
+The only remaining native `window.confirm()` is the operator-only **Clear entire
+queue**. Automated browsers typically can't display native dialogs and auto-decline
+them (`confirm()` returns `false`), so that action silently no-ops — no error, no
+network request. If it seems to do nothing, check the console for
+`Page dialog suppressed (confirm): "..."`.
 
-**Fix:** override `confirm` to auto-accept before triggering the action:
-```js
-window.confirm = () => true;
-```
-**Important:** this override did not reliably persist across actions in testing — reapply
-it immediately before each action that might trigger a dialog, rather than once at the
-start of a session. If an add/remove seems to silently fail, check the console for
-`Page dialog suppressed (confirm): "..."` — that's the tell.
+**Fix:** reapply `window.confirm = () => true;` immediately before clicking it (the
+override did not reliably persist across actions in testing).
 
 ## Enter/Return does not submit the search form
 
@@ -79,7 +75,7 @@ actions that worked fine moments earlier.
 
 ## Verifying state server-side, independent of the UI
 
-The UI can lag or misrepresent state (see the confirm-dialog trap above — the modal can
+The UI can lag or misrepresent state (see the confirm-dialog trap above — the action can
 sit there indefinitely while nothing has actually happened). To check ground truth
 directly against the API, the app gates endpoints behind a session cookie set via the
 `?key=` query param on first request:
