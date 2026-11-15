@@ -23,7 +23,13 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
-from kbox.playback import PlaybackState, PlaybackStatus, UpcomingItem
+from kbox.playback import (
+    PlaybackState,
+    PlaybackStatus,
+    SeekOutcome,
+    SeekResult,
+    UpcomingItem,
+)
 from kbox.queue import MoveOutcome, MoveResult, QueueManager
 from kbox.suggestions import SuggestionError
 from kbox.user import UserManager
@@ -654,6 +660,73 @@ class TestPlaybackEndpoints:
         """POST /api/playback/restart - requires operator."""
         response = client.post("/api/playback/restart")
         assert response.status_code == 403
+
+    def test_restart_response_body(self, client, app_components):
+        """POST /api/playback/restart - the wording lives in the route."""
+        set_operator(client)
+        app_components["playback"].restart.return_value = SeekResult(SeekOutcome.SEEKED, position=0)
+
+        response = client.post("/api/playback/restart")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "restarted"}
+
+    def test_restart_nothing_playing_is_not_an_error(self, client, app_components):
+        """A no-op must stay a 200 with this exact status.
+
+        playback.js reads `data.status === 'nothing_playing'` to stay silent
+        instead of alerting, because the operator controls are visible
+        whatever the playback state.
+        """
+        set_operator(client)
+        app_components["playback"].restart.return_value = SeekResult(SeekOutcome.NOTHING_PLAYING)
+
+        response = client.post("/api/playback/restart")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "nothing_playing"}
+
+    def test_restart_failure_is_a_400(self, client, app_components):
+        set_operator(client)
+        app_components["playback"].restart.return_value = SeekResult(SeekOutcome.FAILED)
+
+        response = client.post("/api/playback/restart")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Failed to restart song"
+
+    def test_seek_response_body_carries_the_new_position(self, client, app_components):
+        set_operator(client)
+        app_components["playback"].seek_relative.return_value = SeekResult(
+            SeekOutcome.SEEKED, position=90
+        )
+
+        response = client.post("/api/playback/seek", json={"delta_seconds": 30})
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "seeked", "position": 90}
+        app_components["playback"].seek_relative.assert_called_with(30)
+
+    def test_seek_nothing_playing_is_not_an_error(self, client, app_components):
+        """See test_restart_nothing_playing_is_not_an_error."""
+        set_operator(client)
+        app_components["playback"].seek_relative.return_value = SeekResult(
+            SeekOutcome.NOTHING_PLAYING
+        )
+
+        response = client.post("/api/playback/seek", json={"delta_seconds": 30})
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "nothing_playing"}
+
+    def test_seek_failure_is_a_400(self, client, app_components):
+        set_operator(client)
+        app_components["playback"].seek_relative.return_value = SeekResult(SeekOutcome.FAILED)
+
+        response = client.post("/api/playback/seek", json={"delta_seconds": 30})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Failed to seek"
 
     def test_seek_requires_operator(self, client):
         """POST /api/playback/seek - requires operator."""

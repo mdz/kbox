@@ -19,7 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from ..config_manager import ConfigManager
 from ..database import EventRepository
 from ..identity import normalize_name
-from ..playback import PlaybackController, PlaybackState
+from ..playback import PlaybackController, PlaybackState, SeekOutcome
 from ..queue import MoveOutcome, QueueManager
 from ..search_suggest import SearchSuggester
 from ..streaming import StreamingController
@@ -1049,9 +1049,13 @@ def create_app(
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
         result = playback.restart()
-        if result["status"] == "error":
+        if result.outcome is SeekOutcome.FAILED:
             raise HTTPException(status_code=400, detail="Failed to restart song")
-        return result
+        if result.outcome is SeekOutcome.NOTHING_PLAYING:
+            # Not an error: the operator controls are visible whatever the
+            # state, so the frontend treats this as a silent no-op.
+            return {"status": "nothing_playing"}
+        return {"status": "restarted"}
 
     @app.post("/api/playback/seek")
     def seek(
@@ -1064,9 +1068,12 @@ def create_app(
             raise HTTPException(status_code=403, detail="Operator authentication required")
 
         result = playback.seek_relative(request_data.delta_seconds)
-        if result["status"] == "error":
+        if result.outcome is SeekOutcome.FAILED:
             raise HTTPException(status_code=400, detail="Failed to seek")
-        return result
+        if result.outcome is SeekOutcome.NOTHING_PLAYING:
+            # See the note in restart(): an expected no-op, not a failure.
+            return {"status": "nothing_playing"}
+        return {"status": "seeked", "position": result.position}
 
     # Authentication endpoints
     @app.get("/api/auth/operator")

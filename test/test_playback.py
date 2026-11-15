@@ -11,7 +11,13 @@ from unittest.mock import Mock
 import pytest
 
 from kbox.models import QueueItem, SongMetadata, SongSettings
-from kbox.playback import PlaybackController, PlaybackState, song_tuning, upcoming_songs
+from kbox.playback import (
+    PlaybackController,
+    PlaybackState,
+    SeekOutcome,
+    song_tuning,
+    upcoming_songs,
+)
 from kbox.queue import QueueManager
 
 
@@ -1427,7 +1433,8 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 60
 
         result = pc.seek_relative(30)
-        assert result["status"] == "seeked"
+        assert result.outcome is SeekOutcome.SEEKED
+        assert result.position == 90
         mock_streaming_controller.seek.assert_called_with(90)
 
     def test_seek_backward(
@@ -1446,7 +1453,8 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 60
 
         result = pc.seek_relative(-30)
-        assert result["status"] == "seeked"
+        assert result.outcome is SeekOutcome.SEEKED
+        assert result.position == 30
         mock_streaming_controller.seek.assert_called_with(30)
 
     def test_seek_backward_clamps_to_zero(
@@ -1465,7 +1473,8 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 10
 
         result = pc.seek_relative(-50)
-        assert result["status"] == "seeked"
+        assert result.outcome is SeekOutcome.SEEKED
+        assert result.position == 0
         mock_streaming_controller.seek.assert_called_with(0)
 
     def test_seek_forward_clamps_to_duration(
@@ -1484,7 +1493,8 @@ class TestSeekRelative:
         mock_streaming_controller.get_position.return_value = 170
 
         result = pc.seek_relative(30)
-        assert result["status"] == "seeked"
+        assert result.outcome is SeekOutcome.SEEKED
+        assert result.position == 179
         # Should clamp to duration - 1 = 179
         mock_streaming_controller.seek.assert_called_with(179)
 
@@ -1496,7 +1506,7 @@ class TestSeekRelative:
             mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
         )
         # State is IDLE, no song playing
-        assert pc.seek_relative(10)["status"] == "nothing_playing"
+        assert pc.seek_relative(10).outcome is SeekOutcome.NOTHING_PLAYING
 
     def test_seek_when_no_current_song(
         self, mock_queue_manager, mock_streaming_controller, mock_config_manager
@@ -1505,7 +1515,74 @@ class TestSeekRelative:
         pc = PlaybackController(
             mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
         )
-        assert pc.seek_relative(10)["status"] == "nothing_playing"
+        assert pc.seek_relative(10).outcome is SeekOutcome.NOTHING_PLAYING
+
+    def test_seek_reports_failure_when_gstreamer_refuses(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        mock_history = Mock()
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_history
+        )
+
+        song = create_mock_queue_item(id=1, content_status="ready", duration_seconds=300)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+
+        pc.play()
+        mock_streaming_controller.get_position.return_value = 60
+        mock_streaming_controller.seek.return_value = False
+
+        assert pc.seek_relative(30).outcome is SeekOutcome.FAILED
+
+
+class TestRestart:
+    """Tests for restart(), which is a seek to zero."""
+
+    def _playing_controller(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, Mock()
+        )
+        song = create_mock_queue_item(id=1, content_status="ready", duration_seconds=300)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+        pc.play()
+        return pc
+
+    def test_restart_seeks_to_zero(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc = self._playing_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+
+        result = pc.restart()
+
+        assert result.outcome is SeekOutcome.SEEKED
+        assert result.position == 0
+        mock_streaming_controller.seek.assert_called_with(0)
+
+    def test_restart_when_not_playing_is_nothing_playing(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc = PlaybackController(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager, Mock()
+        )
+        # State is STOPPED, no song playing
+        assert pc.restart().outcome is SeekOutcome.NOTHING_PLAYING
+        mock_streaming_controller.seek.assert_not_called()
+
+    def test_restart_reports_failure_when_gstreamer_refuses(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        pc = self._playing_controller(
+            mock_queue_manager, mock_streaming_controller, mock_config_manager
+        )
+        mock_streaming_controller.seek.return_value = False
+
+        assert pc.restart().outcome is SeekOutcome.FAILED
 
 
 class TestShutdown:

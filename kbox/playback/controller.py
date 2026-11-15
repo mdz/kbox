@@ -12,7 +12,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Iterator, List, Optional
 
 from ..database import ConfigRepository
 from ..models import QueueItem
@@ -50,6 +50,30 @@ class PlaybackStatus:
     state: PlaybackState
     current_song: Optional[QueueItem]
     position_seconds: Optional[int]
+
+
+class SeekOutcome(Enum):
+    """How a seek (or a restart, which is a seek to zero) ended."""
+
+    SEEKED = "seeked"
+    NOTHING_PLAYING = "nothing_playing"  # Not an error: controls are always visible
+    FAILED = "failed"  # GStreamer refused the seek
+
+
+@dataclass(frozen=True)
+class SeekResult:
+    """
+    The outcome of a seek, plus where playback ended up.
+
+    Deliberately not a response body. "restarted" vs "seeked" is the HTTP
+    vocabulary for the same outcome seen from two endpoints, and the
+    frontend relies on "nothing_playing" to tell an expected no-op from a
+    failure -- so that wording belongs in the routes, which know which
+    endpoint they are.
+    """
+
+    outcome: SeekOutcome
+    position: Optional[int] = None
 
 
 class PlaybackController:
@@ -1284,13 +1308,12 @@ class PlaybackController:
             self.logger.info("Set pitch to %s semitones for current song", semitones)
             return True
 
-    def restart(self) -> Dict[str, Any]:
+    def restart(self) -> SeekResult:
         """
         Restart the current song from the beginning.
 
         Returns:
-            Dictionary with status information:
-            - status: 'restarted', 'nothing_playing', or 'error'
+            SeekResult: SEEKED at position 0, NOTHING_PLAYING, or FAILED
         """
         with self._locked():
             if not self.current_song_id or self.state not in (
@@ -1298,14 +1321,14 @@ class PlaybackController:
                 PlaybackState.PAUSED,
             ):
                 self.logger.debug("Nothing playing, nothing to restart")
-                return {"status": "nothing_playing"}
+                return SeekResult(SeekOutcome.NOTHING_PLAYING)
 
             self.logger.info("Restarting song from beginning")
             if not self.streaming_controller.seek(0):
-                return {"status": "error"}
-            return {"status": "restarted"}
+                return SeekResult(SeekOutcome.FAILED)
+            return SeekResult(SeekOutcome.SEEKED, position=0)
 
-    def seek_relative(self, delta_seconds: int) -> Dict[str, Any]:
+    def seek_relative(self, delta_seconds: int) -> SeekResult:
         """
         Seek forward or backward by a relative amount.
 
@@ -1313,8 +1336,7 @@ class PlaybackController:
             delta_seconds: Seconds to seek (positive = forward, negative = backward)
 
         Returns:
-            Dictionary with status information:
-            - status: 'seeked', 'nothing_playing', or 'error'
+            SeekResult: SEEKED with the new position, NOTHING_PLAYING, or FAILED
         """
         with self._locked():
             if not self.current_song_id or self.state not in (
@@ -1322,7 +1344,7 @@ class PlaybackController:
                 PlaybackState.PAUSED,
             ):
                 self.logger.debug("Nothing playing, nothing to seek")
-                return {"status": "nothing_playing"}
+                return SeekResult(SeekOutcome.NOTHING_PLAYING)
 
             current_position = self.streaming_controller.get_position()
             if current_position is None:
@@ -1344,8 +1366,8 @@ class PlaybackController:
                 delta_seconds,
             )
             if not self.streaming_controller.seek(new_position):
-                return {"status": "error"}
-            return {"status": "seeked", "position": new_position}
+                return SeekResult(SeekOutcome.FAILED)
+            return SeekResult(SeekOutcome.SEEKED, position=new_position)
 
     def _record_history_if_eligible(self, song: QueueItem, position: int) -> None:
         """
