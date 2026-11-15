@@ -17,6 +17,7 @@ def _open_config(page):
     # playback-controls-section visibility is set by loadQueue+renderNowPlaying
     # and is the earliest reliable signal that isOperator=true is in effect.
     expect(page.locator("#playback-controls-section")).to_be_visible()
+    page.locator("#operator-menu-button").click()
     page.locator("#config-toggle-button").click()
     expect(page.locator("#config-screen")).to_be_visible()
     # Wait for the form to finish loading (initial text replaced by real fields)
@@ -46,10 +47,11 @@ def test_config_round_trip(mobile_page, init_user, operator_unlock):
     expect(mobile_page.locator("#config-message")).to_contain_text("saved successfully")
 
     # Close and reopen config to verify persistence.
-    # Use the config toggle button — avoids ambiguity with "Close" buttons
-    # in the help/history modals that are also in the DOM but hidden.
-    mobile_page.locator("#config-toggle-button").click()
+    # The config screen covers the header, so close it with its own Close
+    # button (scoped to the screen to avoid the other modals' Close buttons).
+    mobile_page.locator("#config-screen .config-header button:has-text('Close')").click()
     expect(mobile_page.locator("#config-screen")).to_be_hidden()
+    mobile_page.locator("#operator-menu-button").click()
     mobile_page.locator("#config-toggle-button").click()
     expect(mobile_page.locator("#config-screen")).to_be_visible()
     expect(mobile_page.locator("#config-form-container")).not_to_contain_text(

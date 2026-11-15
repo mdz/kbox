@@ -108,8 +108,15 @@ class YtDlpClient(VideoProvider):
                         "id": entry.get("id", entry.get("url", "")),
                         "title": entry.get("title", ""),
                         "thumbnail": thumbnail,
-                        "channel": entry.get("channel", "") or entry.get("uploader", ""),
-                        "duration_seconds": entry.get("duration"),
+                        # Flat search entries can carry null for any of these,
+                        # so fall through to the next and never emit None.
+                        "channel": entry.get("channel")
+                        or entry.get("uploader")
+                        or entry.get("uploader_id")
+                        or "",
+                        "duration_seconds": (
+                            int(entry["duration"]) if entry.get("duration") else None
+                        ),
                         "description": (entry.get("description") or "")[:200],
                     }
                 )

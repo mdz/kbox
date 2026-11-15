@@ -1,9 +1,30 @@
-<!-- Header (always visible) -->
-<header style="position: relative; margin-bottom: 20px;">
-    <button class="controls-toggle-button" id="operator-auth-button" onclick="promptOperatorAuth()" title="Operator Authentication" aria-label="Operator sign-in">🔑</button>
-    <button class="config-toggle-button" id="config-toggle-button" onclick="toggleConfigScreen()" title="Open Configuration" aria-label="Open configuration">⚙</button>
-    <button class="history-button" onclick="showHistoryModal()" title="My song history" aria-label="My song history">🕘</button>
-    <button class="favorites-button" onclick="showFavoritesModal()" title="My favorites" aria-label="My favorites">⭐</button>
-    <button class="help-button" onclick="showHelp()" title="How kbox works" aria-label="Help: how kbox works">?</button>
+<!-- Header (always visible, sticky). Operator-only tools sit behind the small
+     menu button so guests see the song-facing buttons first. -->
+<header class="app-header">
+    <button class="header-btn operator-menu-button" id="operator-menu-button" aria-haspopup="true" aria-expanded="false" aria-label="Operator tools" title="Operator tools" onclick="toggleOperatorMenu(event)">⋯</button>
+    <div class="operator-menu" id="operator-menu" hidden>
+        <button class="header-btn controls-toggle-button" id="operator-auth-button" onclick="closeOperatorMenu(); promptOperatorAuth()" title="Operator Authentication" aria-label="Operator sign-in">🔑</button>
+        <button class="header-btn config-toggle-button" id="config-toggle-button" onclick="closeOperatorMenu(); toggleConfigScreen()" title="Open Configuration" aria-label="Open configuration">⚙</button>
+    </div>
     <h1 class="wordmark"><span class="wordmark-k">k</span><span class="wordmark-box">box</span></h1>
+    <div class="header-actions">
+        <button class="header-btn history-button" onclick="showHistoryModal()" title="My song history" aria-label="My song history">🕘</button>
+        <button class="header-btn favorites-button" onclick="showFavoritesModal()" title="My favorites" aria-label="My favorites">⭐</button>
+        <button class="header-btn help-button" onclick="showHelp()" title="How kbox works" aria-label="Help: how kbox works">?</button>
+    </div>
 </header>
+<script>
+    function closeOperatorMenu() {
+        document.getElementById('operator-menu').hidden = true;
+        document.getElementById('operator-menu-button').setAttribute('aria-expanded', 'false');
+    }
+    function toggleOperatorMenu(event) {
+        event.stopPropagation();
+        const menu = document.getElementById('operator-menu');
+        menu.hidden = !menu.hidden;
+        document.getElementById('operator-menu-button').setAttribute('aria-expanded', String(!menu.hidden));
+    }
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#operator-menu')) closeOperatorMenu();
+    });
+</script>

@@ -77,139 +77,103 @@
             display: none;
         }
 
-        .history-button {
-            position: fixed;
-            top: 15px;
-            right: 65px;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #b06bff;
-            color: #fff;
-            border: none;
-            font-size: 20px;
-            cursor: pointer;
+        /* Sticky header bar: [menu] [wordmark] [history favorites help].
+           Sticks below the turn bar (when shown) and sits under modal
+           overlays (z-index 1000), so dialogs cover every header button. */
+        .app-header {
+            position: sticky;
+            top: var(--turn-bar-h, 0px);
             z-index: 100;
             display: flex;
             align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            gap: 8px;
+            margin: -10px -10px 12px;
+            padding: 8px 10px;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
         }
 
-        .history-button:hover {
-            background: #c48bff;
-            transform: scale(1.05);
+        .app-header h1 {
+            flex: 1;
+            margin: 0;
+            font-size: 1.6em;
+            min-width: 0;
         }
 
-        .favorites-button {
-            position: fixed;
-            top: 15px;
-            right: 115px;
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
             width: 40px;
             height: 40px;
+            flex: none;
             border-radius: 50%;
-            background: #d4a017;
             color: #fff;
             border: none;
+            padding: 0;
             font-size: 20px;
             cursor: pointer;
-            z-index: 100;
             display: flex;
             align-items: center;
             justify-content: center;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
 
-        .favorites-button:hover {
-            background: #e4b027;
-            transform: scale(1.05);
+        .header-btn:hover { transform: scale(1.05); }
+
+        .history-button { background: #b06bff; }
+        .history-button:hover { background: #c48bff; }
+        .favorites-button { background: #d4a017; }
+        .favorites-button:hover { background: #e4b027; }
+        .help-button { background: #4a9eff; font-weight: bold; }
+        .help-button:hover { background: #5aaeff; }
+
+        /* Operator-only tools live behind one small menu button. */
+        .operator-menu-button {
+            background: #3a3a3a;
+            color: #ccc;
+            width: 32px;
+            height: 32px;
+            margin: 4px;
+            font-size: 18px;
+            box-shadow: none;
         }
 
-        .help-button {
-            position: fixed;
-            top: 15px;
-            right: 15px;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #4a9eff;
-            color: #fff;
-            border: none;
-            font-size: 20px;
-            font-weight: bold;
-            cursor: pointer;
-            z-index: 100;
+        .operator-menu-button:hover { background: #4a4a4a; }
+
+        .operator-menu {
+            position: absolute;
+            top: 100%;
+            left: 10px;
             display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            gap: 8px;
+            padding: 8px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
         }
 
-        .help-button:hover {
-            background: #5aaeff;
-            transform: scale(1.05);
-        }
+        .operator-menu[hidden] { display: none; }
 
-        .controls-toggle-button {
-            position: fixed;
-            top: 15px;
-            left: 15px;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #666;
-            color: #fff;
-            border: none;
-            font-size: 20px;
-            cursor: pointer;
-            z-index: 1001;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-        }
-
-        .controls-toggle-button:hover {
-            background: #777;
-            transform: scale(1.05);
-        }
-
-        .controls-toggle-button.active {
-            background: #4a9eff;
-        }
-
-        .controls-toggle-button.active:hover {
-            background: #5aaeff;
-        }
-
+        .controls-toggle-button,
         .config-toggle-button {
-            position: fixed;
-            top: 15px;
-            left: 65px;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
             background: #666;
-            color: #fff;
-            border: none;
-            font-size: 20px;
-            cursor: pointer;
-            z-index: 1001;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
         }
 
+        .controls-toggle-button:hover,
         .config-toggle-button:hover {
             background: #777;
-            transform: scale(1.05);
         }
 
+        .controls-toggle-button.active,
         .config-toggle-button.active {
             background: #4a9eff;
         }
 
+        .controls-toggle-button.active:hover,
         .config-toggle-button.active:hover {
             background: #5aaeff;
         }
@@ -356,8 +320,6 @@
         }
 
         .search-results {
-            max-height: 300px;
-            overflow-y: auto;
             margin-top: 10px;
         }
 
@@ -447,6 +409,7 @@
 
         .search-result-info {
             flex: 1;
+            min-width: 0;
         }
 
         .search-result-title {
@@ -887,8 +850,7 @@
         .turn-bar.turn-next { background: #c77d00; font-size: 17px; }
         .turn-bar.turn-playing { background: #1f9d4c; font-size: 17px; }
         .turn-bar.turn-idle-first { background: #6b4fa0; }
-        body.has-turn-bar { padding-top: 54px; }
-        body.has-turn-bar > header > button { top: 54px; }
+        body.has-turn-bar { --turn-bar-h: 44px; padding-top: 54px; }
 
         .main-content {
             transition: opacity 0.3s ease;

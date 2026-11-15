@@ -121,6 +121,7 @@ def operator_unlock(mobile_page):
     """Return a helper that enters the operator PIN and waits for the page reload."""
 
     def _unlock(pin="1234"):
+        mobile_page.locator("#operator-menu-button").click()
         mobile_page.locator("#operator-auth-button").click()
         mobile_page.wait_for_selector("#operator-pin-modal", state="visible")
         mobile_page.fill("#operator-pin-input", pin)
