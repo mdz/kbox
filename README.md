@@ -97,6 +97,8 @@ native/gst-signalsmith-pitch/build.sh
 
 See `docs/hardware/hardware-setup.md` for audio hardware setup (microphone input, mixing, signal flow).
 
+If guests join from an isolated guest Wi-Fi network, see `docs/setup/guest-network-access.md`.
+
 ## Development
 
 ```bash
