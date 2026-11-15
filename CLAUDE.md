@@ -60,6 +60,35 @@ For PRs with substantial changes (especially to streaming, playback, queue, or p
 
 CI/pytest is not the final signal for changes that could affect the real pipeline — the e2e pass before release is what actually validates them, it's just decoupled from individual merges.
 
+## Don't Run the Checks Manually
+
+Lint, formatting, type-checking and tests are already automated at three
+points. Do not run them by hand after each edit — commit and let the hooks
+run, push and let CI run.
+
+| When | What runs | Where it's configured |
+| --- | --- | --- |
+| Every commit | `ruff check --fix`, `ruff format`, `mypy kbox`, plus whitespace/YAML/JSON/TOML/merge-conflict/private-key hygiene, and `no-commit-to-branch` for `main` | `.pre-commit-config.yaml` |
+| Every push | whatever carries `stages: [pre-push]` | `.pre-commit-config.yaml` |
+| Every PR | `ruff check .`, `ruff format --check .`, `mypy kbox`, **pytest inside the Docker image**, and Playwright e2e | `.github/workflows/ci.yml` |
+
+A failing hook blocks the commit, so a commit that succeeds has already
+passed ruff and mypy. Re-running them to confirm is wasted work.
+
+**Local pytest is a weak signal on a dev machine, not just redundant.** A
+macOS host generally has no working GStreamer, so a large block of tests
+fail on missing host libraries and tell you nothing about your change. The
+Docker test job in CI is the authoritative run, because it is the only one
+where the GStreamer pipeline actually exists.
+
+Targeted local runs are still fine while iterating on something specific —
+`uv run pytest test/test_queue.py -k reorder` to watch one test, or to read a
+failure in detail. What's not useful is a full `uv run pytest` as a
+self-imposed gate before committing or pushing.
+
+If a check needs to run earlier or differently, change the hook config rather
+than running it by hand, so it applies next time too.
+
 # Tech Stack
 
 - **Python package/env manager: `uv`.** Always use `uv` — do not call `pip`, `python -m venv`, or a bare `python`/`pytest` directly.
@@ -74,10 +103,17 @@ CI/pytest is not the final signal for changes that could affect the real pipelin
 
 ```bash
 uv sync --group dev          # install deps (incl. dev tools)
+pre-commit install           # wire up the hooks (see "Don't Run the Checks Manually")
 uv run python -m kbox.main   # run the app (http://localhost:8000)
-uv run pytest                # tests
-uv run ruff check .          # lint
-uv run mypy kbox/            # type-check
+```
+
+The checks below run automatically on commit, push and in CI. Reach for them
+directly only for a targeted run while iterating, not as a gate:
+
+```bash
+uv run pytest test/test_queue.py -k reorder   # one test, while iterating
+uv run ruff check .                           # lint
+uv run mypy kbox/                             # type-check
 ```
 
 ## Driving kbox via Browser Automation
