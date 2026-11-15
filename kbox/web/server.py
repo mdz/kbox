@@ -8,12 +8,9 @@ import logging
 import secrets
 from typing import Optional
 
-import itsdangerous
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 
 from ..config_manager import ConfigManager
 from ..database import EventRepository
@@ -39,6 +36,12 @@ from .dependencies import (
     get_user_manager,
     get_video_library,
     require_user,
+)
+from .middleware import (
+    ClockTolerantSessionMiddleware,
+    GuestAuthMiddleware,
+    ImmutableStaticFiles,
+    RequestLogMiddleware,
 )
 from .models import (
     AddFavoriteRequest,
@@ -81,43 +84,6 @@ logger.setLevel(logging.DEBUG)
 MIN_SUGGEST_QUERY_LENGTH = 4
 
 
-class _ClockTolerantTimestampSigner(itsdangerous.TimestampSigner):
-    """Accepts a session cookie whose embedded signing timestamp is later
-    than the server's current clock, instead of treating it as expired.
-
-    Hosts without a battery-backed RTC (e.g. a Raspberry Pi) boot with the
-    system clock set to a stale time until NTP catches up. Any guest
-    session cookie signed before that reboot then looks "signed in the
-    future" to itsdangerous, which raises SignatureExpired the same as a
-    tampered or genuinely-too-old cookie -- and SessionMiddleware responds
-    by deleting the cookie from the guest's browser, permanently logging
-    them out. The HMAC already proves the cookie wasn't tampered with, so
-    a clock that's merely behind isn't a reason to distrust it.
-    """
-
-    def unsign(self, signed_value, max_age=None, return_timestamp=False):
-        try:
-            return super().unsign(signed_value, max_age=max_age, return_timestamp=return_timestamp)
-        except itsdangerous.SignatureExpired as exc:
-            if exc.date_signed is not None:
-                age = self.get_timestamp() - int(exc.date_signed.timestamp())
-                if age < 0:
-                    return super().unsign(
-                        signed_value, max_age=None, return_timestamp=return_timestamp
-                    )
-            raise
-
-
-class ClockTolerantSessionMiddleware(SessionMiddleware):
-    """SessionMiddleware that won't log guests out just because the
-    server's clock is temporarily behind where it was when the cookie was
-    signed. See _ClockTolerantTimestampSigner."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.signer.__class__ = _ClockTolerantTimestampSigner
-
-
 def create_app(
     queue_manager: QueueManager,
     video_library: VideoLibrary,
@@ -150,12 +116,10 @@ def create_app(
     Returns:
         Configured FastAPI app
     """
-    import secrets as secrets_module
-
     app = FastAPI(title="kbox", version="1.0.0")
 
     # Use provided session secret or generate a random one
-    secret_key = session_secret or secrets_module.token_urlsafe(32)
+    secret_key = session_secret or secrets.token_urlsafe(32)
 
     # Store components in app state (needed before middleware setup)
     app.state.queue_manager = queue_manager
@@ -172,126 +136,25 @@ def create_app(
     # here rather than threaded through main.py's wiring.
     app.state.search_suggester = SearchSuggester(config_manager)
 
+    # Templates. Built before the middleware because GuestAuthMiddleware
+    # renders its access-required page from them.
+    templates = Jinja2Templates(directory="kbox/web/templates")
+
     # Middleware is added in LIFO order (last added runs first)
     # So we add GuestAuthMiddleware BEFORE SessionMiddleware so it runs AFTER
-
-    class RequestLogMiddleware(BaseHTTPMiddleware):
-        """Logs each request with the guest's user_id/display_name instead of IP.
-
-        All guest traffic arrives via a Cloudflare Tunnel sidecar, so every
-        request in uvicorn's access log shows the same source IP. user_id
-        (from the session cookie) is the identity that actually distinguishes
-        guests/devices.
-        """
-
-        async def dispatch(self, request: Request, call_next):
-            response = await call_next(request)
-            user_id = request.session.get("user_id")
-            who = "anonymous"
-            if user_id:
-                user = user_manager.get_user(user_id)
-                who = f"{user.display_name} ({user_id})" if user else user_id
-            logger.info(
-                "%s %s -> %s user=%s",
-                request.method,
-                request.url.path,
-                response.status_code,
-                who,
-            )
-            return response
-
-    app.add_middleware(RequestLogMiddleware)
+    app.add_middleware(RequestLogMiddleware, user_manager=user_manager)
 
     # Add guest authentication middleware (if access token is configured)
     if access_token:
-
-        class GuestAuthMiddleware(BaseHTTPMiddleware):
-            """Middleware to authenticate guests via access token."""
-
-            async def dispatch(self, request: Request, call_next):
-                # Allow display page and its API without authentication
-                # (passive viewer on TV/monitor, no user session)
-                if request.url.path == "/display" or request.url.path.startswith("/api/display/"):
-                    return await call_next(request)
-
-                # Allow icon probes without authentication (browsers request
-                # these automatically at the site root, before any session exists)
-                if request.url.path in (
-                    "/favicon.ico",
-                    "/apple-touch-icon.png",
-                    "/apple-touch-icon-precomposed.png",
-                ):
-                    return await call_next(request)
-
-                # Check if already authenticated via session
-                if request.session.get("guest_authenticated"):
-                    return await call_next(request)
-
-                # Check for access token in query params. Read the current
-                # value from config on each request (not the `access_token`
-                # closure variable) since it can be rotated live when a new
-                # party session starts.
-                key = request.query_params.get("key")
-                current_token = config_manager.get("access_token") or access_token
-                if key == current_token:
-                    # Valid token - set session and redirect to clean URL
-                    request.session["guest_authenticated"] = True
-                    # Redirect to same path without the key param
-                    clean_url = str(request.url).split("?")[0]
-                    return RedirectResponse(url=clean_url, status_code=302)
-
-                # Not authenticated - return friendly error page
-                return HTMLResponse(
-                    content="""<!DOCTYPE html>
-<html>
-<head>
-    <title>kbox - Access Required</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #fff;
-        }
-        .container {
-            text-align: center;
-            padding: 2rem;
-        }
-        h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
-        p { font-size: 1.2rem; opacity: 0.8; }
-        .qr-hint {
-            margin-top: 2rem;
-            padding: 1.5rem;
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎤 kbox</h1>
-        <p>Karaoke queue system</p>
-        <div class="qr-hint">
-            <p>📱 Scan the QR code on the TV screen to join</p>
-        </div>
-    </div>
-</body>
-</html>""",
-                    status_code=401,
-                )
-
-        app.add_middleware(GuestAuthMiddleware)
+        app.add_middleware(
+            GuestAuthMiddleware,
+            config_manager=config_manager,
+            access_token=access_token,
+            templates=templates,
+        )
 
     # SessionMiddleware must be added AFTER GuestAuthMiddleware (runs first due to LIFO)
     app.add_middleware(ClockTolerantSessionMiddleware, secret_key=secret_key)
-
-    # Templates
-    templates = Jinja2Templates(directory="kbox/web/templates")
 
     # Static files (CSS, JS), mounted under a per-process version so browsers
     # can cache them forever instead of guessing a freshness lifetime. With
@@ -302,16 +165,8 @@ def create_app(
     # restart (i.e. every real deploy) gives stale-vs-current assets distinct
     # URLs, so guests never pay a revalidation round trip for assets that
     # haven't changed, and never see stale ones after a restart either.
-    from fastapi.staticfiles import StaticFiles
-
     static_version = secrets.token_hex(4)
     templates.env.globals["static_version"] = static_version
-
-    class ImmutableStaticFiles(StaticFiles):
-        async def get_response(self, path, scope):
-            response = await super().get_response(path, scope)
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            return response
 
     app.mount(
         f"/static/{static_version}",

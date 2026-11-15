@@ -46,3 +46,40 @@ def test_request_models_import_without_an_app():
 
     assert AddSongRequest(user_id="u", video_id="youtube:x", title="t").pitch_semitones == 0
     assert ConfigUpdateRequest(key="k", value="v").value == "v"
+
+
+def test_guest_auth_middleware_runs_without_create_app():
+    """GuestAuthMiddleware gets its collaborators through the constructor,
+    so it can guard a bare app — no create_app, no closure scope."""
+    from fastapi import FastAPI
+    from fastapi.templating import Jinja2Templates
+    from fastapi.testclient import TestClient
+
+    from kbox.web.middleware import ClockTolerantSessionMiddleware, GuestAuthMiddleware
+
+    class StubConfig:
+        def get(self, key):
+            return None  # fall back to the token given at construction
+
+    app = FastAPI()
+
+    @app.get("/")
+    def root():
+        return {"ok": True}
+
+    # Same LIFO order create_app uses: session added last so it runs first.
+    app.add_middleware(
+        GuestAuthMiddleware,
+        config_manager=StubConfig(),
+        access_token="tok",
+        templates=Jinja2Templates(directory="kbox/web/templates"),
+    )
+    app.add_middleware(ClockTolerantSessionMiddleware, secret_key="s")
+
+    client = TestClient(app)
+    denied = client.get("/", follow_redirects=False)
+    assert denied.status_code == 401
+    assert "Scan the QR code" in denied.text
+
+    assert client.get("/?key=tok", follow_redirects=False).status_code == 302
+    assert client.get("/").json() == {"ok": True}
