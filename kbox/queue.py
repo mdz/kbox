@@ -6,8 +6,10 @@ Handles song queue operations with persistence and content preparation.
 
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from enum import Enum
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
@@ -18,6 +20,31 @@ if TYPE_CHECKING:
     from .silence_detection import TrailingSilenceAnalyzer
     from .song_metadata import SongMetadataExtractor
     from .video_library import VideoLibrary
+
+
+class MoveOutcome(Enum):
+    """How a relative move ended."""
+
+    MOVED = "moved"
+    ALREADY_AT_BOUNDARY = "already_at_boundary"  # Already first/last; nothing to do
+    NOT_FOUND = "not_found"
+    FAILED = "failed"  # Found, but the reorder itself did not take
+
+
+@dataclass(frozen=True)
+class MoveResult:
+    """
+    The outcome of a relative move, plus the positions involved.
+
+    Deliberately not a response dict: which of "moved_up"/"moved_down" or
+    "already_at_start"/"already_at_end" to call this depends on the
+    direction, which the caller knows and the queue does not. The HTTP
+    wording lives in the route.
+    """
+
+    outcome: MoveOutcome
+    old_position: Optional[int] = None
+    new_position: Optional[int] = None
 
 
 class QueueManager:
@@ -379,7 +406,7 @@ class QueueManager:
         """Highest position currently in the queue, or `default` if empty."""
         return max((item.position for item in self.repository.get_all()), default=default)
 
-    def move_down(self, item_id: int) -> Dict[str, Any]:
+    def move_down(self, item_id: int) -> MoveResult:
         """
         Move a song down one position in the queue.
 
@@ -387,17 +414,15 @@ class QueueManager:
             item_id: ID of the queue item to move down
 
         Returns:
-            Dictionary with status information:
-            - status: 'moved_down' or 'already_at_end'
-            - old_position: Original position
-            - new_position: New position
+            MoveResult: MOVED with both positions, ALREADY_AT_BOUNDARY with
+            the position it stayed at, or NOT_FOUND / FAILED.
         """
         self.logger.info("Moving down song %s", item_id)
 
         item = self.get_item(item_id)
         if not item:
             self.logger.warning("Song %s not found", item_id)
-            return {"status": "not_found"}
+            return MoveResult(MoveOutcome.NOT_FOUND)
 
         current_position = item.position
 
@@ -407,19 +432,17 @@ class QueueManager:
         if new_position == current_position:
             # Already at the end
             self.logger.info("Song %s already at end of queue", item_id)
-            return {"status": "already_at_end", "position": current_position}
+            return MoveResult(MoveOutcome.ALREADY_AT_BOUNDARY, old_position=current_position)
 
         if not self.reorder_song(item_id, new_position):
             self.logger.error("Failed to reorder song %s", item_id)
-            return {"status": "error"}
+            return MoveResult(MoveOutcome.FAILED)
 
-        return {
-            "status": "moved_down",
-            "old_position": current_position,
-            "new_position": new_position,
-        }
+        return MoveResult(
+            MoveOutcome.MOVED, old_position=current_position, new_position=new_position
+        )
 
-    def move_up(self, item_id: int) -> Dict[str, Any]:
+    def move_up(self, item_id: int) -> MoveResult:
         """
         Move a song up one position in the queue.
 
@@ -427,17 +450,15 @@ class QueueManager:
             item_id: ID of the queue item to move up
 
         Returns:
-            Dictionary with status information:
-            - status: 'moved_up' or 'already_at_start'
-            - old_position: Original position
-            - new_position: New position
+            MoveResult: MOVED with both positions, ALREADY_AT_BOUNDARY with
+            the position it stayed at, or NOT_FOUND / FAILED.
         """
         self.logger.info("Moving up song %s", item_id)
 
         item = self.get_item(item_id)
         if not item:
             self.logger.warning("Song %s not found", item_id)
-            return {"status": "not_found"}
+            return MoveResult(MoveOutcome.NOT_FOUND)
 
         current_position = item.position
 
@@ -451,17 +472,15 @@ class QueueManager:
         if new_position == current_position:
             # Already at the start
             self.logger.info("Song %s already at start of queue", item_id)
-            return {"status": "already_at_start", "position": current_position}
+            return MoveResult(MoveOutcome.ALREADY_AT_BOUNDARY, old_position=current_position)
 
         if not self.reorder_song(item_id, new_position):
             self.logger.error("Failed to reorder song %s", item_id)
-            return {"status": "error"}
+            return MoveResult(MoveOutcome.FAILED)
 
-        return {
-            "status": "moved_up",
-            "old_position": current_position,
-            "new_position": new_position,
-        }
+        return MoveResult(
+            MoveOutcome.MOVED, old_position=current_position, new_position=new_position
+        )
 
     def move_after(self, item_id: int, reference_song_id: Optional[int]) -> Optional[int]:
         """
