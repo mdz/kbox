@@ -263,3 +263,31 @@ class TestPlatformDefaults:
             defaults = ConfigManager._get_platform_defaults()
             assert defaults["gstreamer_source"] == "autoaudiosrc"
             assert defaults["gstreamer_sink"] == "autoaudiosink"
+
+
+class TestDataDirOverride:
+    """KBOX_DATA_DIR relocates the database and app data away from ~/.kbox."""
+
+    def test_default_is_home_kbox(self, monkeypatch, tmp_path):
+        from kbox.paths import get_data_dir
+
+        monkeypatch.delenv("KBOX_DATA_DIR", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert get_data_dir() == tmp_path / ".kbox"
+
+    def test_env_overrides_and_creates_dir(self, monkeypatch, tmp_path):
+        from kbox.paths import get_data_dir
+
+        target = tmp_path / "scratch" / "data"
+        monkeypatch.setenv("KBOX_DATA_DIR", str(target))
+        assert get_data_dir() == target
+        assert target.is_dir()
+
+    def test_database_and_library_follow_override(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("KBOX_DATA_DIR", str(tmp_path))
+        db = Database()
+        try:
+            assert (tmp_path / "kbox.db").exists()
+            assert ConfigManager(db).get_cache_directory() == tmp_path / "library"
+        finally:
+            db.close()

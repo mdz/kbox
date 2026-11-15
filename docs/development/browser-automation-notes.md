@@ -86,3 +86,32 @@ curl -s -b cookies.txt http://localhost:8000/api/playback/status
 ```
 Useful for confirming a queue add/remove actually landed, independent of whatever the
 browser DOM currently shows.
+
+## Running an isolated instance (worktrees, scratch data)
+
+Never point automation at your real `~/.kbox`. Start the checked-in `kbox`
+entry from `.claude/launch.json` (`preview_start {name: "kbox"}`). It is already isolated and runs:
+
+```bash
+uv run python -m kbox.main --data-dir .kbox-scratch --access-token uxtest
+```
+
+- `--data-dir` (or `KBOX_DATA_DIR`) relocates the database, video library and QR
+  code. The relative path resolves inside the current checkout/worktree, so each
+  worktree gets its own throwaway instance (`.kbox-scratch/` is gitignored). Delete
+  the directory to reset.
+- `--access-token` (or `KBOX_ACCESS_TOKEN`) pins the guest token, so the guest page
+  is `http://localhost:8000/?key=uxtest` with no sqlite edits. Starting a new party
+  session still rotates the token, as in normal use. The operator PIN is the default
+  (`1234`) on a fresh scratch DB.
+- Both are for development; a stock install ignores them unless set.
+
+**Static assets are versioned at server start.** URLs look like
+`/static/<hash>/js/...` and the hash is generated each launch, with immutable
+caching. After editing JS/CSS, restart the server (`preview_stop` + `preview_start`)
+to see changes.
+
+**Playback with fake content:** fake video ids end up in `content_status` error and
+`/api/playback/play` fails, so next-up / now-playing states can't be reached with
+made-up songs. Use real, downloadable videos, or stub the status API in the page.
+There is no fake-content dev mode yet.

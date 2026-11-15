@@ -6,10 +6,10 @@ Handles SQLite database initialization, schema creation, and connection manageme
 
 import logging
 import sqlite3
-from pathlib import Path
 from typing import Optional
 
 from ..identity import normalize_name, pick_avatar
+from ..paths import get_data_dir
 
 
 class Database:
@@ -23,16 +23,13 @@ class Database:
         Initialize database connection.
 
         Args:
-            db_path: Path to SQLite database file. If None, uses ~/.kbox/kbox.db
+            db_path: Path to SQLite database file. If None, uses kbox.db in the data dir (~/.kbox, or KBOX_DATA_DIR)
         """
         self.logger = logging.getLogger(__name__)
 
         if db_path is None:
-            # Default to ~/.kbox/kbox.db
-            home = Path.home()
-            kbox_dir = home / ".kbox"
-            kbox_dir.mkdir(exist_ok=True)
-            db_path = str(kbox_dir / "kbox.db")
+            # Default to <data dir>/kbox.db (~/.kbox unless KBOX_DATA_DIR is set)
+            db_path = str(get_data_dir() / "kbox.db")
 
         self.db_path = db_path
         self._ensure_schema()

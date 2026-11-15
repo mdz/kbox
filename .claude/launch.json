@@ -4,7 +4,11 @@
     {
       "name": "kbox",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "python", "-m", "kbox.main"],
+      "runtimeArgs": [
+        "run", "python", "-m", "kbox.main",
+        "--data-dir", ".kbox-scratch",
+        "--access-token", "uxtest"
+      ],
       "port": 8000
     }
   ]

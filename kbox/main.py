@@ -5,6 +5,7 @@ Initializes all components and starts the server.
 """
 
 import logging
+import os
 import secrets
 import sys
 
@@ -17,6 +18,7 @@ from .history import HistoryManager
 from .llm import LLMClient
 from .loudness import LoudnessAnalyzer
 from .overlay import generate_qr_code
+from .paths import DATA_DIR_ENV
 from .platform import (
     configure_macos_gstreamer_env,
     is_macos,
@@ -66,6 +68,10 @@ class KboxServer:
         self.config_manager = ConfigManager(self.database)
 
         # Get or create access token (persists across restarts)
+        forced_token = os.environ.get("KBOX_ACCESS_TOKEN")
+        if forced_token:
+            # Dev/test override: a known token for browser automation.
+            self.config_manager.set("access_token", forced_token)
         self.access_token = self.config_manager.get("access_token")
         if not self.access_token:
             self.access_token = secrets.token_urlsafe(16)
@@ -305,7 +311,21 @@ def actual_main():
     import argparse
 
     parser = argparse.ArgumentParser(description="kbox - Self-contained karaoke system")
-    parser.parse_args()
+    parser.add_argument(
+        "--data-dir",
+        help="Directory for the database, library and QR code (default: ~/.kbox; "
+        "env: KBOX_DATA_DIR). Use for an isolated development instance.",
+    )
+    parser.add_argument(
+        "--access-token",
+        help="Guest access token to use instead of the stored one (env: KBOX_ACCESS_TOKEN). "
+        "For development/testing only.",
+    )
+    args = parser.parse_args()
+    if args.data_dir:
+        os.environ[DATA_DIR_ENV] = args.data_dir
+    if args.access_token:
+        os.environ["KBOX_ACCESS_TOKEN"] = args.access_token
 
     server = KboxServer()
     try:

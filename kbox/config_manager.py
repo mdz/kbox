@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .database import ConfigRepository, Database
+from .paths import get_data_dir
 
 # Configuration groups define the logical sections in the config UI
 CONFIG_GROUPS = {
@@ -359,10 +360,8 @@ class ConfigManager:
         return value.lower() in ("true", "1", "yes", "on")
 
     def get_app_data_dir(self) -> Path:
-        """Get kbox's per-user application data directory (~/.kbox), creating it if needed."""
-        app_dir = Path.home() / ".kbox"
-        app_dir.mkdir(parents=True, exist_ok=True)
-        return app_dir
+        """Get kbox's application data directory (~/.kbox by default; see kbox.paths)."""
+        return get_data_dir()
 
     def get_cache_directory(self) -> Path:
         """Get the resolved video cache/library directory, creating it if needed."""
