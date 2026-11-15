@@ -603,9 +603,10 @@ them.
 macOS needs PyGObject, which is declared as a dev dependency for
 `sys_platform == 'darwin'` only — Linux and the Docker image use the system
 `python3-gi` package instead. If `import gi` fails, run `uv sync --group dev`.
-macOS also needs the native signalsmith pitch-shift plugin built once --
-see `native/gst-signalsmith-pitch/README.md` -- or
-`test_signalsmith_pitch_shift_actually_shifts_frequency` fails.
+The native signalsmith pitch-shift plugin is built by `test/test_streaming.py`
+itself (`native/gst-signalsmith-pitch/build.sh --if-stale`, from a session
+fixture) when it's missing or out of date; if that build fails, the
+`test_signalsmith_*` tests fail with its output.
 
 `test/test_streaming.py` and `test/test_pipeline_benchmark.py` both call
 `configure_macos_gstreamer_env()` (in `kbox/platform.py`) before importing

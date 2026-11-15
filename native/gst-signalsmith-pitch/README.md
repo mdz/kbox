@@ -30,7 +30,10 @@ pkg-config.
 ./build.sh
 ```
 
-Produces `build/libgstsignalsmithpitch.so`.
+Produces `build/libgstsignalsmithpitch.so`, plus `build/inputs.cksum`, a
+checksum of the sources it was built from. `./build.sh --if-stale` uses that
+stamp to skip the build when the `.so` is already current; kbox's test suite
+runs it that way so a fresh checkout builds the plugin on its own.
 
 ## Using it
 

@@ -145,6 +145,59 @@ def controller(mock_config_manager):
     ctrl.stop()
 
 
+SIGNALSMITH_BUILD_SCRIPT = (
+    Path(__file__).resolve().parent.parent / "native" / "gst-signalsmith-pitch" / "build.sh"
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def signalsmith_plugin_build():
+    """Build the native signalsmithpitch plugin if it's missing or stale.
+
+    The .so is a gitignored build artifact, so every fresh checkout -- and
+    every new git worktree -- starts without one. The Docker image builds it
+    in its own stage; this makes a native checkout do the same on first test
+    run, instead of needing a manual setup step that is easy to miss.
+
+    `build.sh --if-stale` is a no-op when the .so already matches the
+    sources, so this costs a checksum over a handful of files on every run
+    after the first.
+
+    Autouse so the build happens before any test in this module creates a
+    StreamingController: once GStreamer has loaded a plugin file into the
+    process, rebuilding it on disk has no effect until the next run.
+
+    Never raises: a failed build only matters to the tests that need the
+    element, and those fail via `signalsmith_elem` with the build output.
+    Returns None on success, otherwise the build's output.
+    """
+    result = subprocess.run(
+        [str(SIGNALSMITH_BUILD_SCRIPT), "--if-stale"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return None
+    return f"{SIGNALSMITH_BUILD_SCRIPT} --if-stale exited {result.returncode}:\n{result.stdout}{result.stderr}"
+
+
+@pytest.fixture
+def signalsmith_elem(controller, signalsmith_plugin_build):
+    """A native signalsmithpitch element at 0 semitones.
+
+    Fails (never skips) when the plugin is unavailable, so missing coverage
+    shows up red rather than silently vanishing.
+    """
+    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
+    assert elem is not None, "signalsmithpitch plugin not available -- " + (
+        f"building it failed. {signalsmith_plugin_build}"
+        if signalsmith_plugin_build
+        else "the build is up to date, so GStreamer could not load it (see the "
+        "'Failed to load signalsmithpitch plugin' log line)."
+    )
+    return elem
+
+
 # =========================================================================
 # Initialization Tests
 # =========================================================================
@@ -481,14 +534,9 @@ def _run_pitch_element_and_measure_frequency(
     return _estimate_frequency_hz(b"".join(chunks), channels=channels, sample_rate=sample_rate)
 
 
-def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
+def test_signalsmith_pitch_shift_actually_shifts_frequency(signalsmith_elem):
     """The native signalsmith element should genuinely change pitch, not just pass audio through."""
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- run "
-        "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
-        "libgstreamer-plugins-base1.0-dev), or check the Docker image build"
-    )
+    elem = signalsmith_elem
 
     semitones = 12  # one octave up -> should double the frequency
     input_freq = 220.0
@@ -498,16 +546,11 @@ def test_signalsmith_pitch_shift_actually_shifts_frequency(controller):
     assert measured_freq == pytest.approx(expected_freq, rel=0.05)
 
 
-def test_signalsmith_pitch_shift_mono_channel(controller):
+def test_signalsmith_pitch_shift_mono_channel(signalsmith_elem):
     """The element declares support for any channel count (see caps in
     gstsignalsmithpitch.cpp) -- confirm mono actually works, not just the
     stereo path exercised by the other frequency test."""
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- run "
-        "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
-        "libgstreamer-plugins-base1.0-dev), or check the Docker image build"
-    )
+    elem = signalsmith_elem
 
     semitones = 12  # one octave up -> should double the frequency
     input_freq = 220.0
@@ -519,15 +562,10 @@ def test_signalsmith_pitch_shift_mono_channel(controller):
     assert measured_freq == pytest.approx(expected_freq, rel=0.05)
 
 
-def test_signalsmith_pitch_shift_semitones_boundary_values(controller):
+def test_signalsmith_pitch_shift_semitones_boundary_values(signalsmith_elem):
     """The semitones property is declared with range [-24, 24]; confirm both
     extremes round-trip through set/get without being rejected or clamped."""
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- run "
-        "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
-        "libgstreamer-plugins-base1.0-dev), or check the Docker image build"
-    )
+    elem = signalsmith_elem
 
     elem.set_property("semitones", -24.0)
     assert elem.get_property("semitones") == pytest.approx(-24.0)
@@ -536,7 +574,7 @@ def test_signalsmith_pitch_shift_semitones_boundary_values(controller):
     assert elem.get_property("semitones") == pytest.approx(24.0)
 
 
-def test_signalsmith_flush_stop_resets_state(controller):
+def test_signalsmith_flush_stop_resets_state(signalsmith_elem):
     """FLUSH_STOP must reset the element's internal signalsmith-stretch state
     end-to-end -- this is the behavior kbox's old rubberband destroy/recreate
     workaround existed to approximate, and the reason this element is used
@@ -545,12 +583,7 @@ def test_signalsmith_flush_stop_resets_state(controller):
     flushing seeks (as happen on quick track transitions) must not error out
     or leave the pipeline in a broken state.
     """
-    elem = elements.create_signalsmith_pitch_shift(controller.config_manager, 0)
-    assert elem is not None, (
-        "signalsmithpitch plugin not available -- run "
-        "native/gst-signalsmith-pitch/build.sh (needs libgstreamer1.0-dev and "
-        "libgstreamer-plugins-base1.0-dev), or check the Docker image build"
-    )
+    elem = signalsmith_elem
 
     Gst = _get_gst()
     pipeline = Gst.Pipeline.new("pitch-shift-flush-test")

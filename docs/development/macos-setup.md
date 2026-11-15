@@ -56,18 +56,24 @@ this page is a checkout where `uv run pytest` passes with no failures and
    `uv pip install pygobject` by hand.
 
 4. **The native `signalsmithpitch` plugin**. The Docker image builds this in
-   its own stage; a native checkout does not, so you build it once:
+   its own stage. In a native checkout, `test/test_streaming.py` builds it on
+   first run, via `native/gst-signalsmith-pitch/build.sh --if-stale`, and
+   rebuilds it whenever its sources change. The build output is a gitignored
+   `.so`, so each checkout and each git worktree gets its own; that is why
+   it's automatic rather than a setup step.
+
+   The build needs a C++ compiler (Xcode Command Line Tools) and `pkg-config`
+   (`brew install pkgconf`). If it fails, **the four `test_signalsmith_*`
+   tests fail** with the build's output — by design: they never skip, so
+   missing coverage shows up red instead of vanishing.
+
+   Running the app (not the tests) in a fresh checkout still needs the plugin
+   built first, or pitch shifting silently falls back to a passthrough
+   element:
 
    ```bash
    native/gst-signalsmith-pitch/build.sh
    ```
-
-   Without it, pitch shifting silently falls back to a passthrough element
-   **and the four `test_signalsmith_*` tests in `test/test_streaming.py`
-   fail** — by design, so missing coverage shows up red instead of vanishing.
-   If you see those four failing in an otherwise green suite, this step is
-   what you skipped. The build output is a `.so`, which `.gitignore` already
-   covers.
 
 ## Environment variables
 
