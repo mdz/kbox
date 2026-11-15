@@ -65,7 +65,6 @@ def test_streaming_controller_no_gstreamer(mock_config_manager, monkeypatch):
     ctrl.stop()
     ctrl.reinitialize_pipeline()
     ctrl.set_pitch_shift(3)
-    ctrl.show_notification("hello")
     ctrl.set_overlay_text("text")
     ctrl.update_qr_overlay("/fake/qr.png")
     ctrl.set_qr_visible(True)

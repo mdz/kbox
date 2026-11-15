@@ -155,7 +155,6 @@ def full_system(temp_db, temp_storage_dir, fake_source, fake_provider):
     mock_streaming.set_eos_callback = Mock()
     mock_streaming.get_position = Mock(return_value=0)
     mock_streaming.seek = Mock(return_value=True)
-    mock_streaming.show_notification = Mock()
     mock_streaming.display_image = Mock()
     mock_streaming.server = None
 

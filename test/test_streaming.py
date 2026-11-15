@@ -172,7 +172,6 @@ def test_init_creates_text_overlay_element(controller):
     assert controller.display.text_overlay is not None, (
         "textoverlay element not available - install gstreamer1.0-x"
     )
-    assert controller.overlays.notification_lock is not None
 
 
 def test_reinitialize_pipeline(controller, test_video_1s):
@@ -820,51 +819,6 @@ def test_qr_overlay_position_calculation(controller, test_video_3s):
 # =========================================================================
 
 
-def test_show_notification(controller):
-    """Test that notifications can be shown and hidden."""
-    assert controller.display.text_overlay is not None, (
-        "textoverlay not available -- install gstreamer1.0-plugins-base"
-    )
-
-    # Show a notification
-    controller.show_notification("Test notification", duration_seconds=1.0)
-
-    # Verify text is set
-    text = controller.display.text_overlay.get_property("text")
-    assert text == "Test notification"
-
-    # Verify not silent (visible)
-    silent = controller.display.text_overlay.get_property("silent")
-    assert silent is False
-
-    # Wait for auto-hide
-    time.sleep(1.5)
-
-    # Verify text is cleared
-    text = controller.display.text_overlay.get_property("text")
-    assert text == ""
-
-    # Verify now silent
-    silent = controller.display.text_overlay.get_property("silent")
-    assert silent is True
-
-
-def test_show_notification_escapes_pango_markup(controller):
-    """Titles/artists with &, <, > must be escaped before hitting the
-    textoverlay element, or GStreamer emits a Pango markup parse warning
-    (e.g. "Shallow ... (Lady Gaga & Bradley Cooper)")."""
-    assert controller.display.text_overlay is not None, (
-        "textoverlay not available -- install gstreamer1.0-plugins-base"
-    )
-
-    raw = "Lady Gaga & Bradley Cooper <3 <live>"
-    controller.show_notification(raw, duration_seconds=60.0)
-
-    text = controller.display.text_overlay.get_property("text")
-    assert text == "Lady Gaga &amp; Bradley Cooper &lt;3 &lt;live&gt;"
-    assert controller.display.text_overlay.get_property("silent") is False
-
-
 def test_set_overlay_text_escapes_pango_markup(controller):
     """set_overlay_text() (persistent overlay) must also escape markup."""
     assert controller.display.text_overlay is not None, (
@@ -993,12 +947,11 @@ def test_eos_fires_for_song(controller):
     assert eos_fired.is_set()
 
 
-def test_show_notification_during_interstitial(controller, interstitial_image):
-    """Notification shown while an interstitial is displayed sets overlay text correctly.
+def test_set_overlay_text_during_interstitial(controller, interstitial_image):
+    """Overlay text set while an interstitial is displayed lands on the element.
 
-    show_notification() has a special path for interstitials: it seeks to
-    position 0 to force imagefreeze to regenerate the frame so the text
-    overlay actually appears on the frozen image.
+    The text overlay lives in the display pipeline, which imagefreeze keeps
+    feeding during an interstitial, so no frame regeneration is needed.
     """
     assert controller.display.text_overlay is not None, (
         "textoverlay not available -- install gstreamer1.0-plugins-base"
@@ -1007,8 +960,7 @@ def test_show_notification_during_interstitial(controller, interstitial_image):
     controller.display_image(interstitial_image)
     assert controller._is_interstitial is True
 
-    # Long duration so auto-hide doesn't fire during the test
-    controller.show_notification("Up next: Alice", duration_seconds=60.0)
+    controller.set_overlay_text("Up next: Alice")
 
     assert controller.display.text_overlay.get_property("text") == "Up next: Alice"
     assert controller.display.text_overlay.get_property("silent") is False
