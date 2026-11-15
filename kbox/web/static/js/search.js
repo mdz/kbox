@@ -9,6 +9,7 @@ import {
 } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue, updateReplaceTargetBanner } from './queue.js';
+import { showToast } from './toast.js';
 import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
 
 // Note: window.fetch is patched in auth.js to retry once on a 401/403 to
@@ -223,6 +224,43 @@ export function cancelAddToQueue() {
 
 // Confirm and add (or replace) a song in the queue.
 // Same guardrails and submit path either way - only the endpoint/payload differ.
+// Work out where a just-added/replaced queue item sits and roughly when it
+// will play, from the server's queue + playback status (the add/replace
+// responses don't include this). Returns null if it can't be determined.
+async function describeQueuePosition(itemId) {
+    try {
+        const [queueResponse, statusResponse] = await Promise.all([
+            fetch('/api/queue'),
+            fetch('/api/playback/status')
+        ]);
+        if (!queueResponse.ok || !statusResponse.ok) return null;
+        const queueData = await queueResponse.json();
+        const status = await statusResponse.json();
+
+        const upcoming = queueData.queue.filter(item => !item.is_played && !item.is_current);
+        const index = upcoming.findIndex(item => item.id === itemId);
+        if (index === -1) return null;
+
+        const current = status.current_song;
+        let seconds = current
+            ? Math.max(0, (current.duration_seconds || 0) - (status.position_seconds || 0))
+            : 0;
+        for (let i = 0; i < index; i++) {
+            seconds += upcoming[i].duration_seconds || 0;
+        }
+        return {position: index + 1, minutes: Math.round(seconds / 60)};
+    } catch (e) {
+        return null;
+    }
+}
+
+function positionSuffix(info) {
+    if (!info) return '';
+    if (info.position === 1) return ' — you\'re up next';
+    const wait = info.minutes < 1 ? 'less than a minute' : `about ${info.minutes} min`;
+    return ` — #${info.position} in the queue, ${wait}`;
+}
+
 export async function confirmAddToQueue() {
     if (!currentVideoToAdd) return;
 
@@ -270,7 +308,7 @@ export async function confirmAddToQueue() {
     } else {
         const pitchInput = document.getElementById('add-song-pitch-input');
         if (!pitchInput) {
-            alert('Pitch control not initialized');
+            showToast('Pitch control not initialized', {error: true});
             return;
         }
         url = '/api/queue';
@@ -297,10 +335,16 @@ export async function confirmAddToQueue() {
             modal.style.display = 'none';
             document.getElementById('search-input').value = '';
             document.getElementById('search-results').innerHTML = '';
+            const title = currentVideoToAdd.title;
+            const addedId = replacing ? replacing.itemId : (await response.json()).id;
             loadQueue();
             setCurrentVideoToAdd(null);
             setCurrentSelectionTarget(null);
             updateReplaceTargetBanner();
+            const verb = replacing ? 'Replaced with' : 'Added';
+            showToast(`✓ ${verb} ${title}`);
+            const info = await describeQueuePosition(addedId);
+            if (info) showToast(`✓ ${verb} ${title}${positionSuffix(info)}`);
         } else {
             // Try to get error detail from response
             let errorMessage = replacing ? 'Error replacing song' : 'Error adding song to queue';
@@ -312,10 +356,10 @@ export async function confirmAddToQueue() {
             } catch (parseError) {
                 // Ignore parse errors, use default message
             }
-            alert(errorMessage);
+            showToast(errorMessage, {error: true});
         }
     } catch (e) {
-        alert(replacing ? 'Error replacing song' : 'Error adding song to queue');
+        showToast(replacing ? 'Error replacing song' : 'Error adding song to queue', {error: true});
     }
 }
 
