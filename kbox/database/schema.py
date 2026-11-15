@@ -39,8 +39,8 @@ class Database:
         self.logger.info("Database initialized at %s", self.db_path)
 
     def _ensure_schema(self):
-        """Ensure database schema exists and is up to date (thread-safe)."""
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        """Ensure database schema exists and is up to date."""
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
@@ -568,18 +568,20 @@ class Database:
 
     def get_connection(self):
         """
-        Get a new database connection (thread-safe).
+        Open a new database connection for a single unit of work.
 
-        Each thread should get its own connection. Caller is responsible
-        for closing the connection when done.
+        Every call returns a fresh connection; callers open it, use it and
+        close it within one function, so it never leaves the thread that
+        opened it. Do not cache or share the returned connection: sqlite3's
+        default ``check_same_thread`` guard will raise ProgrammingError if
+        it is used from another thread. Caller is responsible for closing it.
         """
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def close(self):
-        """Close database connection (no-op since we use per-thread connections)."""
-        # No-op since we create connections per-thread now
+        """No-op: the Database holds no connection; each get_connection() call opens its own."""
         pass
 
     def __enter__(self):
