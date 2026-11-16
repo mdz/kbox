@@ -14,7 +14,7 @@ import uvicorn
 
 from .backup import create_snapshot
 from .config_manager import ConfigManager
-from .database import Database
+from .database import Database, EventRepository
 from .favorites import FavoritesManager
 from .history import HistoryManager
 from .llm import LLMClient
@@ -162,6 +162,7 @@ class KboxServer:
             self.history_manager,
             silence_analyzer=self.silence_analyzer,
             loudness_analyzer=self.loudness_analyzer,
+            event_repository=EventRepository(self.database),
         )
 
         # SuggestionEngine for AI-powered song recommendations

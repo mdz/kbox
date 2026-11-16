@@ -537,6 +537,131 @@ def test_set_pitch_no_current_song(playback_controller):
     assert result is False
 
 
+@pytest.fixture
+def mock_event_repo():
+    return Mock()
+
+
+@pytest.fixture
+def recording_controller(
+    mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_event_repo
+):
+    """A PlaybackController that records pitch events to a mock repository."""
+    mock_queue_manager.get_queue.return_value = []
+    controller = PlaybackController(
+        mock_queue_manager,
+        mock_streaming_controller,
+        mock_config_manager,
+        event_repository=mock_event_repo,
+    )
+    controller._monitor.request_stop()
+    return controller
+
+
+def _events_of_type(mock_event_repo, event_type):
+    return [
+        (c.args[0], c.args[2])
+        for c in mock_event_repo.record.call_args_list
+        if c.args[1] == event_type
+    ]
+
+
+def test_play_records_starting_pitch(recording_controller, mock_queue_manager, mock_event_repo):
+    """Starting a song records the pitch it started at, under the singer's id."""
+    song = create_mock_queue_item(
+        id=7, user_id="singer-1", video_id="youtube:abc", pitch_semitones=-2
+    )
+    mock_queue_manager.get_song_at_offset.return_value = song
+
+    assert recording_controller.play() is True
+
+    assert _events_of_type(mock_event_repo, "pitch_start") == [
+        ("singer-1", {"queue_item_id": 7, "video_id": "youtube:abc", "semitones": -2})
+    ]
+
+
+def test_set_pitch_records_mid_song_change(
+    recording_controller, mock_queue_manager, mock_streaming_controller, mock_event_repo
+):
+    """A mid-song change records old/new pitch, the starting pitch, and the position."""
+    song = create_mock_queue_item(
+        id=7, user_id="singer-1", video_id="youtube:abc", pitch_semitones=-2
+    )
+    mock_queue_manager.get_song_at_offset.return_value = song
+    recording_controller.play()
+
+    # By the second change the queue item holds the first change's value
+    mock_queue_manager.get_item.return_value = create_mock_queue_item(
+        id=7, user_id="singer-1", video_id="youtube:abc", pitch_semitones=-1
+    )
+    mock_streaming_controller.get_position.return_value = 42
+
+    assert recording_controller.set_pitch(1, changed_by="singer-1") is True
+
+    assert _events_of_type(mock_event_repo, "pitch_change") == [
+        (
+            "singer-1",
+            {
+                "queue_item_id": 7,
+                "video_id": "youtube:abc",
+                "old_semitones": -1,
+                "new_semitones": 1,
+                "phase": "playing",
+                "start_semitones": -2,
+                "position_seconds": 42,
+                "changed_by": "singer-1",
+                "changed_by_singer": True,
+            },
+        )
+    ]
+    mock_queue_manager.update_pitch.assert_called_once_with(7, 1)
+
+
+def test_set_pitch_by_someone_else_is_marked(
+    recording_controller, mock_queue_manager, mock_event_repo
+):
+    """A change made by an operator stays under the singer's id but isn't theirs."""
+    recording_controller.current_song_id = 7
+    recording_controller.state = PlaybackState.PLAYING
+    mock_queue_manager.get_item.return_value = create_mock_queue_item(
+        id=7, user_id="singer-1", pitch_semitones=0
+    )
+
+    recording_controller.set_pitch(-3, changed_by=None)
+
+    [(user_id, data)] = _events_of_type(mock_event_repo, "pitch_change")
+    assert user_id == "singer-1"
+    assert data["changed_by"] is None
+    assert data["changed_by_singer"] is False
+
+
+def test_set_pitch_to_same_value_records_nothing(
+    recording_controller, mock_queue_manager, mock_event_repo
+):
+    recording_controller.current_song_id = 7
+    recording_controller.state = PlaybackState.PLAYING
+    mock_queue_manager.get_item.return_value = create_mock_queue_item(id=7, pitch_semitones=2)
+
+    assert recording_controller.set_pitch(2) is True
+
+    mock_event_repo.record.assert_not_called()
+
+
+def test_set_pitch_survives_event_recording_failure(
+    recording_controller, mock_queue_manager, mock_streaming_controller, mock_event_repo
+):
+    """Recording is best-effort: a failure must not stop the pitch change."""
+    recording_controller.current_song_id = 7
+    recording_controller.state = PlaybackState.PLAYING
+    mock_queue_manager.get_item.return_value = create_mock_queue_item(id=7, pitch_semitones=0)
+    mock_event_repo.record.side_effect = RuntimeError("database is locked")
+
+    assert recording_controller.set_pitch(2) is True
+
+    mock_queue_manager.update_pitch.assert_called_once_with(7, 2)
+    mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
+
+
 def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test handling end of song."""
     current_song = create_mock_queue_item(

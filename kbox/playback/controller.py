@@ -17,6 +17,7 @@ from typing import Iterator, List, Optional
 from ..database import ConfigRepository
 from ..models import QueueItem
 from ..periodic import PeriodicThread
+from ..pitch_events import PHASE_PLAYING, record_pitch_change, record_pitch_start
 from ..queue import MoveResult, QueueManager
 from . import history_policy, song_tuning
 from .cursor import QueueCursor
@@ -92,6 +93,7 @@ class PlaybackController:
         history_manager=None,  # HistoryManager - avoid circular import, optional for tests
         silence_analyzer=None,  # TrailingSilenceAnalyzer - avoid circular import, optional
         loudness_analyzer=None,  # LoudnessAnalyzer - avoid circular import, optional
+        event_repository=None,  # EventRepository - optional, for recording pitch choices
     ):
         """
         Initialize PlaybackController.
@@ -109,6 +111,9 @@ class PlaybackController:
                 provided (and loudness_normalization_enabled is on), a
                 compensating gain is applied so songs from different
                 sources play back at a consistent volume.
+            event_repository: EventRepository instance (optional). When
+                provided, the pitch each song starts at and every change made
+                during playback are recorded (see kbox/pitch_events.py).
         """
         self.queue_manager = queue_manager
         self.streaming_controller = streaming_controller
@@ -116,6 +121,7 @@ class PlaybackController:
         self.history_manager = history_manager
         self.silence_analyzer = silence_analyzer
         self.loudness_analyzer = loudness_analyzer
+        self.event_repository = event_repository
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
@@ -136,6 +142,10 @@ class PlaybackController:
         # Cached trailing-silence trim point (seconds) for the current song,
         # looked up once in _play_song(). None if unavailable/disabled.
         self._current_trim_point: Optional[int] = None
+
+        # Pitch the current song started playing at, set in _play_song(), so
+        # pitch_change events can tell the starting choice from corrections.
+        self._start_pitch: Optional[int] = None
 
         # Queue cursor: the ID of the song currently playing (or last played).
         # Songs before the cursor's position are "played", songs after are "upcoming".
@@ -647,6 +657,8 @@ class PlaybackController:
             #   2. on_song_end() - clears it when song finishes naturally
             # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
+            self._start_pitch = pitch
+            record_pitch_start(self.event_repository, song)
 
             # Look up trailing-silence trim point for the monitor loop to act on
             self._current_trim_point = song_tuning.lookup_trim_point(
@@ -1321,12 +1333,14 @@ class PlaybackController:
 
         return PlaybackStatus(state=state, current_song=current_song, position_seconds=position)
 
-    def set_pitch(self, semitones: int) -> bool:
+    def set_pitch(self, semitones: int, changed_by: Optional[str] = None) -> bool:
         """
         Set pitch adjustment for current song.
 
         Args:
             semitones: Pitch adjustment in semitones
+            changed_by: User id of whoever made the change, if known; recorded
+                with the pitch_change event
 
         Returns:
             True if set, False if no current song
@@ -1336,6 +1350,9 @@ class PlaybackController:
                 self.logger.warning("No current song to adjust pitch")
                 return False
 
+            if self.event_repository is not None:
+                self._record_pitch_change(semitones, changed_by)
+
             # Update in queue database
             self.queue_manager.update_pitch(self.current_song_id, semitones)
 
@@ -1344,6 +1361,27 @@ class PlaybackController:
 
             self.logger.info("Set pitch to %s semitones for current song", semitones)
             return True
+
+    def _record_pitch_change(self, semitones: int, changed_by: Optional[str]) -> None:
+        """Record a mid-song pitch change. Assumes lock is held; never raises."""
+        self._require_locked()
+        try:
+            song = self.queue_manager.get_item(self.current_song_id)
+            if song is None:
+                return
+            position = self.streaming_controller.get_position()
+        except Exception:
+            self.logger.warning("Could not read state to record pitch change", exc_info=True)
+            return
+        record_pitch_change(
+            self.event_repository,
+            song,
+            semitones,
+            phase=PHASE_PLAYING,
+            changed_by=changed_by,
+            start_semitones=self._start_pitch,
+            position_seconds=position,
+        )
 
     def restart(self) -> SeekResult:
         """

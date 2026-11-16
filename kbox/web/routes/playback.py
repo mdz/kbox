@@ -153,7 +153,7 @@ def set_pitch(
     if not is_own_song and not is_operator:
         raise HTTPException(status_code=403, detail="You can only adjust pitch for your own song")
 
-    if playback.set_pitch(request_data.semitones):
+    if playback.set_pitch(request_data.semitones, changed_by=current_user_id):
         return {"status": "updated", "pitch": request_data.semitones}
     else:
         raise HTTPException(status_code=400, detail="Failed to update pitch")
