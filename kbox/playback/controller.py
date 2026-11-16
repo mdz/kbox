@@ -920,6 +920,40 @@ class PlaybackController:
         with self._locked():
             return self._skip_internal()
 
+    def end_turn(self, item_id: int) -> bool:
+        """
+        End a singer's turn early: stop their song and move on to the next
+        singer.
+
+        For a singer who can't carry on with their own song (wrong song,
+        wrong version, a bad karaoke track, not ready). It moves on the way a
+        natural end does -- the "up next" interstitial, or the end-of-queue
+        screen if nobody is next -- but the attempt is never written to
+        performance history. The song stays in the queue, so the host can
+        give the singer another go with Play Next.
+
+        Only item_id's turn ends, and only while it is playing or paused, so a
+        request that arrives after that song has already ended can never end
+        the next singer's turn instead.
+
+        Args:
+            item_id: Queue item whose turn the caller means to end
+
+        Returns:
+            True if the turn ended, False if it is not the song playing now
+        """
+        with self._locked():
+            if self.current_song_id != item_id or self.state not in (
+                PlaybackState.PLAYING,
+                PlaybackState.PAUSED,
+            ):
+                return False
+            position = self.streaming_controller.get_position() or 0
+            self.logger.info("Ending turn for song %s at %ss on request", item_id, position)
+            self.streaming_controller.stop_playback()
+            self._complete_current_song(final_position=position, record_history=False)
+            return True
+
     def jump_to_song(self, item_id: int) -> bool:
         """
         Jump to and play a song immediately at its current queue position.

@@ -1964,3 +1964,38 @@ class TestErrorPaths:
             json={"new_position": 1},
         )
         assert response.status_code == 404
+
+
+class TestEndTurn:
+    """POST /api/playback/end-turn: who may end a turn."""
+
+    def _song_id(self, app_components, user):
+        return app_components["queue"].add_song(user=user, video_id="youtube:s1", title="T")
+
+    def test_singer_ends_own_turn(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        item_id = self._song_id(app_components, alice)
+        app_components["playback"].end_turn.return_value = True
+
+        response = client.post("/api/playback/end-turn", json={"item_id": item_id})
+
+        assert response.json() == {"status": "ended"}
+        app_components["playback"].end_turn.assert_called_once_with(item_id)
+
+    def test_other_guest_cannot(self, client, alice, bob, app_components):
+        item_id = self._song_id(app_components, alice)
+        set_user(client, BOB_ID, "Bob")
+
+        response = client.post("/api/playback/end-turn", json={"item_id": item_id})
+
+        assert response.status_code == 403
+        app_components["playback"].end_turn.assert_not_called()
+
+    def test_song_no_longer_playing(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        item_id = self._song_id(app_components, alice)
+        app_components["playback"].end_turn.return_value = False
+
+        response = client.post("/api/playback/end-turn", json={"item_id": item_id})
+
+        assert response.json() == {"status": "not_playing"}

@@ -7,6 +7,7 @@ import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock, pitchLockLabel } from './controls.js';
 import { renderKeyFix, updateKeyFix } from './key-fix.js';
+import { renderEndTurn } from './end-turn.js';
 
 // What the Now Playing section was last fully rendered for (song + which
 // controls this viewer gets), so polls only patch values in place.
@@ -219,6 +220,10 @@ export function renderNowPlaying(statusData) {
 
     const currentSong = statusData.current_song;
 
+    // While it's this guest's own song, the page shows only what they can do
+    // about it (key fix, end turn); search and the queue come back when it ends.
+    document.body.classList.toggle('singing', !!currentSong && currentSong.user_id === userId);
+
     // Show/hide playback controls section based on operator status
     const playbackControlsSection = document.getElementById('playback-controls-section');
     if (playbackControlsSection) {
@@ -289,6 +294,7 @@ export function renderNowPlaying(statusData) {
 
     if (isOwnSong) {
         renderKeyFix(container, renderKey, pitchValue);
+        renderEndTurn(container, currentSong.id);
     }
 
     // Operator pitch controls and lock button

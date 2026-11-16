@@ -734,3 +734,30 @@ def test_removing_the_song_on_the_interstitial_retargets_it(full_system):
     assert playback._next_song_pending.id == dave_id
     playback.play()
     assert playback.current_song_id == dave_id
+
+
+def test_singer_ending_their_turn_moves_on_and_the_song_never_comes_back(full_system):
+    """Bob ends his turn mid-song from his phone.
+
+    Charlie is up next. Bob's attempt is not a performance, and the song
+    stays in the queue (so the host can give him another go) but never comes
+    back by itself.
+    """
+    system = full_system
+    playback = system["playback"]
+    alice_id, bob_id, charlie_id = _start_second_song(system)
+
+    client = _api_client(system)
+    client.post("/api/users", json={"user_id": BOB_ID, "display_name": "Bob"})
+    response = client.post("/api/playback/end-turn", json={"item_id": bob_id})
+    assert response.json() == {"status": "ended"}
+
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending.id == charlie_id
+    playback.play()  # skip the interstitial
+    assert playback.current_song_id == charlie_id
+
+    playback.on_song_end()  # Charlie finishes: nobody left, Bob's song isn't replayed
+    assert playback.state == PlaybackState.IDLE
+    assert system["queue"].get_item(bob_id) is not None
+    assert [h.metadata.title for h in system["history"].get_user_history(BOB_ID)] == []
