@@ -53,6 +53,7 @@ def _mock_playback():
     playback.get_cursor.return_value = None
     playback.get_upcoming.return_value = []
     playback.move_to_next.return_value = True
+    playback.remove_song.return_value = True
     playback.move_to_end.return_value = True
     playback.move_down.return_value = MoveResult(MoveOutcome.MOVED, old_position=1, new_position=2)
     playback.move_up.return_value = MoveResult(MoveOutcome.MOVED, old_position=2, new_position=1)

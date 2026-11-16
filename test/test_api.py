@@ -404,7 +404,7 @@ class TestQueueEndpoints:
         playback.get_upcoming.return_value = [UpcomingItem(queue_mgr.get_item(id3), 1, 30)]
         assert client.get("/api/queue").json()["my_next_turn"] is None
 
-    def test_remove_song_as_owner(self, client, alice):
+    def test_remove_song_as_owner(self, client, alice, app_components):
         """DELETE /api/queue/{id} - owner can remove their song."""
         # Establish session identity
         set_user(client, ALICE_ID, "Alice")
@@ -424,6 +424,8 @@ class TestQueueEndpoints:
         response = client.delete(f"/api/queue/{item_id}")
         assert response.status_code == 200
         assert response.json()["status"] == "removed"
+        # Through playback, which stops the song if it is the one playing
+        app_components["playback"].remove_song.assert_called_once_with(item_id)
 
     def test_remove_song_not_owner(self, client, alice, bob, app_components):
         """DELETE /api/queue/{id} - non-owner cannot remove song."""

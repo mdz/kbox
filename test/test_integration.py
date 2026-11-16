@@ -573,3 +573,164 @@ def test_video_availability_check(full_system):
     path = system["video_library"].get_path("fake:newvideo")
     assert path is not None
     assert path.name == "video.mp4"
+
+
+# =============================================================================
+# Removing a song that is playing, or that playback still refers to
+# =============================================================================
+
+
+def _ready_song(system, user_key, video_id, title):
+    """Add a song for a user and mark it downloaded."""
+    item_id = system["queue"].add_song(
+        user=system["users"][user_key], video_id=video_id, title=title, duration_seconds=180
+    )
+    system["queue"].update_content_status(
+        item_id, QueueManager.STATUS_READY, content_path=f"/path/to/{title}.mp4"
+    )
+    return item_id
+
+
+def _start_second_song(system):
+    """Alice's song has been sung; Bob's is playing; Charlie's is next.
+
+    The transition is long so that no timer thread starts a song behind the
+    test's back: play() during the interstitial starts the pending song.
+    """
+    playback = system["playback"]
+    playback._monitor.request_stop()
+    system["config"].set("transition_duration_seconds", "3600")
+
+    alice_id = _ready_song(system, "alice", "fake:a", "Song A")
+    bob_id = _ready_song(system, "bob", "fake:b", "Song B")
+    charlie_id = _ready_song(system, "charlie", "fake:c", "Song C")
+
+    playback.play()
+    system["streaming"].get_position.return_value = 180
+    playback.on_song_end()  # Alice finishes; interstitial for Bob
+    playback.play()  # skip the wait
+    assert playback.current_song_id == bob_id
+    system["streaming"].get_position.return_value = 30
+    return alice_id, bob_id, charlie_id
+
+
+def _api_client(system):
+    """A TestClient over the real queue and playback controller."""
+    from fastapi.testclient import TestClient
+
+    from kbox.favorites import FavoritesManager
+    from kbox.web.app import create_app
+
+    app = create_app(
+        queue_manager=system["queue"],
+        video_library=system["video_library"],
+        playback_controller=system["playback"],
+        config_manager=system["config"],
+        user_manager=system["user"],
+        history_manager=system["history"],
+        favorites_manager=FavoritesManager(system["queue"].database),
+        streaming_controller=system["streaming"],
+    )
+    return TestClient(app)
+
+
+def test_singer_removing_their_playing_song_moves_on_to_the_next_singer(full_system):
+    """DELETE /api/queue/{id} on the song playing now stops it and moves on.
+
+    Before the fix the song kept playing after its row was deleted, and when
+    it ended the controller could not find it in the queue to work out who was
+    next, so it fell back to the top of the queue and played Alice's song,
+    sung earlier in the night, again.
+    """
+    system = full_system
+    playback = system["playback"]
+    alice_id, bob_id, charlie_id = _start_second_song(system)
+
+    client = _api_client(system)
+    client.post("/api/users", json={"user_id": BOB_ID, "display_name": "Bob"})
+    response = client.delete(f"/api/queue/{bob_id}")
+    assert response.status_code == 200
+
+    # Bob's song stops now, rather than playing on to the end
+    assert playback.current_song_id is None
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending is not None
+    assert playback._next_song_pending.id == charlie_id
+
+    # Even if the end-of-song event for it arrives late, nobody replays
+    playback.on_song_end()
+    playback.play()  # skip the interstitial
+    assert playback.current_song_id == charlie_id
+
+    # A song the singer withdrew is not a performance
+    assert [h.metadata.title for h in system["history"].get_user_history(BOB_ID)] == []
+    assert system["queue"].get_item(bob_id) is None
+
+
+def test_removing_paused_song_moves_on(full_system):
+    """A paused song removed from the queue is stopped, not left paused."""
+    system = full_system
+    playback = system["playback"]
+    _, bob_id, charlie_id = _start_second_song(system)
+    playback.pause()
+
+    assert playback.remove_song(bob_id) is True
+
+    system["streaming"].stop_playback.assert_called()
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending.id == charlie_id
+
+
+def test_removing_last_playing_song_shows_end_of_queue(full_system):
+    """Removing the playing song with nobody after it goes to the end screen."""
+    system = full_system
+    playback = system["playback"]
+    _, bob_id, charlie_id = _start_second_song(system)
+    playback.on_song_end()
+    playback.play()
+    assert playback.current_song_id == charlie_id
+
+    assert playback.remove_song(charlie_id) is True
+
+    assert playback.state == PlaybackState.IDLE
+    assert playback.current_song_id is None
+    assert playback.get_cursor() == bob_id
+
+
+def test_removing_last_sung_song_does_not_replay_the_queue(full_system):
+    """Removing the song the cursor points at keeps already-sung songs sung.
+
+    Bob's song was the last one sung (the queue ran out). If he then removes
+    it, the next song added must play next, not Alice's from the top.
+    """
+    system = full_system
+    playback = system["playback"]
+    alice_id, bob_id, charlie_id = _start_second_song(system)
+    # Charlie withdraws before singing; Bob finishes; queue exhausted.
+    assert playback.remove_song(charlie_id) is True
+    playback.on_song_end()
+    assert playback.state == PlaybackState.IDLE
+    assert playback.get_cursor() == bob_id
+
+    assert playback.remove_song(bob_id) is True
+    dave_id = _ready_song(system, "charlie", "fake:d", "Song D")
+    playback._on_monitor_tick()
+
+    assert playback.current_song_id == dave_id
+
+
+def test_removing_the_song_on_the_interstitial_retargets_it(full_system):
+    """Removing the song the "up next" screen announces announces the one after."""
+    system = full_system
+    playback = system["playback"]
+    alice_id, bob_id, charlie_id = _start_second_song(system)
+    dave_id = _ready_song(system, "alice", "fake:d", "Song D")
+    playback.on_song_end()  # Bob finishes; interstitial for Charlie
+    assert playback._next_song_pending.id == charlie_id
+
+    assert playback.remove_song(charlie_id) is True
+
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending.id == dave_id
+    playback.play()
+    assert playback.current_song_id == dave_id
