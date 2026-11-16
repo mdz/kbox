@@ -563,7 +563,11 @@ class QueueManager:
         current_idx = next((i for i, s in enumerate(queue) if s.id == from_song_id), None)
 
         if current_idx is None:
-            # Reference song gone entirely - fall back to first/last
+            # Reference song gone entirely - fall back to first/last.
+            # PlaybackController.remove_song() keeps playback's references
+            # (current song, cursor) pointing at rows that exist, so this is
+            # reached only for a stale reference, e.g. a cursor persisted by
+            # an older version. Playing from the top beats getting stuck.
             return queue[0] if offset >= 0 else queue[-1]
 
         target_idx = current_idx + offset

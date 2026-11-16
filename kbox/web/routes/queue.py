@@ -170,13 +170,15 @@ def add_song(
 def remove_song(
     item_id: int,
     queue_mgr: QueueManager = Depends(get_queue_manager),
+    playback: PlaybackController = Depends(get_playback_controller),
     is_operator: bool = Depends(check_operator),
     current_user_id: Optional[str] = Depends(get_current_user_id),
 ):
     """
     Remove song from queue.
 
-    Operators can remove any song. Users can remove their own songs.
+    Operators can remove any song. Users can remove their own songs. If it is
+    the song playing now, it stops and playback moves on to the next singer.
     User identity is determined from session (not query params) — identity is
     self-declared and unverified, so this just fixes which UUID a write is
     attributed to, not who it "really" belongs to.
@@ -191,7 +193,8 @@ def remove_song(
         if not current_user_id or current_user_id != item.user_id:
             raise HTTPException(status_code=403, detail="You can only remove songs you added")
 
-    if not queue_mgr.remove_song(item_id):
+    # Through playback, not the queue directly: it may be the song playing now.
+    if not playback.remove_song(item_id):
         raise HTTPException(status_code=404, detail="Queue item not found")
     return {"status": "removed"}
 
