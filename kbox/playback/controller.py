@@ -1050,6 +1050,76 @@ class PlaybackController:
                 item_id, video_id, title, duration_seconds, thumbnail_url, channel
             )
 
+    def remove_song(self, item_id: int) -> bool:
+        """
+        Remove a song from the queue, keeping playback consistent with it.
+
+        Playback refers to queue items by ID: the song playing now, the one
+        the "up next" screen announces, and the cursor (the last song
+        started). Deleting the row behind any of them without telling
+        playback leaves it looking for a song that is gone, and the queue's
+        fallback for a missing reference is the top of the queue -- a song
+        sung hours ago. So:
+
+        - The song playing (or paused) now stops and playback moves on to
+          the next singer, as at a natural end, without recording a
+          performance: the singer withdrew it.
+        - A song the "up next" screen announces is replaced there by the
+          song after it.
+        - The cursor moves back to the song before, so songs already sung
+          stay sung.
+
+        Args:
+            item_id: ID of the queue item to remove
+
+        Returns:
+            True if removed, False if the item wasn't found
+        """
+        with self._locked():
+            if self.queue_manager.get_item(item_id) is None:
+                return False
+
+            if self.current_song_id == item_id:
+                if self.state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
+                    self.logger.info("Removing song %s while it plays; moving on", item_id)
+                    self.streaming_controller.stop_playback()
+                    self._complete_current_song(record_history=False)
+                else:
+                    # Stopped (remembered for resume) or awaiting a
+                    # replacement: there is nothing left to resume.
+                    self.current_song_id = None
+            if self._awaiting_replace_item_id == item_id:
+                self._awaiting_replace_item_id = None
+
+            announced = (
+                self.state == PlaybackState.TRANSITION
+                and self._next_song_pending is not None
+                and self._next_song_pending.id == item_id
+            )
+            # Both lookups need the row, so they come before the delete.
+            song_after = self.queue_manager.get_song_at_offset(item_id, +1) if announced else None
+            if self._cursor.get() == item_id:
+                song_before = self.queue_manager.get_song_at_offset(item_id, -1)
+                if song_before is not None:
+                    self.set_cursor(song_before.id)
+                else:
+                    self.clear_cursor()
+
+            if not self.queue_manager.remove_song(item_id):
+                return False
+
+            if announced:
+                if self._transition_timer:
+                    self._transition_timer.cancel()
+                    self._transition_timer = None
+                self._next_song_pending = None
+                if song_after is not None:
+                    self._show_transition_or_end(next_song=song_after)
+                else:
+                    self._set_state(PlaybackState.IDLE, "queue exhausted")
+                    self._screens.show_end_of_queue()
+            return True
+
     def previous(self) -> bool:
         """
         Go to previous song in the queue.
@@ -1164,8 +1234,9 @@ class PlaybackController:
                 None, queries the streaming controller's current position
                 (the natural-EOS case, where GStreamer is already stopped
                 at the real end of the file).
-            record_history: False for a song the singer gave up on
-                (stop_song()), which is not a performance whatever its
+            record_history: False for a song that was not sung through: one
+                its singer gave up on (stop_song()) or withdrew from the queue
+                (remove_song()). Neither is a performance, whatever its
                 length.
         """
         self._require_locked()
