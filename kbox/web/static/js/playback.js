@@ -6,9 +6,11 @@ import { isOperator, userId, controlsLocked } from './state.js';
 import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock, pitchLockLabel } from './controls.js';
+import { renderKeyFix, updateKeyFix } from './key-fix.js';
 
-// Track the currently displayed song to detect song changes
-let currentDisplayedSongId = null;
+// What the Now Playing section was last fully rendered for (song + which
+// controls this viewer gets), so polls only patch values in place.
+let currentRenderKey = null;
 
 // Update play/pause toggle button based on state
 export function updatePlayPauseButton(state) {
@@ -226,25 +228,26 @@ export function renderNowPlaying(statusData) {
     // If no current song, just show message
     if (!currentSong) {
         container.innerHTML = '<div style="text-align: center; color: #666; padding: 15px;">Nothing playing</div>';
-        currentDisplayedSongId = null;  // Reset so next song triggers full render
+        currentRenderKey = null;  // Reset so next song triggers full render
         return;
     }
 
-    // Check if user can access pitch controls (their song or operator)
-    const hasControlAccess = (currentSong.user_id === userId) || isOperator;
-
-    // Check if we already have pitch controls rendered
-    const hasExistingControls = document.getElementById('now-playing-lock-button') !== null;
+    // The singer gets the plain "Too high? / Too low?" key fix; operators
+    // keep the fine-grained pitch control (both, if an operator is singing).
+    const isOwnSong = currentSong.user_id === userId;
+    const hasOperatorPitch = isOperator;
 
     // Determine song identity (use video_id if available, fall back to title)
     const songId = currentSong.video_id || currentSong.title;
-    const songChanged = songId !== currentDisplayedSongId;
+    const renderKey = `${currentSong.id ?? songId}|${isOwnSong}|${hasOperatorPitch}`;
+    const pitchValue = currentSong.pitch_semitones || 0;
 
-    // Only do partial update if controls exist, user has access, AND song hasn't changed
-    if (hasExistingControls && hasControlAccess && !songChanged) {
-        // Controls already exist for same song - just update values and visibility without destroying buttons
+    // Same song and same controls: just update values without destroying buttons
+    if (renderKey === currentRenderKey && container.querySelector('#key-fix, #now-playing-lock-button')) {
         updateNowPlayingSongInfo(currentSong, statusData.position_seconds);
-        updateNowPlayingPitchValue(currentSong.pitch_semitones || 0);
+        if (isOwnSong) updateKeyFix(pitchValue);
+        if (!hasOperatorPitch) return;
+        updateNowPlayingPitchValue(pitchValue);
 
         // Update visibility based on lock state
         const pitchSection = document.getElementById('now-playing-pitch-section');
@@ -259,8 +262,7 @@ export function renderNowPlaying(statusData) {
         return;
     }
 
-    // Track current song for future change detection
-    currentDisplayedSongId = songId;
+    currentRenderKey = renderKey;
 
     // Format display title: prefer extracted artist/song
     const hasExtracted = currentSong.artist && currentSong.song_name;
@@ -285,8 +287,12 @@ export function renderNowPlaying(statusData) {
         showPitchControls: false
     });
 
-    // Add pitch controls and lock button if user has access
-    if (hasControlAccess) {
+    if (isOwnSong) {
+        renderKeyFix(container, renderKey, pitchValue);
+    }
+
+    // Operator pitch controls and lock button
+    if (hasOperatorPitch) {
         // Pitch controls section (hidden when locked)
         const pitchControls = document.createElement('div');
         pitchControls.id = 'now-playing-pitch-section';
@@ -298,7 +304,6 @@ export function renderNowPlaying(statusData) {
         container.appendChild(pitchControls);
 
         // Initialize pitch control
-        const pitchValue = currentSong.pitch_semitones || 0;
         const pitchControlContainer = document.getElementById('now-playing-pitch-control-container');
         if (pitchControlContainer) {
             pitchControlContainer.innerHTML = createPitchControlHTML('now-playing', pitchValue, 24);

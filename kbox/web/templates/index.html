@@ -804,6 +804,77 @@
             background: #444;
         }
 
+        /* Singer's own-song key fix ("Too high? / Too low?"). */
+        .key-fix {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #444;
+        }
+        .key-fix-heading {
+            color: #4aff6e;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .key-fix-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .key-fix-button {
+            flex: 1;
+            min-height: 64px;
+            padding: 10px 8px;
+            border-radius: 10px;
+            background: #2a3d55;
+            border: 2px solid #4a9eff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .key-fix-button:active:not(:disabled) {
+            background: #4a9eff;
+        }
+        .key-fix-ask {
+            font-size: 0.85em;
+            color: #ccc;
+        }
+        .key-fix-act {
+            font-size: 1.15em;
+            font-weight: 600;
+        }
+        .key-fix-status {
+            text-align: center;
+            margin-top: 10px;
+            color: #aaa;
+        }
+        .key-fix-status strong {
+            color: #fff;
+        }
+        .key-fix-undo {
+            text-align: center;
+            margin-top: 6px;
+            font-size: 0.9em;
+        }
+        .key-fix-link,
+        .key-fix-link:disabled {
+            width: auto;
+            margin: 0;
+            border: none;
+            background: none;
+            color: #4a9eff;
+            padding: 6px 4px;
+            font-size: inherit;
+            text-decoration: underline;
+        }
+        .key-fix-link:disabled {
+            color: #666;
+        }
+        .key-fix-link[hidden] {
+            display: none;
+        }
         .pitch-control {
             display: flex;
             align-items: center;

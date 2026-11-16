@@ -12,6 +12,7 @@ import {
     showChangeNameModal, cancelChangeName
 } from './auth.js';
 import { adjustPitch } from './pitch.js';
+import { keyFixTap, keyFixReset } from './key-fix.js';
 import { toggleControlsLock, togglePlaybackControlsLock, resetPlaybackAutoLockTimer } from './controls.js';
 import {
     toggleConfigScreen, loadConfiguration, saveConfiguration,
@@ -45,6 +46,8 @@ window.promptOperatorAuth = promptOperatorAuth;
 
 // Pitch
 window.adjustPitch = adjustPitch;
+window.keyFixTap = keyFixTap;
+window.keyFixReset = keyFixReset;
 
 // Controls
 window.toggleControlsLock = toggleControlsLock;

@@ -198,3 +198,57 @@ def test_compute_turn_status_later_text(mobile_page, live_app):
         }"""
     )
     assert text == "🎤 You're up in 2 songs (~8 min)"
+
+
+# ---------------------------------------------------------------------------
+# Key fix helpers (key-fix.js)
+# ---------------------------------------------------------------------------
+
+_KEY_SHIFT_CASES = [
+    # (current, direction, expected)
+    (0, -1, -2),  # one tap down: a whole step
+    (-2, -1, -4),  # second tap
+    (0, 1, 2),
+    (-1, 1, 1),  # odd values (set elsewhere) keep moving by the step
+    (-11, -1, -12),  # clamped at the pipeline's range
+    (-12, -1, -12),
+    (11, 1, 12),
+    (None, 1, 2),  # missing pitch treated as original key
+]
+
+
+def test_next_key_shift(mobile_page, live_app):
+    mobile_page.goto(live_app)
+    results = mobile_page.evaluate(
+        """async (cases) => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { nextKeyShift } = await import(new URL('./key-fix.js', appSrc).href);
+            return cases.map(([c, d]) => nextKeyShift(c, d));
+        }""",
+        [list(c[:2]) for c in _KEY_SHIFT_CASES],
+    )
+    assert results == [c[2] for c in _KEY_SHIFT_CASES]
+
+
+_DESCRIBE_SHIFT_CASES = [
+    (0, "Original key"),
+    (None, "Original key"),
+    (-1, "1 step lower"),
+    (-2, "2 steps lower"),
+    (1, "1 step higher"),
+    (4, "4 steps higher"),
+]
+
+
+def test_describe_key_shift(mobile_page, live_app):
+    """Plain wording only: no interval names in this control."""
+    mobile_page.goto(live_app)
+    results = mobile_page.evaluate(
+        """async (inputs) => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { describeKeyShift } = await import(new URL('./key-fix.js', appSrc).href);
+            return inputs.map(describeKeyShift);
+        }""",
+        [v for v, _ in _DESCRIBE_SHIFT_CASES],
+    )
+    assert results == [e for _, e in _DESCRIBE_SHIFT_CASES]
