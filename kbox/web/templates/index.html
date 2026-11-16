@@ -877,18 +877,18 @@
         }
 
         /* While it's this guest's own song, show only what they can do about
-           it: the Now Playing card (key fix, stop). */
+           it: the Now Playing card (key fix, end turn). */
         body.singing .hide-while-singing {
             display: none !important;
         }
 
-        /* Singer's own-song "Stop my song" (two taps). */
-        .stop-song {
+        /* Singer's own-song "End my turn" (two taps). */
+        .end-turn {
             margin-top: 24px;
             padding-top: 15px;
             border-top: 1px solid #444;
         }
-        .stop-song-button {
+        .end-turn-button {
             width: 100%;
             min-height: 52px;
             border-radius: 10px;
@@ -900,7 +900,7 @@
             -webkit-user-select: none;
             user-select: none;
         }
-        .stop-song-button.armed {
+        .end-turn-button.armed {
             background: #e74c3c;
             color: #fff;
         }

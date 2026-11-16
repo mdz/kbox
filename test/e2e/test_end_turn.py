@@ -1,10 +1,10 @@
 """
-The singer's own-song view: only their song, with "Stop my song".
+The singer's own-song view: only their song, with "End my turn".
 
 The e2e app mocks the playback controller, so nothing is ever playing. The
 browser is the seam: /api/playback/status is stubbed to report a song, and
-/api/playback/stop-song is stubbed to record what the page sends. Whether
-the server lets a singer stop their own song is covered in test_api.py.
+/api/playback/end-turn is stubbed to record what the page sends. Whether
+the server lets a singer end their own turn is covered in test_api.py.
 """
 
 import json
@@ -42,7 +42,7 @@ def _stub_status(page, user_id, item_id=7):
     )
 
 
-def _record_stop_posts(page):
+def _record_end_turn_posts(page):
     sent = []
 
     def handle(route):
@@ -50,10 +50,10 @@ def _record_stop_posts(page):
         route.fulfill(
             status=200,
             content_type="application/json",
-            body=json.dumps({"status": "stopped"}),
+            body=json.dumps({"status": "ended"}),
         )
 
-    page.route("**/api/playback/stop-song", handle)
+    page.route("**/api/playback/end-turn", handle)
     return sent
 
 
@@ -61,28 +61,28 @@ def test_singer_sees_only_their_song(mobile_page, init_user):
     init_user("Alice")
     _stub_status(mobile_page, _current_user_id(mobile_page))
 
-    expect(mobile_page.locator("#stop-song-button")).to_be_visible()
+    expect(mobile_page.locator("#end-turn-button")).to_be_visible()
     expect(mobile_page.locator("#key-fix-lower")).to_be_visible()
     expect(mobile_page.locator("#search-input")).to_be_hidden()
     expect(mobile_page.locator("#queue-list")).to_be_hidden()
 
 
-def test_stop_takes_two_taps(mobile_page, init_user):
+def test_ending_a_turn_takes_two_taps(mobile_page, init_user):
     init_user("Alice")
     _stub_status(mobile_page, _current_user_id(mobile_page), item_id=7)
-    sent = _record_stop_posts(mobile_page)
-    button = mobile_page.locator("#stop-song-button")
+    sent = _record_end_turn_posts(mobile_page)
+    button = mobile_page.locator("#end-turn-button")
 
     button.click()
-    expect(button).to_have_text("Tap again: stops your song")
+    expect(button).to_have_text("Tap again: ends your turn")
     assert sent == []
 
     button.click()
     expect(mobile_page.locator("#toast")).to_contain_text(
-        "Song stopped. Want another go? Ask the host."
+        "Turn ended. Want another go? Ask the host."
     )
     assert sent == [{"item_id": 7}]
-    expect(button).to_have_text("Stop my song")
+    expect(button).to_have_text("End my turn")
 
 
 def test_other_guests_song_shows_the_usual_page(mobile_page, init_user):
@@ -90,7 +90,7 @@ def test_other_guests_song_shows_the_usual_page(mobile_page, init_user):
     _stub_status(mobile_page, "someone-else")
 
     expect(mobile_page.locator("#now-playing-content")).to_contain_text("Test Song")
-    expect(mobile_page.locator("#stop-song-button")).to_have_count(0)
+    expect(mobile_page.locator("#end-turn-button")).to_have_count(0)
     expect(mobile_page.locator("#search-input")).to_be_visible()
     expect(mobile_page.locator("#queue-list")).to_be_attached()
     expect(mobile_page.locator("body")).not_to_have_class("singing")

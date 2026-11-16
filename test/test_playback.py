@@ -234,8 +234,8 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     assert playback_controller.state == PlaybackState.TRANSITION
 
 
-class TestStopSong:
-    """stop_song() guards; the full flow is in test_integration.py."""
+class TestEndTurn:
+    """end_turn() guards; the full flow is in test_integration.py."""
 
     def _playing(self, pc, mock_queue_manager, song_id=1):
         pc.current_song_id = song_id
@@ -245,34 +245,34 @@ class TestStopSong:
     def test_a_different_song_is_left_alone(
         self, playback_controller, mock_queue_manager, mock_streaming_controller
     ):
-        """A late request for a song that already ended can't stop the next one."""
+        """A late request for a song that already ended can't end the next singer's turn."""
         self._playing(playback_controller, mock_queue_manager, song_id=2)
 
-        assert playback_controller.stop_song(1) is False
+        assert playback_controller.end_turn(1) is False
         mock_streaming_controller.stop_playback.assert_not_called()
         assert playback_controller.current_song_id == 2
 
     @pytest.mark.parametrize(
         "state", [PlaybackState.TRANSITION, PlaybackState.IDLE, PlaybackState.STOPPED]
     )
-    def test_nothing_to_stop_unless_playing_or_paused(
+    def test_nothing_to_end_unless_playing_or_paused(
         self, playback_controller, mock_queue_manager, mock_streaming_controller, state
     ):
         self._playing(playback_controller, mock_queue_manager)
         playback_controller.state = state
 
-        assert playback_controller.stop_song(1) is False
+        assert playback_controller.end_turn(1) is False
         mock_streaming_controller.stop_playback.assert_not_called()
 
     def test_last_song_goes_to_end_of_queue(
         self, playback_controller, mock_queue_manager, mock_streaming_controller
     ):
-        """Unlike skip(), stopping works for the last song in the queue."""
+        """Unlike skip(), ending a turn works for the last song in the queue."""
         self._playing(playback_controller, mock_queue_manager)
         playback_controller.state = PlaybackState.PAUSED
         mock_queue_manager.get_song_at_offset.return_value = None
 
-        assert playback_controller.stop_song(1) is True
+        assert playback_controller.end_turn(1) is True
         mock_streaming_controller.stop_playback.assert_called_once()
         assert playback_controller.state == PlaybackState.IDLE
 
