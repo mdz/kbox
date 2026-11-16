@@ -283,6 +283,37 @@ class TestDataDirOverride:
         assert get_data_dir() == target
         assert target.is_dir()
 
+    def test_relative_override_is_made_absolute(self, monkeypatch, tmp_path):
+        """A relative KBOX_DATA_DIR (as .claude/launch.json passes) resolves
+        against the cwd; a relative path would end up in file:// URIs that
+        GStreamer cannot open."""
+        from kbox.paths import get_data_dir
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("KBOX_DATA_DIR", ".kbox-scratch")
+        path = get_data_dir()
+        assert path.is_absolute()
+        assert path == (tmp_path / ".kbox-scratch").resolve()
+
+    def test_relative_cache_directory_is_made_absolute(self, monkeypatch, tmp_path, temp_db):
+        monkeypatch.chdir(tmp_path)
+        config = ConfigManager(temp_db)
+        config.set("cache_directory", "lib")
+        assert config.get_cache_directory() == (tmp_path / "lib").resolve()
+
+    def test_cli_data_dir_is_pinned_absolute(self, monkeypatch, tmp_path):
+        """--data-dir is resolved against the launch directory before the server starts."""
+        from unittest.mock import patch
+
+        import kbox.main
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("KBOX_DATA_DIR", raising=False)
+        monkeypatch.setattr("sys.argv", ["kbox", "--data-dir", ".kbox-scratch"])
+        with patch.object(kbox.main, "KboxServer"):
+            kbox.main.actual_main()
+        assert os.environ["KBOX_DATA_DIR"] == str((tmp_path / ".kbox-scratch").resolve())
+
     def test_database_and_library_follow_override(self, monkeypatch, tmp_path):
         monkeypatch.setenv("KBOX_DATA_DIR", str(tmp_path))
         db = Database()

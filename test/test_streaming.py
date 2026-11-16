@@ -31,6 +31,7 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.streaming import StreamingController, _get_glib, _get_gst, elements, gst, pipelines
 from kbox.streaming.bus import BusWatcher
+from kbox.streaming.controller import file_uri
 from kbox.streaming.overlays import OverlayController
 
 logging.basicConfig(level=logging.DEBUG)
@@ -283,6 +284,30 @@ def test_load_file_transitions_to_playing(controller, test_video_1s):
     assert controller.get_pipeline_state() == "playing"
     assert controller.state == "playing"
     assert controller.current_file == test_video_1s
+
+
+def test_file_uri_resolves_relative_paths(monkeypatch, tmp_path):
+    """A relative path (e.g. stored while running with a relative data dir)
+    becomes an absolute file:// URI; playbin rejects relative locations."""
+    monkeypatch.chdir(tmp_path)
+    expected = (tmp_path / "library" / "video.mp4").resolve()
+    assert file_uri("library/video.mp4") == expected.as_uri()
+    assert file_uri("library/video.mp4").startswith("file:///")
+
+
+def test_file_uri_percent_encodes(tmp_path):
+    uri = file_uri(str(tmp_path / "a b#c.mp4"))
+    assert "a%20b%23c.mp4" in uri
+
+
+def test_load_file_plays_relative_path(controller, test_video_1s, monkeypatch):
+    """load_file() plays a path given relative to the current directory."""
+    video = Path(test_video_1s)
+    monkeypatch.chdir(video.parent)
+    controller.load_file(video.name)
+
+    assert controller.get_pipeline_state() == "playing"
+    assert controller.playbin.get_property("current-uri") == video.resolve().as_uri()
 
 
 def test_stop_playback_returns_to_idle(controller, test_video_1s):

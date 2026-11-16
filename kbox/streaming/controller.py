@@ -15,6 +15,7 @@ BusWatcher (the poll thread).
 import logging
 import sys
 import threading
+from pathlib import Path
 from typing import Any, Optional
 
 from . import elements
@@ -23,6 +24,17 @@ from .gst import _get_gst, caps_dimensions
 from .overlays import OverlayController
 from .pipelines import DISPLAY_CHANNEL, DisplayPipeline
 from .still_image import StillImageFeeder
+
+
+def file_uri(filepath: str) -> str:
+    """Return an absolute, percent-encoded ``file://`` URI for a local path.
+
+    playbin cannot open a relative location ("Operation not supported"), and a
+    stored path can be relative if it was recorded while kbox ran with a
+    relative data dir, so resolve against the current directory here rather
+    than trusting the caller.
+    """
+    return Path(filepath).expanduser().resolve().as_uri()
 
 
 class StreamingController:
@@ -371,7 +383,7 @@ class StreamingController:
             self.playbin.set_property("mute", False)
 
             # Set new URI
-            self.playbin.set_property("uri", f"file://{filepath}")
+            self.playbin.set_property("uri", file_uri(filepath))
 
             # If we need to start at a non-zero position, go to PAUSED first,
             # seek, then go to PLAYING. This prevents audio from position 0

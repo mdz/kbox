@@ -375,7 +375,11 @@ class ConfigManager:
     def get_cache_directory(self) -> Path:
         """Get the resolved video cache/library directory, creating it if needed."""
         cache_dir = self.get("cache_directory")
-        path = Path(cache_dir) if cache_dir else self.get_app_data_dir() / "library"
+        path = (
+            Path(cache_dir).expanduser().resolve()
+            if cache_dir
+            else self.get_app_data_dir() / "library"
+        )
         path.mkdir(parents=True, exist_ok=True)
         return path
 
