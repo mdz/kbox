@@ -875,6 +875,35 @@
         .key-fix-link[hidden] {
             display: none;
         }
+
+        /* While it's this guest's own song, show only what they can do about
+           it: the Now Playing card (key fix, stop). */
+        body.singing .hide-while-singing {
+            display: none !important;
+        }
+
+        /* Singer's own-song "Stop my song" (two taps). */
+        .stop-song {
+            margin-top: 24px;
+            padding-top: 15px;
+            border-top: 1px solid #444;
+        }
+        .stop-song-button {
+            width: 100%;
+            min-height: 52px;
+            border-radius: 10px;
+            background: transparent;
+            border: 2px solid #e74c3c;
+            color: #e74c3c;
+            font-size: 1.05em;
+            font-weight: 600;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .stop-song-button.armed {
+            background: #e74c3c;
+            color: #fff;
+        }
         .pitch-control {
             display: flex;
             align-items: center;

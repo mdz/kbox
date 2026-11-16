@@ -4,12 +4,12 @@
 <!-- Main Content -->
 <div class="main-content" id="main-content">
     <!-- Who this phone is singing as, with a way to switch (auth.js) -->
-    <div id="identity-line" class="identity-line" hidden>
+    <div id="identity-line" class="identity-line hide-while-singing" hidden>
         Singing as <strong id="identity-name"></strong>
         · <button type="button" class="identity-change" onclick="showChangeNameModal()">Not you?</button>
     </div>
-    <!-- Search Section -->
-    <div class="section">
+    <!-- Search Section (hidden while it's this guest's song) -->
+    <div class="section hide-while-singing">
         {% if suggestion_theme %}
         <div class="party-theme">🎭 Tonight's theme: <span class="party-theme-value">{{ suggestion_theme }}</span></div>
         {% endif %}
@@ -64,8 +64,8 @@
         </div>
     </div>
 
-    <!-- Queue Section -->
-    <div class="section">
+    <!-- Queue Section (hidden while it's this guest's song) -->
+    <div class="section hide-while-singing">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
             <h2 style="margin: 0;">Queue</h2>
             <div id="clear-queue-button-container"></div>

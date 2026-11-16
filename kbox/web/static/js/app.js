@@ -13,6 +13,7 @@ import {
 } from './auth.js';
 import { adjustPitch } from './pitch.js';
 import { keyFixTap, keyFixReset } from './key-fix.js';
+import { stopSongTap } from './stop-song.js';
 import { toggleControlsLock, togglePlaybackControlsLock, resetPlaybackAutoLockTimer } from './controls.js';
 import {
     toggleConfigScreen, loadConfiguration, saveConfiguration,
@@ -48,6 +49,7 @@ window.promptOperatorAuth = promptOperatorAuth;
 window.adjustPitch = adjustPitch;
 window.keyFixTap = keyFixTap;
 window.keyFixReset = keyFixReset;
+window.stopSongTap = stopSongTap;
 
 // Controls
 window.toggleControlsLock = toggleControlsLock;
