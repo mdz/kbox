@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
 
 from ..config_manager import ConfigManager
+from ..pitch_log import PitchLog
 from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..search_suggest import SearchSuggester
@@ -56,6 +57,7 @@ def create_app(
     favorites_manager,  # FavoritesManager - avoid circular import
     suggestion_engine: Optional[SuggestionEngine] = None,
     streaming_controller: Optional[StreamingController] = None,
+    pitch_log: Optional[PitchLog] = None,
     access_token: Optional[str] = None,
     session_secret: Optional[str] = None,
 ) -> FastAPI:
@@ -72,6 +74,8 @@ def create_app(
         favorites_manager: FavoritesManager instance
         suggestion_engine: SuggestionEngine instance (optional, for AI suggestions)
         streaming_controller: StreamingController instance (optional, for overlays)
+        pitch_log: PitchLog instance (optional; built from the history
+            database if not given)
         access_token: Access token for guest authentication (if None, auth disabled)
         session_secret: Secret key for session cookies (defaults to random if not provided)
 
@@ -93,6 +97,7 @@ def create_app(
     app.state.favorites_manager = favorites_manager
     app.state.suggestion_engine = suggestion_engine
     app.state.streaming_controller = streaming_controller
+    app.state.pitch_log = pitch_log or PitchLog(history_manager.database)
     app.state.access_token = access_token
     # Autocomplete is self-contained (config + an HTTP call), so it's built
     # here rather than threaded through main.py's wiring.

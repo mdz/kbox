@@ -17,8 +17,8 @@ from typing import Iterator, List, Optional
 from ..database import ConfigRepository
 from ..models import QueueItem
 from ..periodic import PeriodicThread
-from ..pitch_events import PHASE_PLAYING, record_pitch_change, record_pitch_start
 from ..queue import MoveResult, QueueManager
+from ..user_events import PHASE_PLAYING
 from . import history_policy, song_tuning
 from .cursor import QueueCursor
 from .overlay import OverlayCoordinator
@@ -93,7 +93,7 @@ class PlaybackController:
         history_manager=None,  # HistoryManager - avoid circular import, optional for tests
         silence_analyzer=None,  # TrailingSilenceAnalyzer - avoid circular import, optional
         loudness_analyzer=None,  # LoudnessAnalyzer - avoid circular import, optional
-        event_repository=None,  # EventRepository - optional, for recording pitch choices
+        pitch_log=None,  # PitchLog - optional, for recording pitch choices
     ):
         """
         Initialize PlaybackController.
@@ -111,9 +111,9 @@ class PlaybackController:
                 provided (and loudness_normalization_enabled is on), a
                 compensating gain is applied so songs from different
                 sources play back at a consistent volume.
-            event_repository: EventRepository instance (optional). When
-                provided, the pitch each song starts at and every change made
-                during playback are recorded (see kbox/pitch_events.py).
+            pitch_log: PitchLog instance (optional). When provided, the pitch
+                each song starts at and every change made during playback are
+                logged (see kbox/pitch_log.py).
         """
         self.queue_manager = queue_manager
         self.streaming_controller = streaming_controller
@@ -121,7 +121,7 @@ class PlaybackController:
         self.history_manager = history_manager
         self.silence_analyzer = silence_analyzer
         self.loudness_analyzer = loudness_analyzer
-        self.event_repository = event_repository
+        self.pitch_log = pitch_log
         self.logger = logging.getLogger(__name__)
         self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
         self.current_song_id: Optional[int] = None
@@ -658,7 +658,8 @@ class PlaybackController:
             # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
             self._start_pitch = pitch
-            record_pitch_start(self.event_repository, song)
+            if self.pitch_log is not None:
+                self.pitch_log.song_started(song)
 
             # Look up trailing-silence trim point for the monitor loop to act on
             self._current_trim_point = song_tuning.lookup_trim_point(
@@ -1350,8 +1351,8 @@ class PlaybackController:
                 self.logger.warning("No current song to adjust pitch")
                 return False
 
-            if self.event_repository is not None:
-                self._record_pitch_change(semitones, changed_by)
+            if self.pitch_log is not None:
+                self._log_pitch_change(semitones, changed_by)
 
             # Update in queue database
             self.queue_manager.update_pitch(self.current_song_id, semitones)
@@ -1362,8 +1363,8 @@ class PlaybackController:
             self.logger.info("Set pitch to %s semitones for current song", semitones)
             return True
 
-    def _record_pitch_change(self, semitones: int, changed_by: Optional[str]) -> None:
-        """Record a mid-song pitch change. Assumes lock is held; never raises."""
+    def _log_pitch_change(self, semitones: int, changed_by: Optional[str]) -> None:
+        """Log a mid-song pitch change. Assumes lock is held; never raises."""
         self._require_locked()
         try:
             song = self.queue_manager.get_item(self.current_song_id)
@@ -1373,8 +1374,7 @@ class PlaybackController:
         except Exception:
             self.logger.warning("Could not read state to record pitch change", exc_info=True)
             return
-        record_pitch_change(
-            self.event_repository,
+        self.pitch_log.pitch_changed(
             song,
             semitones,
             phase=PHASE_PLAYING,
