@@ -33,6 +33,7 @@ from .queue import QueueManager
 from .session import SessionManager
 from .silence_detection import TrailingSilenceAnalyzer
 from .song_metadata import SongMetadataExtractor
+from .song_width import SongWidthService
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
 from .user import UserManager
@@ -153,6 +154,12 @@ class KboxServer:
         self.favorites_manager = FavoritesManager(self.database)
         self.pitch_log = PitchLog(self.database)
 
+        # SongWidthService feeds the add-song dialog's vocal width meter from
+        # USDB note files (does nothing until USDB credentials are set).
+        self.song_width_service = SongWidthService(
+            self.database, self.config_manager, self.history_manager
+        )
+
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(self.config_manager, self)
 
@@ -188,6 +195,7 @@ class KboxServer:
             suggestion_engine=self.suggestion_engine,
             streaming_controller=self.streaming_controller,
             pitch_log=self.pitch_log,
+            song_width_service=self.song_width_service,
             access_token=self.access_token,
             session_secret=self.session_secret,
         )

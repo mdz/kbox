@@ -291,6 +291,65 @@ export async function showAddSongModal(video) {
     const modal = document.getElementById('add-song-modal');
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
+
+    if (!currentSelectionTarget) {
+        loadWidthMeter(video);
+    }
+}
+
+// The meter's scale: two octaves. Wider songs pin to the right end.
+const WIDTH_METER_MAX = 24;
+
+// Show how wide the song's vocal line is, beside the widths of songs this
+// guest has sung here (#215). Fetched after the dialog is open, because a
+// first lookup takes a couple of seconds; a guest who confirms before it
+// lands just never sees it. Any failure or empty answer shows nothing,
+// which is how things were before. It describes, never judges: no "too
+// wide for you", no suggested pitch.
+async function loadWidthMeter(video) {
+    let data;
+    try {
+        const params = new URLSearchParams({ video_id: video.id, title: video.title || '' });
+        if (video.channel) params.set('channel', video.channel);
+        const response = await fetch(`/api/song-width?${params}`);
+        if (!response.ok) return;
+        data = await response.json();
+    } catch (e) {
+        console.debug('Could not fetch song width:', e);
+        return;
+    }
+    // The guest may have closed the dialog or picked another song meanwhile.
+    if (currentVideoToAdd?.id !== video.id || !Number.isFinite(data?.width)) return;
+    const pitchContainer = document.getElementById('add-song-pitch-control-container');
+    if (!pitchContainer) return;
+
+    const pct = (w) => `${Math.min(Math.max(w, 0), WIDTH_METER_MAX) / WIDTH_METER_MAX * 100}%`;
+    const past = Array.isArray(data.past) ? data.past.filter(Number.isFinite) : [];
+    const dots = past.map(w => `<span class="width-meter-dot" style="left: ${pct(w)}"></span>`).join('');
+    const legend = past.length
+        ? '<div class="width-meter-legend"><span class="width-meter-dot-key"></span>songs you\'ve sung here</div>'
+        : '';
+
+    const box = document.createElement('div');
+    box.id = 'add-song-width-meter';
+    box.className = 'width-meter';
+    box.setAttribute('role', 'img');
+    box.setAttribute('aria-label', data.caption + (past.length
+        ? `, shown with ${past.length} songs you've sung here` : ''));
+    box.innerHTML = `
+        <div class="width-meter-caption">${escapeHtml(data.caption)}</div>
+        <div class="width-meter-track" aria-hidden="true">
+            <span class="width-meter-bar" style="width: ${pct(data.width)}"></span>
+            ${dots}
+        </div>
+        <div class="width-meter-scale" aria-hidden="true">
+            <span style="left: 0">narrow</span>
+            <span style="left: 50%">1 octave</span>
+            <span style="right: 0">2 octaves</span>
+        </div>
+        ${legend}`;
+    document.getElementById('add-song-width-meter')?.remove();
+    pitchContainer.after(box);
 }
 
 // Cancel adding/replacing song

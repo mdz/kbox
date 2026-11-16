@@ -18,6 +18,7 @@ from ..pitch_log import PitchLog
 from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..search_suggest import SearchSuggester
+from ..song_width import SongWidthService
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine
 from ..user import UserManager
@@ -85,6 +86,11 @@ def get_event_repo(request: Request) -> EventRepository:
         db = request.app.state.history_manager.database
         request.app.state._event_repo = EventRepository(db)
     return request.app.state._event_repo
+
+
+def get_song_width_service(request: Request) -> Optional[SongWidthService]:
+    """Get SongWidthService from app state (None when not wired up)."""
+    return getattr(request.app.state, "song_width_service", None)
 
 
 def get_pitch_log(request: Request) -> PitchLog:
