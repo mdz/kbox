@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from kbox.models import QueueItem, SongMetadata, SongSettings
+from kbox.pitch_log import PitchLog
 from kbox.playback import (
     PlaybackController,
     PlaybackState,
@@ -19,6 +20,7 @@ from kbox.playback import (
 )
 from kbox.playback.overlay import OverlayCoordinator
 from kbox.queue import QueueManager
+from kbox.user_events import PHASE_PLAYING
 
 
 @pytest.fixture
@@ -535,6 +537,79 @@ def test_set_pitch_no_current_song(playback_controller):
     result = playback_controller.set_pitch(3)
 
     assert result is False
+
+
+@pytest.fixture
+def mock_pitch_log():
+    return Mock(spec=PitchLog)
+
+
+@pytest.fixture
+def logging_controller(
+    mock_queue_manager, mock_streaming_controller, mock_config_manager, mock_pitch_log
+):
+    """A PlaybackController that logs pitch choices to a mock PitchLog."""
+    mock_queue_manager.get_queue.return_value = []
+    controller = PlaybackController(
+        mock_queue_manager,
+        mock_streaming_controller,
+        mock_config_manager,
+        pitch_log=mock_pitch_log,
+    )
+    controller._monitor.request_stop()
+    return controller
+
+
+def test_play_logs_starting_pitch(logging_controller, mock_queue_manager, mock_pitch_log):
+    """Starting a song logs the pitch it started at."""
+    song = create_mock_queue_item(id=7, pitch_semitones=-2)
+    mock_queue_manager.get_song_at_offset.return_value = song
+
+    assert logging_controller.play() is True
+
+    mock_pitch_log.song_started.assert_called_once_with(song)
+
+
+def test_set_pitch_logs_mid_song_change(
+    logging_controller, mock_queue_manager, mock_streaming_controller, mock_pitch_log
+):
+    """A mid-song change is logged with the starting pitch and the position."""
+    mock_queue_manager.get_song_at_offset.return_value = create_mock_queue_item(
+        id=7, pitch_semitones=-2
+    )
+    logging_controller.play()
+
+    # By the second change the queue item holds the first change's value
+    before = create_mock_queue_item(id=7, pitch_semitones=-1)
+    mock_queue_manager.get_item.return_value = before
+    mock_streaming_controller.get_position.return_value = 42
+
+    assert logging_controller.set_pitch(1, changed_by="singer-1") is True
+
+    mock_pitch_log.pitch_changed.assert_called_once_with(
+        before,
+        1,
+        phase=PHASE_PLAYING,
+        changed_by="singer-1",
+        start_semitones=-2,
+        position_seconds=42,
+    )
+    mock_queue_manager.update_pitch.assert_called_once_with(7, 1)
+
+
+def test_set_pitch_still_applies_when_state_unreadable(
+    logging_controller, mock_queue_manager, mock_streaming_controller, mock_pitch_log
+):
+    """Logging is best-effort: failing to read what to log doesn't stop the change."""
+    logging_controller.current_song_id = 7
+    logging_controller.state = PlaybackState.PLAYING
+    mock_queue_manager.get_item.side_effect = RuntimeError("database is locked")
+
+    assert logging_controller.set_pitch(2) is True
+
+    mock_pitch_log.pitch_changed.assert_not_called()
+    mock_queue_manager.update_pitch.assert_called_once_with(7, 2)
+    mock_streaming_controller.set_pitch_shift.assert_called_once_with(2)
 
 
 def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_controller):

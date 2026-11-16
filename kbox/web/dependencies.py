@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..config_manager import ConfigManager
 from ..database import EventRepository
+from ..pitch_log import PitchLog
 from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..search_suggest import SearchSuggester
@@ -84,6 +85,11 @@ def get_event_repo(request: Request) -> EventRepository:
         db = request.app.state.history_manager.database
         request.app.state._event_repo = EventRepository(db)
     return request.app.state._event_repo
+
+
+def get_pitch_log(request: Request) -> PitchLog:
+    """Get PitchLog from app state."""
+    return request.app.state.pitch_log
 
 
 def check_operator(request: Request) -> bool:

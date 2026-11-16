@@ -1828,6 +1828,89 @@ class TestPitchEndpoint:
         assert response.json()["pitch"] == 3
 
 
+def _pitch_change_events(app_components):
+    import json
+
+    conn = app_components["history"].database.get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, data_json FROM user_events WHERE event_type = 'pitch_change'"
+        )
+        return [(row["user_id"], json.loads(row["data_json"])) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+class TestPitchChangeRecording:
+    """Pitch changes are recorded to user_events as comfort evidence (#215)."""
+
+    def test_playback_pitch_passes_who_changed_it(self, client, alice, app_components):
+        """POST /api/playback/pitch tells the controller who made the change."""
+        set_user(client, ALICE_ID, "Alice")
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(user=alice, video_id="youtube:s1", title="Test Song")
+        app_components["playback"].get_status.return_value = PlaybackStatus(
+            state=PlaybackState.PLAYING,
+            current_song=queue_mgr.get_item(item_id),
+            position_seconds=60,
+        )
+        app_components["playback"].set_pitch.return_value = True
+
+        client.post("/api/playback/pitch", json={"semitones": -2, "user_id": ALICE_ID})
+
+        app_components["playback"].set_pitch.assert_called_once_with(-2, changed_by=ALICE_ID)
+
+    def test_queue_edit_records_queued_change(self, client, alice, app_components):
+        """PATCH /api/queue/{id} records a change made before playback."""
+        set_user(client, ALICE_ID, "Alice")
+        item_id = app_components["queue"].add_song(
+            user=alice, video_id="youtube:s1", title="Test Song", pitch_semitones=1
+        )
+
+        client.patch(f"/api/queue/{item_id}", json={"pitch_semitones": -1})
+
+        assert _pitch_change_events(app_components) == [
+            (
+                ALICE_ID,
+                {
+                    "queue_item_id": item_id,
+                    "video_id": "youtube:s1",
+                    "old_semitones": 1,
+                    "new_semitones": -1,
+                    "phase": "queued",
+                    "start_semitones": None,
+                    "position_seconds": None,
+                    "changed_by": ALICE_ID,
+                    "changed_by_singer": True,
+                },
+            )
+        ]
+
+    def test_queue_edit_by_operator_recorded_under_singer(self, client, alice, app_components):
+        """An operator's edit is stored under the singer, marked as not theirs."""
+        set_operator(client)
+        item_id = app_components["queue"].add_song(
+            user=alice, video_id="youtube:s1", title="Test Song"
+        )
+
+        client.patch(f"/api/queue/{item_id}", json={"pitch_semitones": 2})
+
+        [(user_id, data)] = _pitch_change_events(app_components)
+        assert user_id == ALICE_ID
+        assert data["changed_by_singer"] is False
+
+    def test_queue_edit_without_change_records_nothing(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        item_id = app_components["queue"].add_song(
+            user=alice, video_id="youtube:s1", title="Test Song"
+        )
+
+        client.patch(f"/api/queue/{item_id}", json={"pitch_semitones": 0})
+
+        assert _pitch_change_events(app_components) == []
+
+
 class TestConfigEndpointStructure:
     """Tests for the config endpoint response structure."""
 

@@ -16,6 +16,7 @@ from ...database import EventRepository
 from ...history import HistoryManager
 from ...search_suggest import SearchSuggester
 from ...suggestions import SuggestionEngine, SuggestionError
+from ...user_events import SearchPerformed
 from ...video_library import VideoLibrary
 from ..dependencies import (
     get_current_user_id,
@@ -92,8 +93,7 @@ def search_videos(
         try:
             event_repo.record(
                 current_user_id,
-                "search",
-                {"query": q, "result_count": len(results)},
+                SearchPerformed(query=q, result_count=len(results)),
             )
         except Exception:
             logger.debug("Failed to log search event", exc_info=True)

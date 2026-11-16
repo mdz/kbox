@@ -3,10 +3,18 @@
 import json
 import os
 import tempfile
+from dataclasses import dataclass
+from typing import ClassVar
 
 import pytest
 
 from kbox.database import Database, EventRepository
+from kbox.user_events import SearchPerformed, UserEvent
+
+
+@dataclass(frozen=True)
+class _EmptyEvent(UserEvent):
+    event_type: ClassVar[str] = "empty"
 
 
 @pytest.fixture
@@ -55,14 +63,14 @@ def test_user_events_indexes_created(database):
 def test_record_event(event_repo):
     """Record a basic event and verify it's stored."""
     event_id = event_repo.record(
-        "user-1", "search", {"query": "bohemian rhapsody", "result_count": 5}
+        "user-1", SearchPerformed(query="bohemian rhapsody", result_count=5)
     )
     assert event_id > 0
 
 
 def test_record_event_stored_correctly(event_repo, database):
     """Verify event data is stored and retrievable."""
-    event_repo.record("user-1", "search", {"query": "adele", "result_count": 8})
+    event_repo.record("user-1", SearchPerformed(query="adele", result_count=8))
 
     conn = database.get_connection()
     try:
@@ -81,9 +89,9 @@ def test_record_event_stored_correctly(event_repo, database):
 
 def test_record_multiple_events(event_repo, database):
     """Multiple events for the same user are all stored."""
-    event_repo.record("user-1", "search", {"query": "bohemian rhapsody"})
-    event_repo.record("user-1", "search", {"query": "dont stop me now"})
-    event_repo.record("user-1", "search", {"query": "somebody to love"})
+    event_repo.record("user-1", SearchPerformed(query="bohemian rhapsody", result_count=0))
+    event_repo.record("user-1", SearchPerformed(query="dont stop me now", result_count=0))
+    event_repo.record("user-1", SearchPerformed(query="somebody to love", result_count=0))
 
     conn = database.get_connection()
     try:
@@ -95,8 +103,8 @@ def test_record_multiple_events(event_repo, database):
 
 
 def test_record_event_no_data(event_repo, database):
-    """Events can be recorded with no data payload."""
-    event_id = event_repo.record("user-1", "search")
+    """Events with no fields are stored with no data payload."""
+    event_id = event_repo.record("user-1", _EmptyEvent())
     assert event_id > 0
 
     conn = database.get_connection()
@@ -111,8 +119,8 @@ def test_record_event_no_data(event_repo, database):
 
 def test_events_isolated_by_user(event_repo, database):
     """Events from different users don't interfere."""
-    event_repo.record("user-1", "search", {"query": "adele"})
-    event_repo.record("user-2", "search", {"query": "beyonce"})
+    event_repo.record("user-1", SearchPerformed(query="adele", result_count=0))
+    event_repo.record("user-2", SearchPerformed(query="beyonce", result_count=0))
 
     conn = database.get_connection()
     try:

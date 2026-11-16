@@ -21,6 +21,7 @@ from .llm import LLMClient
 from .loudness import LoudnessAnalyzer
 from .overlay import generate_qr_code
 from .paths import DATA_DIR_ENV
+from .pitch_log import PitchLog
 from .platform import (
     configure_macos_gstreamer_env,
     is_macos,
@@ -150,6 +151,7 @@ class KboxServer:
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
         self.favorites_manager = FavoritesManager(self.database)
+        self.pitch_log = PitchLog(self.database)
 
         # StreamingController uses ConfigManager for configuration
         self.streaming_controller = StreamingController(self.config_manager, self)
@@ -162,6 +164,7 @@ class KboxServer:
             self.history_manager,
             silence_analyzer=self.silence_analyzer,
             loudness_analyzer=self.loudness_analyzer,
+            pitch_log=self.pitch_log,
         )
 
         # SuggestionEngine for AI-powered song recommendations
@@ -184,6 +187,7 @@ class KboxServer:
             self.favorites_manager,
             suggestion_engine=self.suggestion_engine,
             streaming_controller=self.streaming_controller,
+            pitch_log=self.pitch_log,
             access_token=self.access_token,
             session_secret=self.session_secret,
         )

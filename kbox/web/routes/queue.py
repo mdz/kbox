@@ -12,13 +12,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...pitch_log import PitchLog
 from ...playback import PlaybackController
 from ...queue import MoveOutcome, QueueManager
 from ...user import UserManager
+from ...user_events import PHASE_QUEUED
 from ..dependencies import (
     check_operator,
     get_current_user_id,
     get_history_manager,
+    get_pitch_log,
     get_playback_controller,
     get_queue_manager,
     get_user_manager,
@@ -255,6 +258,7 @@ def update_queue_item(
     queue_mgr: QueueManager = Depends(get_queue_manager),
     is_operator: bool = Depends(check_operator),
     current_user_id: Optional[str] = Depends(get_current_user_id),
+    pitch_log: PitchLog = Depends(get_pitch_log),
 ):
     """
     Update properties of a queue item.
@@ -280,6 +284,12 @@ def update_queue_item(
     if request_data.pitch_semitones is not None:
         if not queue_mgr.update_pitch(item_id, request_data.pitch_semitones):
             raise HTTPException(status_code=404, detail="Queue item not found")
+        pitch_log.pitch_changed(
+            item,
+            request_data.pitch_semitones,
+            phase=PHASE_QUEUED,
+            changed_by=current_user_id,
+        )
 
     # Return updated item
     updated_item = queue_mgr.get_item(item_id)
