@@ -196,6 +196,18 @@ CONFIG_SCHEMA = {
         "description": "Your YouTube Data API v3 key for searching videos. Get one from Google Cloud Console.",
         "control": "password",
     },
+    "usdb_username": {
+        "group": "api",
+        "label": "USDB Username",
+        "description": "Optional. A free account at usdb.animux.de (the UltraStar song database) lets kbox show guests how wide a song's vocal range is when they add it.",
+        "control": "text",
+    },
+    "usdb_password": {
+        "group": "api",
+        "label": "USDB Password",
+        "description": "Password for the USDB account above.",
+        "control": "password",
+    },
     "cache_directory": {
         "group": "api",
         "label": "Cache Directory",
@@ -273,6 +285,8 @@ class ConfigManager:
         "gstreamer_sink": None,  # Overridden by platform defaults
         "signalsmith_pitch_plugin_path": None,  # Path to libgstsignalsmithpitch.so; None = auto-detect relative to repo
         "youtube_api_key": None,
+        "usdb_username": "",  # USDB account for the song width meter (optional)
+        "usdb_password": "",
         "cache_directory": None,  # Will default to ~/.kbox/library
         "cache_max_size_gb": "10",  # Max cache size in GB (oldest unused videos evicted when exceeded)
         "video_max_resolution": "480",  # Max video height for downloads (480, 720, 1080, etc.)
