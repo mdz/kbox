@@ -491,7 +491,14 @@ class QueueManager:
             if not reference_song:
                 self.logger.error("Reference song ID %s not found", reference_song_id)
                 return None
-            target_position = reference_song.position + 1
+            item = self.get_item(item_id)
+            if item and item.position < reference_song.position:
+                # Moving down: reorder() shifts the songs in between (the
+                # reference among them) up one before inserting, so the
+                # reference's own position is the slot right after it.
+                target_position = reference_song.position
+            else:
+                target_position = reference_song.position + 1
 
             # If the reference song is last in the queue, "after" it is simply
             # the end of the queue - clamp so we don't request a position

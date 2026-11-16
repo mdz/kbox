@@ -280,9 +280,25 @@ def test_move_after_uses_fresh_reference_position(queue_manager, test_users):
 
     new_position = queue_manager.move_after(song_to_move, reference_id)
 
-    # Fresh position of the reference (4) + 1, not its stale 5 + 1
-    assert new_position == 5
-    assert queue_manager.get_item(song_to_move).position == 5
+    # Directly after the reference at its fresh position, not its stale one
+    order = [s.id for s in queue_manager.get_queue()]
+    assert order.index(song_to_move) == order.index(reference_id) + 1
+    assert queue_manager.get_item(song_to_move).position == new_position
+
+
+def test_move_after_moving_down_lands_right_after_reference(queue_manager, test_users):
+    """Moving a song *down* puts it directly after the reference, not one further.
+
+    reorder() shifts the songs in between up before inserting, so the target
+    is the reference's own position, not position + 1. Matters for giving a
+    singer another go right after whoever is singing now.
+    """
+    a = queue_manager.add_song(test_users["alice"], "youtube:a", "A")
+    b = queue_manager.add_song(test_users["bob"], "youtube:b", "B")
+    c = queue_manager.add_song(test_users["alice"], "youtube:c", "C")
+
+    assert queue_manager.move_after(a, b) == 2
+    assert [s.id for s in queue_manager.get_queue()] == [b, a, c]
 
 
 def test_move_after_last_song_clamps_to_end_of_queue(queue_manager, test_users):
