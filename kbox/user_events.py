@@ -61,22 +61,3 @@ class PitchChanged(UserEvent):
     changed_by_singer: bool
     start_semitones: Optional[int] = None
     position_seconds: Optional[int] = None
-
-
-@dataclass(frozen=True)
-class SongStopped(UserEvent):
-    """A song was stopped partway through because it wasn't working.
-
-    Stored under the singer's user id. It is not a performance (nothing is
-    written to playback_history), and a stop by the singer themselves is
-    evidence that something was wrong with this track for them.
-    """
-
-    event_type: ClassVar[str] = "song_stopped"
-
-    queue_item_id: int
-    video_id: str
-    position_seconds: int
-    duration_seconds: Optional[int]
-    stopped_by: Optional[str]  # user id of whoever stopped it, if known
-    stopped_by_singer: bool

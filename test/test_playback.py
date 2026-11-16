@@ -235,90 +235,22 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
 
 
 class TestStopSong:
-    """stop_song(): a singer gives up on their own song partway through."""
+    """stop_song() guards; the full flow is in test_integration.py."""
 
-    def _playing(self, playback_controller, mock_queue_manager, song):
-        playback_controller.current_song_id = song.id
-        playback_controller.state = PlaybackState.PLAYING
-        mock_queue_manager.get_item.return_value = song
-
-    def test_moves_on_to_next_singer(
-        self, playback_controller, mock_queue_manager, mock_streaming_controller
-    ):
-        song = create_mock_queue_item(id=1, user_name="Alice")
-        self._playing(playback_controller, mock_queue_manager, song)
-        mock_streaming_controller.get_position.return_value = 37
-        next_song = create_mock_queue_item(id=2, user_name="Bob")
-        mock_queue_manager.get_song_at_offset.return_value = next_song
-
-        result = playback_controller.stop_song(1)
-
-        assert result is not None
-        assert result.song == song
-        assert result.position_seconds == 37
-        mock_streaming_controller.stop_playback.assert_called_once()
-        mock_streaming_controller.stop.assert_not_called()
-        assert playback_controller.current_song_id is None
-        # Same "up next" interstitial as a skip or a natural end
-        assert playback_controller.state == PlaybackState.TRANSITION
-        assert playback_controller._next_song_pending == next_song
-
-    def test_goes_idle_when_nobody_is_next(
-        self, playback_controller, mock_queue_manager, mock_streaming_controller
-    ):
-        """Unlike skip(), stopping works for the last song in the queue."""
-        song = create_mock_queue_item(id=1)
-        self._playing(playback_controller, mock_queue_manager, song)
-        mock_queue_manager.get_song_at_offset.return_value = None
-
-        assert playback_controller.stop_song(1) is not None
-
-        mock_streaming_controller.stop_playback.assert_called_once()
-        assert playback_controller.current_song_id is None
-        assert playback_controller.state == PlaybackState.IDLE
-
-    def test_works_while_paused(
-        self, playback_controller, mock_queue_manager, mock_streaming_controller
-    ):
-        song = create_mock_queue_item(id=1)
-        self._playing(playback_controller, mock_queue_manager, song)
-        playback_controller.state = PlaybackState.PAUSED
-
-        assert playback_controller.stop_song(1) is not None
-        assert playback_controller.current_song_id is None
-
-    def test_not_recorded_in_history(
-        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
-    ):
-        """Even a long way in, a song the singer gave up on is not a performance."""
-        mock_history = Mock()
-        mock_queue_manager.get_queue.return_value = []
-        pc = PlaybackController(
-            mock_queue_manager,
-            mock_streaming_controller,
-            mock_config_manager,
-            history_manager=mock_history,
-        )
-        pc._monitor.request_stop()
-        song = create_mock_queue_item(id=1, duration_seconds=180)
-        self._playing(pc, mock_queue_manager, song)
-        mock_streaming_controller.get_position.return_value = 170
-
-        assert pc.stop_song(1) is not None
-
-        mock_history.record_performance.assert_not_called()
+    def _playing(self, pc, mock_queue_manager, song_id=1):
+        pc.current_song_id = song_id
+        pc.state = PlaybackState.PLAYING
+        mock_queue_manager.get_item.return_value = create_mock_queue_item(id=song_id)
 
     def test_a_different_song_is_left_alone(
         self, playback_controller, mock_queue_manager, mock_streaming_controller
     ):
         """A late request for a song that already ended can't stop the next one."""
-        self._playing(playback_controller, mock_queue_manager, create_mock_queue_item(id=2))
+        self._playing(playback_controller, mock_queue_manager, song_id=2)
 
-        assert playback_controller.stop_song(1) is None
-
+        assert playback_controller.stop_song(1) is False
         mock_streaming_controller.stop_playback.assert_not_called()
         assert playback_controller.current_song_id == 2
-        assert playback_controller.state == PlaybackState.PLAYING
 
     @pytest.mark.parametrize(
         "state", [PlaybackState.TRANSITION, PlaybackState.IDLE, PlaybackState.STOPPED]
@@ -326,92 +258,23 @@ class TestStopSong:
     def test_nothing_to_stop_unless_playing_or_paused(
         self, playback_controller, mock_queue_manager, mock_streaming_controller, state
     ):
-        self._playing(playback_controller, mock_queue_manager, create_mock_queue_item(id=1))
+        self._playing(playback_controller, mock_queue_manager)
         playback_controller.state = state
 
-        assert playback_controller.stop_song(1) is None
+        assert playback_controller.stop_song(1) is False
         mock_streaming_controller.stop_playback.assert_not_called()
 
-
-class TestAnotherGo:
-    """another_go(): a singer who stopped their song asks to come back."""
-
-    def _stop(self, pc, mock_queue_manager, next_song=None):
-        song = create_mock_queue_item(id=1, user_name="Alice")
-        pc.current_song_id = 1
-        pc.state = PlaybackState.PLAYING
-        mock_queue_manager.get_item.return_value = song
-        mock_queue_manager.get_song_at_offset.return_value = next_song
-        assert pc.stop_song(1) is not None
-        mock_queue_manager.move_after.return_value = 3
-        return song
-
-    def test_goes_after_the_singer_coming_up(self, playback_controller, mock_queue_manager):
-        bob = create_mock_queue_item(id=2, user_name="Bob")
-        self._stop(playback_controller, mock_queue_manager, next_song=bob)
-        assert playback_controller.state == PlaybackState.TRANSITION
-
-        assert playback_controller.another_go(1) == 3
-
-        mock_queue_manager.move_after.assert_called_once_with(1, 2)
-
-    def test_goes_after_the_singer_on_now(self, playback_controller, mock_queue_manager):
-        self._stop(playback_controller, mock_queue_manager)
-        # Later: someone else's song is playing
-        playback_controller.current_song_id = 5
-        playback_controller.state = PlaybackState.PLAYING
-
-        assert playback_controller.another_go(1) == 3
-
-        mock_queue_manager.move_after.assert_called_once_with(1, 5)
-
-    def test_never_comes_back_by_itself(self, playback_controller, mock_queue_manager):
-        """Stopping alone doesn't move the song back into the queue."""
-        self._stop(playback_controller, mock_queue_manager, create_mock_queue_item(id=2))
-
-        mock_queue_manager.move_after.assert_not_called()
-
-    def test_only_for_a_stopped_song(self, playback_controller, mock_queue_manager):
-        """Otherwise a guest could use it to jump the queue."""
-        assert playback_controller.another_go(7) is None
-        mock_queue_manager.move_after.assert_not_called()
-
-    def test_only_once(self, playback_controller, mock_queue_manager):
-        self._stop(playback_controller, mock_queue_manager, create_mock_queue_item(id=2))
-
-        assert playback_controller.another_go(1) == 3
-        assert playback_controller.another_go(1) is None
-        mock_queue_manager.move_after.assert_called_once()
-
-    def test_offer_spent_once_the_song_plays_again(self, playback_controller, mock_queue_manager):
-        song = self._stop(playback_controller, mock_queue_manager, create_mock_queue_item(id=2))
-        with playback_controller._locked():
-            playback_controller._play_song(song)
-
-        assert playback_controller.another_go(1) is None
-
-    def test_with_nobody_after_it_becomes_next(self, playback_controller, mock_queue_manager):
-        """Stopped with nobody next: the cursor steps back so it plays next."""
-        self._stop(playback_controller, mock_queue_manager, next_song=None)
-        assert playback_controller.state == PlaybackState.IDLE
-        playback_controller.set_cursor(1)
-        mock_queue_manager.get_song_at_offset.return_value = create_mock_queue_item(id=9)
-
-        assert playback_controller.another_go(1) is not None
-
-        mock_queue_manager.get_song_at_offset.assert_called_with(1, -1)
-        assert playback_controller.get_cursor() == 9
-        mock_queue_manager.move_after.assert_not_called()
-
-    def test_with_nothing_playing_goes_after_the_last_song(
-        self, playback_controller, mock_queue_manager
+    def test_last_song_goes_to_end_of_queue(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
     ):
-        self._stop(playback_controller, mock_queue_manager, next_song=None)
-        playback_controller.set_cursor(4)  # someone else's song finished since
+        """Unlike skip(), stopping works for the last song in the queue."""
+        self._playing(playback_controller, mock_queue_manager)
+        playback_controller.state = PlaybackState.PAUSED
+        mock_queue_manager.get_song_at_offset.return_value = None
 
-        assert playback_controller.another_go(1) == 3
-
-        mock_queue_manager.move_after.assert_called_once_with(1, 4)
+        assert playback_controller.stop_song(1) is True
+        mock_streaming_controller.stop_playback.assert_called_once()
+        assert playback_controller.state == PlaybackState.IDLE
 
 
 def test_skip_shows_interstitial_before_playing(
