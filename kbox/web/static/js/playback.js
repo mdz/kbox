@@ -7,7 +7,7 @@ import { renderSongSettings } from './song-settings.js';
 import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from './pitch.js';
 import { toggleControlsLock, pitchLockLabel } from './controls.js';
 import { renderKeyFix, updateKeyFix } from './key-fix.js';
-import { renderStopSong } from './stop-song.js';
+import { renderStopSong, updateStopSong } from './stop-song.js';
 
 // What the Now Playing section was last fully rendered for (song + which
 // controls this viewer gets), so polls only patch values in place.
@@ -214,7 +214,7 @@ export function updateNowPlayingPitchValue(pitchValue) {
 }
 
 // Render Now Playing section
-export function renderNowPlaying(statusData) {
+export function renderNowPlaying(statusData, nextSong = null) {
     const container = document.getElementById('now-playing-content');
     if (!container) return;
 
@@ -240,6 +240,9 @@ export function renderNowPlaying(statusData) {
     // The singer gets the plain "Too high? / Too low?" key fix; operators
     // keep the fine-grained pitch control (both, if an operator is singing).
     const isOwnSong = currentSong.user_id === userId;
+    // Who goes on if the singer stops: the next song's singer, unless that's
+    // them again.
+    const nextSingerName = nextSong && nextSong.user_id !== userId ? nextSong.user_name : null;
     const hasOperatorPitch = isOperator;
 
     // Determine song identity (use video_id if available, fall back to title)
@@ -250,7 +253,10 @@ export function renderNowPlaying(statusData) {
     // Same song and same controls: just update values without destroying buttons
     if (renderKey === currentRenderKey && container.querySelector('#key-fix, #now-playing-lock-button')) {
         updateNowPlayingSongInfo(currentSong, statusData.position_seconds);
-        if (isOwnSong) updateKeyFix(pitchValue);
+        if (isOwnSong) {
+            updateKeyFix(pitchValue);
+            updateStopSong(nextSingerName);
+        }
         if (!hasOperatorPitch) return;
         updateNowPlayingPitchValue(pitchValue);
 
@@ -294,7 +300,7 @@ export function renderNowPlaying(statusData) {
 
     if (isOwnSong) {
         renderKeyFix(container, renderKey, pitchValue);
-        renderStopSong(container, currentSong.id);
+        renderStopSong(container, { id: currentSong.id, label: displayTitle }, nextSingerName);
     }
 
     // Operator pitch controls and lock button

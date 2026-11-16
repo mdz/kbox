@@ -11,6 +11,7 @@ import {
 import { renderSongSettings } from './song-settings.js';
 import { loadQueue, updateReplaceTargetBanner } from './queue.js';
 import { showToast } from './toast.js';
+import { requestAnotherGo } from './another-go.js';
 import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
 
 // Note: window.fetch is patched in auth.js to retry once on a 401/403 to
@@ -227,9 +228,17 @@ export async function showAddSongModal(video) {
     if (currentSelectionTarget) {
         // Replacing an existing queue item - no pitch preset lookup or queue
         // depth needed, just make it unmistakable what's being replaced.
-        titleEl.textContent = 'Replace Song';
-        confirmBtn.textContent = 'Replace';
-        additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">Replacing “${escapeHtml(currentSelectionTarget.label)}” for ${escapeHtml(currentSelectionTarget.userName)}</div>`;
+        if (currentSelectionTarget.anotherGo) {
+            // Another go after stopping their song: they're picking what to
+            // sing, not thinking about replacing anything.
+            titleEl.textContent = 'Your next go';
+            confirmBtn.textContent = 'Sing this';
+            additionalControls = '';
+        } else {
+            titleEl.textContent = 'Replace Song';
+            confirmBtn.textContent = 'Replace';
+            additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">Replacing “${escapeHtml(currentSelectionTarget.label)}” for ${escapeHtml(currentSelectionTarget.userName)}</div>`;
+        }
     } else {
         titleEl.textContent = 'Add to Queue';
         confirmBtn.textContent = 'Add to Queue';
@@ -265,7 +274,8 @@ export async function showAddSongModal(video) {
     const warnings = computeAddWarnings(video, currentSelectionTarget);
     additionalControls += renderWarningsHtml(warnings);
     if (warnings.length) {
-        confirmBtn.textContent = currentSelectionTarget ? 'Replace anyway' : 'Add anyway';
+        confirmBtn.textContent = !currentSelectionTarget ? 'Add anyway'
+            : currentSelectionTarget.anotherGo ? 'Sing this anyway' : 'Replace anyway';
     }
 
     // Use reusable song settings component with saved pitch.
@@ -364,8 +374,14 @@ export async function confirmAddToQueue() {
             setCurrentVideoToAdd(null);
             setCurrentSelectionTarget(null);
             updateReplaceTargetBanner();
-            const verb = replacing ? 'Replaced with' : 'Added';
-            showToast(`✓ ${verb} ${title}${positionSuffix(slot)}`);
+            if (replacing && replacing.anotherGo) {
+                // The stopped song now holds the new pick: put it back in.
+                await requestAnotherGo(replacing.itemId, title);
+                loadQueue();
+            } else {
+                const verb = replacing ? 'Replaced with' : 'Added';
+                showToast(`✓ ${verb} ${title}${positionSuffix(slot)}`);
+            }
         } else {
             // Try to get error detail from response
             let errorMessage = replacing ? 'Error replacing song' : 'Error adding song to queue';

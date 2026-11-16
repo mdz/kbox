@@ -14,6 +14,7 @@ import { escapeHtml } from './utils.js';
 import { updatePitchDisplay, updatePitchButtons } from './pitch.js';
 import { showToast } from './toast.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
+import { renderAnotherGo } from './another-go.js';
 
 // Check if playback controls are open
 export function arePlaybackControlsOpen() {
@@ -259,7 +260,10 @@ export function updateReplaceTargetBanner() {
     const banner = document.getElementById('replace-target-banner');
     if (!banner) return;
 
-    if (currentSelectionTarget) {
+    if (currentSelectionTarget && currentSelectionTarget.anotherGo) {
+        banner.textContent = 'Pick a song for your next go';
+        banner.classList.remove('hidden');
+    } else if (currentSelectionTarget) {
         banner.textContent = `Replacing "${currentSelectionTarget.label}" — search for a new song`;
         banner.classList.remove('hidden');
     } else {
@@ -416,7 +420,8 @@ export async function loadQueue() {
         updatePlayPauseButton(statusData.state);
 
         // Render Now Playing section
-        renderNowPlaying(statusData);
+        renderNowPlaying(statusData, queueData.next_song);
+        renderAnotherGo(statusData, queueData.next_song);
 
         // Render Up Next section (backend provides next_song and my_next_turn - single source of truth)
         renderUpNext(statusData, queueData.next_song, queueData.my_next_turn);
