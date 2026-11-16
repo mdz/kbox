@@ -16,7 +16,7 @@ class Database:
     """Manages SQLite database connection and schema."""
 
     # Schema version for migrations
-    SCHEMA_VERSION = 9  # Incremented for name-keyed identity (normalized_name/icon/color)
+    SCHEMA_VERSION = 10  # Incremented for song_range_cache (USDB vocal ranges)
 
     def __init__(self, db_path: Optional[str] = None):
         """
@@ -112,6 +112,11 @@ class Database:
             # Version 9: Add normalized_name/icon/color/last_seen_at to users
             # for name-keyed identity lookup, and backfill existing rows.
             self._add_user_identity_columns(cursor)
+
+        if current_version < 10:
+            # Version 10: Cache of song vocal ranges looked up in USDB, keyed
+            # by normalised artist/title (see kbox/song_range.py).
+            self._create_song_range_cache(cursor)
 
         # Store current schema version
         cursor.execute("DELETE FROM schema_version")
@@ -370,6 +375,24 @@ class Database:
         cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN integrated_lufs REAL")
         cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN true_peak_dbtp REAL")
         cursor.execute("ALTER TABLE song_metadata_cache ADD COLUMN loudness_analyzed_at TIMESTAMP")
+
+    def _create_song_range_cache(self, cursor):
+        """Create song_range_cache: per-song vocal comfort zone from USDB.
+
+        A row with NULL zone_low/zone_high records that USDB had no usable
+        note file, so the lookup isn't repeated on every view.
+        """
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS song_range_cache (
+                song_key TEXT PRIMARY KEY,
+                artist TEXT NOT NULL,
+                song_name TEXT NOT NULL,
+                usdb_song_id INTEGER,
+                zone_low REAL,
+                zone_high REAL,
+                looked_up_at TIMESTAMP NOT NULL
+            )
+        """)
 
     def _create_user_events_table(self, cursor):
         """Create user_events table for interaction logging (search queries, etc.)."""

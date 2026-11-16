@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...database import EventRepository
 from ...history import HistoryManager
 from ...search_suggest import SearchSuggester
+from ...song_range import SongRangeService
 from ...suggestions import SuggestionEngine, SuggestionError
 from ...video_library import VideoLibrary
 from ..dependencies import (
@@ -22,6 +23,7 @@ from ..dependencies import (
     get_event_repo,
     get_history_manager,
     get_search_suggester,
+    get_song_range_service,
     get_suggestion_engine,
     get_video_library,
     require_user,
@@ -163,6 +165,32 @@ def get_suggestions(
         raise HTTPException(
             status_code=500, detail="An error occurred while generating suggestions."
         )
+
+
+@router.get("/api/song-range")
+def get_song_range_cues(
+    video_id: str,
+    title: str,
+    channel: Optional[str] = None,
+    service: Optional[SongRangeService] = Depends(get_song_range_service),
+):
+    """
+    Plain-language vocal-range cues for a karaoke video (issue #215).
+
+    The add-song dialog asks for these after it opens, so a first lookup
+    (LLM metadata extraction plus USDB, a few seconds) never delays it.
+    An empty list means "say nothing": USDB not configured, song unknown
+    or not clearly matched, or USDB unreachable. A guest then sees exactly
+    what they saw before this existed, so failures are logged by the
+    service rather than surfaced here.
+
+    title/channel come from the search result the guest tapped, saving a
+    second YouTube lookup; they only feed artist/title extraction.
+    """
+    if service is None:
+        return {"cues": []}
+    result = service.cues_for_video(video_id, title, channel)
+    return result or {"cues": []}
 
 
 @router.get("/api/video/{video_id:path}")

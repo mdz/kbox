@@ -32,6 +32,7 @@ from .queue import QueueManager
 from .session import SessionManager
 from .silence_detection import TrailingSilenceAnalyzer
 from .song_metadata import SongMetadataExtractor
+from .song_range import SongRangeService
 from .streaming import StreamingController
 from .suggestions import SuggestionEngine
 from .user import UserManager
@@ -117,6 +118,12 @@ class KboxServer:
             llm_client=self.llm_client,
         )
 
+        # SongRangeService gives guests vocal-range cues from USDB note files
+        # when they add a song (does nothing until USDB credentials are set).
+        self.song_range_service = SongRangeService(
+            self.database, self.config_manager, self.metadata_extractor
+        )
+
         # TrailingSilenceAnalyzer detects dead air at the end of downloaded
         # tracks so playback can advance without waiting through it.
         self.silence_analyzer = TrailingSilenceAnalyzer(self.database)
@@ -186,6 +193,7 @@ class KboxServer:
             streaming_controller=self.streaming_controller,
             access_token=self.access_token,
             session_secret=self.session_secret,
+            song_range_service=self.song_range_service,
         )
 
         # Uvicorn server instance (will be created in run())

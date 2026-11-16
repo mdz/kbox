@@ -17,6 +17,7 @@ from ..database import EventRepository
 from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..search_suggest import SearchSuggester
+from ..song_range import SongRangeService
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine
 from ..user import UserManager
@@ -71,6 +72,11 @@ def get_favorites_manager(request: Request):
 def get_search_suggester(request: Request) -> SearchSuggester:
     """Get SearchSuggester from app state."""
     return request.app.state.search_suggester
+
+
+def get_song_range_service(request: Request) -> Optional[SongRangeService]:
+    """Get SongRangeService from app state (None when not wired up)."""
+    return getattr(request.app.state, "song_range_service", None)
 
 
 def get_templates(request: Request) -> Jinja2Templates:

@@ -854,6 +854,36 @@
             color: #aaa;
             font-size: 0.9em;
         }
+
+        /* Vocal-range cues under the add-song pitch control (issue #215).
+           Quiet on purpose: advice, not a warning. */
+        .range-cues {
+            margin: -6px 0 4px;
+        }
+
+        .range-cue {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 4px 10px;
+            color: #aaa;
+            font-size: 0.85em;
+            text-align: center;
+            padding: 3px 0;
+        }
+
+        .range-cue-try {
+            background: transparent;
+            color: #4a9eff;
+            border: 1px solid #4a9eff;
+            border-radius: 14px;
+            padding: 4px 12px;
+            font-size: 0.95em;
+            min-height: 30px;
+            width: auto;
+            flex: 0 0 auto;
+        }
         /* Sticky turn alert. Fixed, so the round header buttons are pushed
            down by the bar's height while it is visible. */
         .turn-bar {

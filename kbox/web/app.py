@@ -19,6 +19,7 @@ from ..config_manager import ConfigManager
 from ..playback import PlaybackController
 from ..queue import QueueManager
 from ..search_suggest import SearchSuggester
+from ..song_range import SongRangeService
 from ..streaming import StreamingController
 from ..suggestions import SuggestionEngine
 from ..user import UserManager
@@ -58,6 +59,7 @@ def create_app(
     streaming_controller: Optional[StreamingController] = None,
     access_token: Optional[str] = None,
     session_secret: Optional[str] = None,
+    song_range_service: Optional[SongRangeService] = None,
 ) -> FastAPI:
     """
     Create and configure FastAPI application.
@@ -74,6 +76,7 @@ def create_app(
         streaming_controller: StreamingController instance (optional, for overlays)
         access_token: Access token for guest authentication (if None, auth disabled)
         session_secret: Secret key for session cookies (defaults to random if not provided)
+        song_range_service: SongRangeService for vocal-range cues (optional)
 
     Returns:
         Configured FastAPI app
@@ -94,6 +97,7 @@ def create_app(
     app.state.suggestion_engine = suggestion_engine
     app.state.streaming_controller = streaming_controller
     app.state.access_token = access_token
+    app.state.song_range_service = song_range_service
     # Autocomplete is self-contained (config + an HTTP call), so it's built
     # here rather than threaded through main.py's wiring.
     app.state.search_suggester = SearchSuggester(config_manager)

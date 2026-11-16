@@ -12,6 +12,7 @@ import { renderSongSettings } from './song-settings.js';
 import { loadQueue, updateReplaceTargetBanner } from './queue.js';
 import { showToast } from './toast.js';
 import { renderFavoriteStar, bindFavoriteStar } from './favorites.js';
+import { updatePitchDisplay, updatePitchButtons } from './pitch.js';
 
 // Note: window.fetch is patched in auth.js to retry once on a 401/403 to
 // /api/* if the session's identity got clobbered — no special handling
@@ -291,6 +292,63 @@ export async function showAddSongModal(video) {
     const modal = document.getElementById('add-song-modal');
     modal.classList.remove('hidden');
     modal.style.display = 'flex';
+
+    if (!currentSelectionTarget) {
+        loadRangeCues(video);
+    }
+}
+
+// Fetch vocal-range cues for the song and show them under the pitch control
+// (issue #215). Deliberately after the dialog is open: a first lookup can take
+// a few seconds, and a guest who confirms before it lands just never sees it.
+// Any failure or empty answer shows nothing, which is how things were before.
+async function loadRangeCues(video) {
+    let data;
+    try {
+        const params = new URLSearchParams({ video_id: video.id, title: video.title || '' });
+        if (video.channel) params.set('channel', video.channel);
+        const response = await fetch(`/api/song-range?${params}`);
+        if (!response.ok) return;
+        data = await response.json();
+    } catch (e) {
+        console.debug('Could not fetch range cues:', e);
+        return;
+    }
+    // The guest may have closed the dialog or picked another song meanwhile.
+    if (currentVideoToAdd?.id !== video.id || !data?.cues?.length) return;
+    const pitchContainer = document.getElementById('add-song-pitch-control-container');
+    if (!pitchContainer) return;
+
+    const box = document.createElement('div');
+    box.id = 'add-song-range-cues';
+    box.className = 'range-cues';
+    for (const cue of data.cues) {
+        const row = document.createElement('div');
+        row.className = 'range-cue';
+        const text = document.createElement('span');
+        text.textContent = cue.text;
+        row.appendChild(text);
+        if (Number.isInteger(cue.shift) && cue.shift !== 0) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'range-cue-try';
+            btn.textContent = `Try ${cue.shift > 0 ? '+' : '\u2212'}${Math.abs(cue.shift)}`;
+            btn.addEventListener('click', () => setAddSongPitch(cue.shift));
+            row.appendChild(btn);
+        }
+        box.appendChild(row);
+    }
+    document.getElementById('add-song-range-cues')?.remove();
+    pitchContainer.after(box);
+}
+
+// Set (not nudge) the add-song pitch control, as if the guest had tapped to it.
+function setAddSongPitch(value) {
+    const input = document.getElementById('add-song-pitch-input');
+    if (!input) return;
+    input.value = value;
+    updatePitchDisplay('add-song-pitch-display', value);
+    updatePitchButtons('add-song', value);
 }
 
 // Cancel adding/replacing song
