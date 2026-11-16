@@ -82,6 +82,14 @@ class SeekResult:
     position: Optional[int] = None
 
 
+@dataclass(frozen=True)
+class StoppedSong:
+    """A song stopped partway through by stop_song(), and where it stopped."""
+
+    song: QueueItem
+    position_seconds: int
+
+
 class PlaybackController:
     """Orchestrates playback and manages state."""
 
@@ -920,6 +928,43 @@ class PlaybackController:
         with self._locked():
             return self._skip_internal()
 
+    def stop_song(self, item_id: int) -> Optional[StoppedSong]:
+        """
+        Stop a song partway through and move on to the next singer.
+
+        For a singer who can't carry on with their own song (wrong song,
+        wrong version, bad karaoke track). It moves on the way a natural end
+        does -- the "up next" interstitial, or the end-of-queue screen if
+        nobody is next -- but the attempt is never written to performance
+        history: it is a song the singer gave up on, not one they sang.
+
+        Only item_id is stopped, and only while it is playing or paused, so a
+        request that arrives after that song has already ended can never stop
+        the next singer instead.
+
+        Args:
+            item_id: Queue item the caller means to stop
+
+        Returns:
+            The stopped song and its position, or None if item_id is not the
+            song playing now.
+        """
+        with self._locked():
+            if self.current_song_id != item_id or self.state not in (
+                PlaybackState.PLAYING,
+                PlaybackState.PAUSED,
+            ):
+                return None
+            song = self.queue_manager.get_item(item_id)
+            if song is None:
+                return None
+
+            position = self.streaming_controller.get_position() or 0
+            self.logger.info("Stopping song %s at %ss on request", item_id, position)
+            self.streaming_controller.stop_playback()
+            self._complete_current_song(final_position=position, record_history=False)
+            return StoppedSong(song=song, position_seconds=position)
+
     def jump_to_song(self, item_id: int) -> bool:
         """
         Jump to and play a song immediately at its current queue position.
@@ -1102,7 +1147,9 @@ class PlaybackController:
         with self._locked():
             self._complete_current_song()
 
-    def _complete_current_song(self, final_position: Optional[int] = None):
+    def _complete_current_song(
+        self, final_position: Optional[int] = None, record_history: bool = True
+    ):
         """
         Finish the current song: record history, reset pitch/overlay, clear
         current_song_id, and transition to the next song or idle.
@@ -1117,6 +1164,9 @@ class PlaybackController:
                 None, queries the streaming controller's current position
                 (the natural-EOS case, where GStreamer is already stopped
                 at the real end of the file).
+            record_history: False for a song the singer gave up on
+                (stop_song()), which is not a performance whatever its
+                length.
         """
         self._require_locked()
         finished_song_id = None
@@ -1136,7 +1186,8 @@ class PlaybackController:
                 )
 
                 # Record history if threshold met
-                self._record_history_if_eligible(finished_song, record_position)
+                if record_history:
+                    self._record_history_if_eligible(finished_song, record_position)
             else:
                 self.logger.warning("Finished song ID %s not found", finished_song_id)
         else:

@@ -29,6 +29,7 @@ from kbox.playback import (
     PlaybackStatus,
     SeekOutcome,
     SeekResult,
+    StoppedSong,
     UpcomingItem,
 )
 from kbox.queue import MoveOutcome, MoveResult, QueueManager
@@ -1961,4 +1962,97 @@ class TestErrorPaths:
             "/api/queue/99999/position",
             json={"new_position": 1},
         )
+        assert response.status_code == 404
+
+
+def _song_stopped_events(app_components):
+    import json
+
+    conn = app_components["history"].database.get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, data_json FROM user_events WHERE event_type = 'song_stopped'"
+        )
+        return [(row["user_id"], json.loads(row["data_json"])) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+class TestStopSong:
+    """POST /api/playback/stop-song: a singer stops their own song."""
+
+    def _add_alices_song(self, app_components, alice):
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Test Song", duration_seconds=200
+        )
+        return queue_mgr.get_item(item_id)
+
+    def test_singer_stops_own_song(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        song = self._add_alices_song(app_components, alice)
+        playback = app_components["playback"]
+        playback.stop_song.return_value = StoppedSong(song=song, position_seconds=42)
+
+        response = client.post("/api/playback/stop-song", json={"item_id": song.id})
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "stopped"}
+        playback.stop_song.assert_called_once_with(song.id)
+        assert _song_stopped_events(app_components) == [
+            (
+                ALICE_ID,
+                {
+                    "queue_item_id": song.id,
+                    "video_id": "youtube:s1",
+                    "position_seconds": 42,
+                    "duration_seconds": 200,
+                    "stopped_by": ALICE_ID,
+                    "stopped_by_singer": True,
+                },
+            )
+        ]
+
+    def test_other_guest_cannot_stop_song(self, client, alice, bob, app_components):
+        song = self._add_alices_song(app_components, alice)
+        set_user(client, BOB_ID, "Bob")
+
+        response = client.post("/api/playback/stop-song", json={"item_id": song.id})
+
+        assert response.status_code == 403
+        app_components["playback"].stop_song.assert_not_called()
+        assert _song_stopped_events(app_components) == []
+
+    def test_operator_can_stop_any_song(self, client, alice, app_components):
+        song = self._add_alices_song(app_components, alice)
+        set_operator(client)
+        app_components["playback"].stop_song.return_value = StoppedSong(
+            song=song, position_seconds=10
+        )
+
+        response = client.post("/api/playback/stop-song", json={"item_id": song.id})
+
+        assert response.status_code == 200
+        [(user_id, data)] = _song_stopped_events(app_components)
+        assert user_id == ALICE_ID
+        assert data["stopped_by_singer"] is False
+
+    def test_song_no_longer_playing_is_a_no_op(self, client, alice, app_components):
+        """A tap that lands after the song ended stops nothing and records nothing."""
+        set_user(client, ALICE_ID, "Alice")
+        song = self._add_alices_song(app_components, alice)
+        app_components["playback"].stop_song.return_value = None
+
+        response = client.post("/api/playback/stop-song", json={"item_id": song.id})
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "not_playing"}
+        assert _song_stopped_events(app_components) == []
+
+    def test_unknown_item(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+
+        response = client.post("/api/playback/stop-song", json={"item_id": 99999})
+
         assert response.status_code == 404

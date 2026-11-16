@@ -39,6 +39,12 @@ class PitchRequest(BaseModel):
     user_id: str  # UUID for identity
 
 
+class StopSongRequest(BaseModel):
+    """Which song to stop: the queue item the caller saw playing."""
+
+    item_id: int
+
+
 class UpdateQueueItemRequest(BaseModel):
     """Request model for updating queue item properties."""
 

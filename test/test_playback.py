@@ -234,6 +234,105 @@ def test_skip(playback_controller, mock_queue_manager, mock_streaming_controller
     assert playback_controller.state == PlaybackState.TRANSITION
 
 
+class TestStopSong:
+    """stop_song(): a singer gives up on their own song partway through."""
+
+    def _playing(self, playback_controller, mock_queue_manager, song):
+        playback_controller.current_song_id = song.id
+        playback_controller.state = PlaybackState.PLAYING
+        mock_queue_manager.get_item.return_value = song
+
+    def test_moves_on_to_next_singer(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        song = create_mock_queue_item(id=1, user_name="Alice")
+        self._playing(playback_controller, mock_queue_manager, song)
+        mock_streaming_controller.get_position.return_value = 37
+        next_song = create_mock_queue_item(id=2, user_name="Bob")
+        mock_queue_manager.get_song_at_offset.return_value = next_song
+
+        result = playback_controller.stop_song(1)
+
+        assert result is not None
+        assert result.song == song
+        assert result.position_seconds == 37
+        mock_streaming_controller.stop_playback.assert_called_once()
+        mock_streaming_controller.stop.assert_not_called()
+        assert playback_controller.current_song_id is None
+        # Same "up next" interstitial as a skip or a natural end
+        assert playback_controller.state == PlaybackState.TRANSITION
+        assert playback_controller._next_song_pending == next_song
+
+    def test_goes_idle_when_nobody_is_next(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """Unlike skip(), stopping works for the last song in the queue."""
+        song = create_mock_queue_item(id=1)
+        self._playing(playback_controller, mock_queue_manager, song)
+        mock_queue_manager.get_song_at_offset.return_value = None
+
+        assert playback_controller.stop_song(1) is not None
+
+        mock_streaming_controller.stop_playback.assert_called_once()
+        assert playback_controller.current_song_id is None
+        assert playback_controller.state == PlaybackState.IDLE
+
+    def test_works_while_paused(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        song = create_mock_queue_item(id=1)
+        self._playing(playback_controller, mock_queue_manager, song)
+        playback_controller.state = PlaybackState.PAUSED
+
+        assert playback_controller.stop_song(1) is not None
+        assert playback_controller.current_song_id is None
+
+    def test_not_recorded_in_history(
+        self, mock_queue_manager, mock_streaming_controller, mock_config_manager
+    ):
+        """Even a long way in, a song the singer gave up on is not a performance."""
+        mock_history = Mock()
+        mock_queue_manager.get_queue.return_value = []
+        pc = PlaybackController(
+            mock_queue_manager,
+            mock_streaming_controller,
+            mock_config_manager,
+            history_manager=mock_history,
+        )
+        pc._monitor.request_stop()
+        song = create_mock_queue_item(id=1, duration_seconds=180)
+        self._playing(pc, mock_queue_manager, song)
+        mock_streaming_controller.get_position.return_value = 170
+
+        assert pc.stop_song(1) is not None
+
+        mock_history.record_performance.assert_not_called()
+
+    def test_a_different_song_is_left_alone(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """A late request for a song that already ended can't stop the next one."""
+        self._playing(playback_controller, mock_queue_manager, create_mock_queue_item(id=2))
+
+        assert playback_controller.stop_song(1) is None
+
+        mock_streaming_controller.stop_playback.assert_not_called()
+        assert playback_controller.current_song_id == 2
+        assert playback_controller.state == PlaybackState.PLAYING
+
+    @pytest.mark.parametrize(
+        "state", [PlaybackState.TRANSITION, PlaybackState.IDLE, PlaybackState.STOPPED]
+    )
+    def test_nothing_to_stop_unless_playing_or_paused(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller, state
+    ):
+        self._playing(playback_controller, mock_queue_manager, create_mock_queue_item(id=1))
+        playback_controller.state = state
+
+        assert playback_controller.stop_song(1) is None
+        mock_streaming_controller.stop_playback.assert_not_called()
+
+
 def test_skip_shows_interstitial_before_playing(
     playback_controller, mock_queue_manager, mock_streaming_controller
 ):

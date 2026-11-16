@@ -2,19 +2,32 @@
 Playback routes: status, transport controls, pitch, restart and seek.
 
 Every control except status is operator-only, checked per handler via
-``check_operator``. Handlers get their collaborators through the providers
+``check_operator`` -- except pitch and stop-song, which the singer of the
+current song may also use on their own song. Handlers get their collaborators through the providers
 in :mod:`kbox.web.dependencies`, so this router can be imported and
 inspected without building an app.
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...database import EventRepository
 from ...playback import PlaybackController, SeekOutcome
-from ..dependencies import check_operator, get_current_user_id, get_playback_controller
-from ..models import PitchRequest, SeekRequest
+from ...queue import QueueManager
+from ...user_events import SongStopped
+from ..dependencies import (
+    check_operator,
+    get_current_user_id,
+    get_event_repo,
+    get_playback_controller,
+    get_queue_manager,
+)
+from ..models import PitchRequest, SeekRequest, StopSongRequest
 from ..serializers import serialize_queue_item
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -157,6 +170,55 @@ def set_pitch(
         return {"status": "updated", "pitch": request_data.semitones}
     else:
         raise HTTPException(status_code=400, detail="Failed to update pitch")
+
+
+@router.post("/api/playback/stop-song")
+def stop_song(
+    request_data: StopSongRequest,
+    playback: PlaybackController = Depends(get_playback_controller),
+    queue_mgr: QueueManager = Depends(get_queue_manager),
+    event_repo: EventRepository = Depends(get_event_repo),
+    is_operator: bool = Depends(check_operator),
+    current_user_id: Optional[str] = Depends(get_current_user_id),
+):
+    """
+    Stop the song playing now and move on to the next singer.
+
+    For a singer who can't carry on with their own song. Allowed if the user
+    owns the song OR is an operator, regardless of the controls lock, like
+    pitch. The client names the item it saw playing, so a late tap can never
+    stop the next singer's song. The attempt doesn't count as a performance;
+    a song_stopped event is recorded instead.
+    """
+    item = queue_mgr.get_item(request_data.item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if not is_operator and (not current_user_id or current_user_id != item.user_id):
+        raise HTTPException(status_code=403, detail="You can only stop your own song")
+
+    stopped = playback.stop_song(request_data.item_id)
+    if stopped is None:
+        # It ended (or was skipped) before the request arrived: nothing to do.
+        return {"status": "not_playing"}
+
+    try:
+        event_repo.record(
+            stopped.song.user_id,
+            SongStopped(
+                queue_item_id=stopped.song.id,
+                video_id=stopped.song.video_id,
+                position_seconds=stopped.position_seconds,
+                duration_seconds=stopped.song.metadata.duration_seconds,
+                stopped_by=current_user_id,
+                stopped_by_singer=current_user_id == stopped.song.user_id,
+            ),
+        )
+    except Exception:
+        # Best-effort, like the other user events: the song has stopped.
+        logger.warning("Failed to record song_stopped event", exc_info=True)
+
+    return {"status": "stopped"}
 
 
 @router.post("/api/playback/restart")

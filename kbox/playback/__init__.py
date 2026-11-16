@@ -21,6 +21,7 @@ from .controller import (
     PlaybackStatus,
     SeekOutcome,
     SeekResult,
+    StoppedSong,
 )
 from .upcoming import UpcomingItem, upcoming_songs
 
@@ -30,6 +31,7 @@ __all__ = [
     "PlaybackStatus",
     "SeekOutcome",
     "SeekResult",
+    "StoppedSong",
     "UpcomingItem",
     "upcoming_songs",
 ]
