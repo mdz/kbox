@@ -335,7 +335,8 @@ def actual_main():
     )
     args = parser.parse_args()
     if args.data_dir:
-        os.environ[DATA_DIR_ENV] = args.data_dir
+        # Pin it to the launch directory now, so nothing depends on the cwd later.
+        os.environ[DATA_DIR_ENV] = str(Path(args.data_dir).expanduser().resolve())
     if args.access_token:
         os.environ["KBOX_ACCESS_TOKEN"] = args.access_token
 
