@@ -12,7 +12,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Set
 
 from ..database import ConfigRepository
 from ..models import QueueItem
@@ -185,6 +185,11 @@ class PlaybackController:
         # Set when replace_song() stops the currently-playing song to swap its
         # content; the monitor auto-resumes once that item's content is ready.
         self._awaiting_replace_item_id: Optional[int] = None
+        # Songs stopped with stop_song() whose singer may still ask for
+        # another go (another_go()). In memory only: after a restart the
+        # offer lapses, which is the safe default (the song never comes
+        # back on its own).
+        self._stopped_item_ids: Set[int] = set()
 
         # Overlay management - the coordinator owns the base text and the
         # active notification's deadline. Only ever called under self.lock;
@@ -621,6 +626,8 @@ class PlaybackController:
 
         # Any pending "waiting for replacement" is moot once a song starts playing
         self._awaiting_replace_item_id = None
+        # Once it plays again, a stopped song's offer of another go is spent
+        self._stopped_item_ids.discard(song.id)
 
         # Reset notification flags for new song
         self._up_next_shown = False
@@ -963,7 +970,58 @@ class PlaybackController:
             self.logger.info("Stopping song %s at %ss on request", item_id, position)
             self.streaming_controller.stop_playback()
             self._complete_current_song(final_position=position, record_history=False)
+            self._stopped_item_ids.add(item_id)
             return StoppedSong(song=song, position_seconds=position)
+
+    def another_go(self, item_id: int) -> Optional[int]:
+        """
+        Give a singer who stopped their song another go, after whoever is on now.
+
+        Stopping never brings the song back by itself (the singer would be
+        surprised by the same track, maybe right after an embarrassing
+        moment); this is the singer asking for it. Only a song stopped with
+        stop_song(), and only once, so it can't be used to jump the queue.
+
+        "Whoever is on now" is the song playing, or the one whose "up next"
+        screen is showing. With nothing playing, the song becomes next, and
+        idle auto-start picks it up.
+
+        Args:
+            item_id: Queue item that was stopped
+
+        Returns:
+            The song's new queue position, or None if it isn't eligible or
+            couldn't be moved.
+        """
+        with self._locked():
+            if item_id not in self._stopped_item_ids:
+                self.logger.info("Song %s was not stopped by its singer; no another go", item_id)
+                return None
+
+            if self.state == PlaybackState.TRANSITION and self._next_song_pending:
+                reference_id: Optional[int] = self._next_song_pending.id
+            elif self.current_song_id:
+                reference_id = self.current_song_id
+            else:
+                reference_id = self.get_cursor()
+                if reference_id == item_id:
+                    # Stopped with nobody after it: the cursor still points
+                    # at it, so step the cursor back for it to be next.
+                    previous = self.queue_manager.get_song_at_offset(item_id, -1)
+                    if previous and previous.id != item_id:
+                        self._cursor.set(previous.id)
+                    else:
+                        self._cursor.clear()
+                    self._stopped_item_ids.discard(item_id)
+                    item = self.queue_manager.get_item(item_id)
+                    return item.position if item else None
+
+            new_position = self.queue_manager.move_after(item_id, reference_id)
+            if new_position is None:
+                return None
+            self._stopped_item_ids.discard(item_id)
+            self.logger.info("Song %s gets another go at position %s", item_id, new_position)
+            return new_position
 
     def jump_to_song(self, item_id: int) -> bool:
         """

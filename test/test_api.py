@@ -2058,3 +2058,40 @@ class TestStopSong:
         response = client.post("/api/playback/stop-song", json={"item_id": 99999})
 
         assert response.status_code == 404
+
+
+class TestAnotherGo:
+    """POST /api/playback/another-go: a singer comes back after stopping."""
+
+    def _add(self, app_components, user):
+        queue_mgr = app_components["queue"]
+        return queue_mgr.get_item(queue_mgr.add_song(user=user, video_id="youtube:s1", title="T"))
+
+    def test_singer_gets_another_go(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        song = self._add(app_components, alice)
+        app_components["playback"].another_go.return_value = 3
+
+        response = client.post("/api/playback/another-go", json={"item_id": song.id})
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "queued", "position": 3}
+        app_components["playback"].another_go.assert_called_once_with(song.id)
+
+    def test_other_guest_cannot(self, client, alice, bob, app_components):
+        song = self._add(app_components, alice)
+        set_user(client, BOB_ID, "Bob")
+
+        response = client.post("/api/playback/another-go", json={"item_id": song.id})
+
+        assert response.status_code == 403
+        app_components["playback"].another_go.assert_not_called()
+
+    def test_not_eligible(self, client, alice, app_components):
+        set_user(client, ALICE_ID, "Alice")
+        song = self._add(app_components, alice)
+        app_components["playback"].another_go.return_value = None
+
+        response = client.post("/api/playback/another-go", json={"item_id": song.id})
+
+        assert response.status_code == 409

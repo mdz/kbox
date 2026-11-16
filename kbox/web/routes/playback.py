@@ -2,8 +2,8 @@
 Playback routes: status, transport controls, pitch, restart and seek.
 
 Every control except status is operator-only, checked per handler via
-``check_operator`` -- except pitch and stop-song, which the singer of the
-current song may also use on their own song. Handlers get their collaborators through the providers
+``check_operator`` -- except pitch, stop-song and another-go, which a
+singer may also use on their own song. Handlers get their collaborators through the providers
 in :mod:`kbox.web.dependencies`, so this router can be imported and
 inspected without building an app.
 """
@@ -24,7 +24,7 @@ from ..dependencies import (
     get_playback_controller,
     get_queue_manager,
 )
-from ..models import PitchRequest, SeekRequest, StopSongRequest
+from ..models import PitchRequest, SeekRequest, SongItemRequest
 from ..serializers import serialize_queue_item
 
 logger = logging.getLogger(__name__)
@@ -174,7 +174,7 @@ def set_pitch(
 
 @router.post("/api/playback/stop-song")
 def stop_song(
-    request_data: StopSongRequest,
+    request_data: SongItemRequest,
     playback: PlaybackController = Depends(get_playback_controller),
     queue_mgr: QueueManager = Depends(get_queue_manager),
     event_repo: EventRepository = Depends(get_event_repo),
@@ -219,6 +219,35 @@ def stop_song(
         logger.warning("Failed to record song_stopped event", exc_info=True)
 
     return {"status": "stopped"}
+
+
+@router.post("/api/playback/another-go")
+def another_go(
+    request_data: SongItemRequest,
+    playback: PlaybackController = Depends(get_playback_controller),
+    queue_mgr: QueueManager = Depends(get_queue_manager),
+    is_operator: bool = Depends(check_operator),
+    current_user_id: Optional[str] = Depends(get_current_user_id),
+):
+    """
+    Put a song its singer stopped back in, right after whoever is on now.
+
+    Allowed if the user owns the song OR is an operator. Only a song stopped
+    with stop-song qualifies, and only once (see
+    PlaybackController.another_go), so this can't be used to jump the queue.
+    To come back with a different song, replace the item first.
+    """
+    item = queue_mgr.get_item(request_data.item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if not is_operator and (not current_user_id or current_user_id != item.user_id):
+        raise HTTPException(status_code=403, detail="You can only do this for your own song")
+
+    position = playback.another_go(request_data.item_id)
+    if position is None:
+        raise HTTPException(status_code=409, detail="That song can't come back now")
+    return {"status": "queued", "position": position}
 
 
 @router.post("/api/playback/restart")

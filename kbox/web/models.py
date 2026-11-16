@@ -39,8 +39,8 @@ class PitchRequest(BaseModel):
     user_id: str  # UUID for identity
 
 
-class StopSongRequest(BaseModel):
-    """Which song to stop: the queue item the caller saw playing."""
+class SongItemRequest(BaseModel):
+    """Which song a singer's action is about: one queue item."""
 
     item_id: int
 

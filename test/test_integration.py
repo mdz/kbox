@@ -734,3 +734,71 @@ def test_removing_the_song_on_the_interstitial_retargets_it(full_system):
     assert playback._next_song_pending.id == dave_id
     playback.play()
     assert playback.current_song_id == dave_id
+
+
+def _bob_stops_his_song(system):
+    """Bob stops his song from his phone; Charlie is up next, then Alice again."""
+    alice_id, bob_id, charlie_id = _start_second_song(system)
+    alice_again_id = _ready_song(system, "alice", "fake:a2", "Song A2")
+    client = _api_client(system)
+    client.post("/api/users", json={"user_id": BOB_ID, "display_name": "Bob"})
+    response = client.post("/api/playback/stop-song", json={"item_id": bob_id})
+    assert response.json() == {"status": "stopped"}
+    return client, bob_id, charlie_id, alice_again_id
+
+
+def test_stopped_song_never_comes_back_by_itself(full_system):
+    """Bob may be embarrassed: the track he bailed out of must not reappear."""
+    system = full_system
+    playback = system["playback"]
+    _, bob_id, charlie_id, alice_again_id = _bob_stops_his_song(system)
+
+    playback.play()  # skip the interstitial
+    assert playback.current_song_id == charlie_id
+    playback.on_song_end()
+    playback.play()
+    assert playback.current_song_id == alice_again_id
+    assert [h.metadata.title for h in system["history"].get_user_history(BOB_ID)] == []
+
+
+def test_another_go_comes_right_after_the_next_singer(full_system):
+    system = full_system
+    playback = system["playback"]
+    client, bob_id, charlie_id, alice_again_id = _bob_stops_his_song(system)
+
+    # While Charlie's "up next" screen is showing, Bob asks for another go
+    response = client.post("/api/playback/another-go", json={"item_id": bob_id})
+    assert response.status_code == 200
+
+    playback.play()  # skip the interstitial
+    assert playback.current_song_id == charlie_id
+    playback.on_song_end()
+    playback.play()
+    assert playback.current_song_id == bob_id  # before Alice's second song
+
+    # Only once: no further jumps
+    response = client.post("/api/playback/another-go", json={"item_id": bob_id})
+    assert response.status_code == 409
+
+
+def test_another_go_with_a_different_song(full_system):
+    """Replace the stopped item first, then ask for another go."""
+    system = full_system
+    playback = system["playback"]
+    client, bob_id, charlie_id, _ = _bob_stops_his_song(system)
+
+    response = client.post(
+        f"/api/queue/{bob_id}/replace",
+        json={"video_id": "fake:b2", "title": "Song B2", "duration_seconds": 200},
+    )
+    assert response.status_code == 200
+    assert client.post("/api/playback/another-go", json={"item_id": bob_id}).status_code == 200
+    system["queue"].update_content_status(
+        bob_id, QueueManager.STATUS_READY, content_path="/path/to/Song B2.mp4"
+    )
+
+    playback.play()
+    playback.on_song_end()  # Charlie finishes
+    playback.play()
+    assert playback.current_song_id == bob_id
+    assert system["queue"].get_item(bob_id).metadata.title == "Song B2"
