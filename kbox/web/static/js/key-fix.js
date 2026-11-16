@@ -21,8 +21,8 @@ export const KEY_FIX_LIMIT = 12;
 
 // Pure: the pitch after one tap in `direction` (-1 = lower, +1 = higher),
 // clamped to the range the pipeline accepts.
-export function nextKeyShift(current, direction, step = KEY_FIX_STEP) {
-    const value = (Number.isFinite(current) ? current : 0) + direction * step;
+export function nextKeyShift(current, direction) {
+    const value = (Number.isFinite(current) ? current : 0) + direction * KEY_FIX_STEP;
     return Math.max(-KEY_FIX_LIMIT, Math.min(KEY_FIX_LIMIT, value));
 }
 
@@ -51,8 +51,6 @@ function paint() {
     current.textContent = describeKeyShift(state.pitch);
     setDisabled('key-fix-lower', state.pitch <= -KEY_FIX_LIMIT);
     setDisabled('key-fix-higher', state.pitch >= KEY_FIX_LIMIT);
-    setDisabled('key-fix-nudge-lower', state.pitch <= -KEY_FIX_LIMIT);
-    setDisabled('key-fix-nudge-higher', state.pitch >= KEY_FIX_LIMIT);
     const reset = document.getElementById('key-fix-reset');
     if (reset) reset.hidden = state.pitch === 0;
 }
@@ -86,12 +84,7 @@ export function renderKeyFix(container, songKey, pitch) {
         <div class="key-fix-status">
             Now: <strong class="key-fix-current">${escapeHtml(describeKeyShift(state.pitch))}</strong>
         </div>
-        <div class="key-fix-fine">
-            <button type="button" id="key-fix-nudge-lower" class="key-fix-link"
-                    onclick="keyFixTap(-1, 1)">a little lower</button>
-            <span aria-hidden="true">·</span>
-            <button type="button" id="key-fix-nudge-higher" class="key-fix-link"
-                    onclick="keyFixTap(1, 1)">a little higher</button>
+        <div class="key-fix-undo">
             <button type="button" id="key-fix-reset" class="key-fix-link"
                     onclick="keyFixReset()">back to original</button>
         </div>
@@ -133,8 +126,8 @@ async function applyPitch(newValue) {
     }
 }
 
-export function keyFixTap(direction, step = KEY_FIX_STEP) {
-    return applyPitch(nextKeyShift(state.pitch, direction, step));
+export function keyFixTap(direction) {
+    return applyPitch(nextKeyShift(state.pitch, direction));
 }
 
 export function keyFixReset() {

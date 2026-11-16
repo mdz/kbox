@@ -205,16 +205,15 @@ def test_compute_turn_status_later_text(mobile_page, live_app):
 # ---------------------------------------------------------------------------
 
 _KEY_SHIFT_CASES = [
-    # (current, direction, step, expected)
-    (0, -1, 2, -2),  # one tap down: a whole step
-    (-2, -1, 2, -4),  # second tap
-    (0, 1, 2, 2),
-    (-1, 1, 2, 1),  # odd values keep moving by the step
-    (-11, -1, 2, -12),  # clamped at the pipeline's range
-    (-12, -1, 2, -12),
-    (11, 1, 2, 12),
-    (0, -1, 1, -1),  # "a little lower"
-    (None, 1, 2, 2),  # missing pitch treated as original key
+    # (current, direction, expected)
+    (0, -1, -2),  # one tap down: a whole step
+    (-2, -1, -4),  # second tap
+    (0, 1, 2),
+    (-1, 1, 1),  # odd values (set elsewhere) keep moving by the step
+    (-11, -1, -12),  # clamped at the pipeline's range
+    (-12, -1, -12),
+    (11, 1, 12),
+    (None, 1, 2),  # missing pitch treated as original key
 ]
 
 
@@ -224,11 +223,11 @@ def test_next_key_shift(mobile_page, live_app):
         """async (cases) => {
             const appSrc = document.querySelector('script[type="module"]').src;
             const { nextKeyShift } = await import(new URL('./key-fix.js', appSrc).href);
-            return cases.map(([c, d, s]) => nextKeyShift(c, d, s));
+            return cases.map(([c, d]) => nextKeyShift(c, d));
         }""",
-        [list(c[:3]) for c in _KEY_SHIFT_CASES],
+        [list(c[:2]) for c in _KEY_SHIFT_CASES],
     )
-    assert results == [c[3] for c in _KEY_SHIFT_CASES]
+    assert results == [c[2] for c in _KEY_SHIFT_CASES]
 
 
 _DESCRIBE_SHIFT_CASES = [
