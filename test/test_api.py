@@ -23,6 +23,7 @@ from kbox.config_manager import ConfigManager
 from kbox.database import Database
 from kbox.favorites import FavoritesManager
 from kbox.history import HistoryManager
+from kbox.models import SongMetadata, SongSettings
 from kbox.playback import (
     PlaybackState,
     PlaybackStatus,
@@ -848,6 +849,42 @@ class TestVideoSearchEndpoints:
         finally:
             conn.close()
 
+    def _record_performance(self, app_components, video_id):
+        app_components["history"].record_performance(
+            user_id=ALICE_ID,
+            user_name="Alice",
+            video_id=video_id,
+            metadata=SongMetadata(title="Test Song", duration_seconds=180),
+            settings=SongSettings(),
+            played_duration_seconds=180,
+            playback_end_position_seconds=180,
+            completion_percentage=100.0,
+        )
+
+    def test_search_marks_performed_before(self, client, app_components, alice):
+        """Results whose video has been performed here are labelled (#216)."""
+        self._record_performance(app_components, "youtube:test123")
+
+        performed = client.get("/api/search?q=test").json()["results"]
+        untried = client.get("/api/search?q=second").json()["results"]
+
+        assert performed[0]["performed_before"] is True
+        assert untried[0]["performed_before"] is False
+
+    def test_search_survives_history_lookup_failure(self, client, app_components):
+        """A failed history lookup leaves results unlabelled, not a failed search."""
+        with unittest.mock.patch.object(
+            app_components["history"],
+            "performed_video_ids",
+            side_effect=RuntimeError("db gone"),
+        ):
+            response = client.get("/api/search?q=test")
+
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert results[0]["id"] == "youtube:test123"
+        assert "performed_before" not in results[0]
+
     def test_suggest(self, client):
         """GET /api/search/suggest - autocomplete the search box."""
         with unittest.mock.patch.object(
@@ -1561,6 +1598,29 @@ class TestSuggestionsEndpoints:
         assert "results" in data
         assert data["source"] == "ai"
         assert len(data["results"]) == 2
+
+    def test_suggestions_mark_performed_before(self, client, alice, app_components):
+        """AI suggestions carry the same performed-before label as search (#216)."""
+        set_user(client, ALICE_ID, "Alice")
+        app_components["history"].record_performance(
+            user_id=ALICE_ID,
+            user_name="Alice",
+            video_id="youtube:result1",
+            metadata=SongMetadata(title="Suggested Song Karaoke", duration_seconds=180),
+            settings=SongSettings(),
+            played_duration_seconds=180,
+            playback_end_position_seconds=180,
+            completion_percentage=100.0,
+        )
+        app_components["suggestion_engine"].get_suggestions.side_effect = None
+        app_components["suggestion_engine"].get_suggestions.return_value = [
+            {"id": "youtube:result1", "title": "Suggested Song Karaoke"},
+            {"id": "youtube:result2", "title": "Another Song Karaoke"},
+        ]
+
+        results = client.get("/api/suggestions").json()["results"]
+
+        assert [r["performed_before"] for r in results] == [True, False]
 
     def test_suggestions_passes_max_results(self, client, alice, app_components):
         """GET /api/suggestions - passes max_results to engine."""

@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from ..models import HistoryRecord, SongMetadata, SongSettings
 from .codecs import _decode_metadata, _decode_settings, _encode_metadata, _encode_settings
@@ -150,5 +150,32 @@ class HistoryRepository:
                     )
                 )
             return records
+        finally:
+            conn.close()
+
+    def performed_video_ids(
+        self, video_ids: Iterable[str], min_completion_percentage: float = 0.0
+    ) -> Set[str]:
+        """
+        Return the subset of video_ids with at least one recorded performance
+        that reached min_completion_percentage.
+        """
+        ids = list(dict.fromkeys(video_ids))
+        if not ids:
+            return set()
+        placeholders = ", ".join("?" for _ in ids)
+        conn = self.database.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                SELECT DISTINCT video_id
+                FROM playback_history
+                WHERE video_id IN ({placeholders})
+                  AND COALESCE(json_extract(performance_json, '$.completion_percentage'), 0) >= ?
+                """,
+                [*ids, min_completion_percentage],
+            )
+            return {row["video_id"] for row in cursor.fetchall()}
         finally:
             conn.close()

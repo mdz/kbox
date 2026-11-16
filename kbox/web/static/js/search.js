@@ -31,6 +31,13 @@ function formatDuration(totalSeconds) {
     return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
+// Results whose exact video has been performed here before get a check badge
+// on the thumbnail (#216); this text is its screen-reader and tooltip wording,
+// and the add-song modal spells the meaning out. A yes/no about this version,
+// never a count: a count reads as how popular the song is and could put
+// guests off a crowd favourite.
+const TESTED_LABEL = 'Tested track';
+
 function renderResultsList(container, videos) {
     container.innerHTML = '';
     videos.forEach(video => {
@@ -40,10 +47,18 @@ function renderResultsList(container, videos) {
         div.setAttribute('role', 'button');
         const duration = formatDuration(video.duration_seconds);
         const details = [video.channel, duration].filter(Boolean).join(' · ');
+        const ariaDetails = [details, video.performed_before ? TESTED_LABEL : '']
+            .filter(Boolean).join(', ');
         div.setAttribute('aria-label',
-            `Select ${video.title}${details ? ` (${details})` : ''}`);
+            `Select ${video.title}${ariaDetails ? ` (${ariaDetails})` : ''}`);
+        const tested = video.performed_before
+            ? `<span class="search-result-tested" title="${TESTED_LABEL}" aria-hidden="true">&#x2713;</span>`
+            : '';
         div.innerHTML = `
-            <img src="${escapeHtml(video.thumbnail)}" alt="${escapeHtml(video.title)}" />
+            <div class="search-result-thumb">
+                <img src="${escapeHtml(video.thumbnail)}" alt="${escapeHtml(video.title)}" />
+                ${tested}
+            </div>
             <div class="search-result-info">
                 <div class="search-result-title">${escapeHtml(video.title)}</div>
                 <div class="search-result-channel">${escapeHtml(details)}</div>
@@ -241,6 +256,10 @@ export async function showAddSongModal(video) {
             const songStr = queueDepthCount === 1 ? '1 song' : `${queueDepthCount} songs`;
             additionalControls = `<div style="color: #aaa; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 6px; text-align: center;">&#x23F3; ${songStr} ahead (${timeStr})</div>`;
         }
+    }
+
+    if (video.performed_before) {
+        additionalControls += '<div style="color: #4aff6e; font-size: 0.9em; margin-top: 8px; padding: 8px 12px; background: rgba(74, 255, 110, 0.08); border-radius: 6px; text-align: center;">&#x2713; This version has worked well here before</div>';
     }
 
     const warnings = computeAddWarnings(video, currentSelectionTarget);
