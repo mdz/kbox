@@ -7,6 +7,7 @@ Provides search and metadata retrieval using the YouTube Data API.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from googleapiclient.discovery import build
@@ -24,36 +25,47 @@ class YouTubeAPI:
         self.logger = logging.getLogger(__name__)
         self.config_manager = config_manager
 
-        self._youtube = None
-        self._last_api_key: Optional[str] = None
+        # One client per thread. A googleapiclient client sends every request
+        # through a single httplib2.Http, which keeps one TLS connection open and
+        # is not thread-safe. FastAPI runs the sync search and suggestion routes
+        # on a thread pool, so a shared client let concurrent searches read and
+        # write the same SSL connection at once: "SSL: RECORD_LAYER_FAILURE",
+        # garbled responses, and at worst a segfault in OpenSSL that takes the
+        # whole server down. Each thread keeps its client (and connection) across
+        # requests, so this costs one build per thread, not one per search.
+        self._local = threading.local()
 
         self.logger.info("YouTubeAPI initialized")
 
     def _get_client(self):
         """
-        Get or create the API client.
+        Get or create the calling thread's API client.
 
         Returns None if API key is not configured.
         Reinitializes if the API key has changed (allowing runtime updates).
         """
         api_key = self.config_manager.get("youtube_api_key")
+        local = self._local
 
         if not api_key:
-            self._youtube = None
-            self._last_api_key = None
+            local.client = None
+            local.api_key = None
             return None
 
-        if api_key != self._last_api_key:
+        if api_key != getattr(local, "api_key", None):
             try:
-                self._youtube = build("youtube", "v3", developerKey=api_key)
-                self._last_api_key = api_key
-                self.logger.info("YouTube API client initialized")
+                local.client = build("youtube", "v3", developerKey=api_key)
+                local.api_key = api_key
+                self.logger.debug(
+                    "YouTube API client initialized for thread %s",
+                    threading.current_thread().name,
+                )
             except Exception as e:
                 self.logger.error("Failed to initialize YouTube API client: %s", e)
-                self._youtube = None
-                self._last_api_key = None
+                local.client = None
+                local.api_key = None
 
-        return self._youtube
+        return getattr(local, "client", None)
 
     def is_available(self) -> bool:
         """True when an API key is configured and the client is ready."""
