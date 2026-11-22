@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from kbox.ytdlp import YtDlpClient
+from kbox.ytdlp import YtDlpClient, _friendly_download_error
 
 
 def _make_config():
@@ -219,6 +219,60 @@ def test_provide_raises_on_failure():
             client.provide("bad_vid", Path("/tmp/test_provide"))
     finally:
         p.stop()
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            "YouTube blocked the download (403 Forbidden). Try updating yt-dlp.",
+        ),
+        (
+            "ERROR: [youtube] xiAoME9BIvE: This video is unavailable",
+            "Video is unavailable or has been removed",
+        ),
+        (
+            "ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader",
+            "Video is unavailable or has been removed",
+        ),
+        (
+            "ERROR: [youtube] abc: Private video. Sign in if you've been granted access to this video",
+            "Video is private",
+        ),
+        (
+            "ERROR: [youtube] abc: Sign in to confirm you're not a bot. Use --cookies-from-browser",
+            "YouTube asked for a bot check. Try again in a few minutes.",
+        ),
+        (
+            "ERROR: [youtube] abc: This content isn't available, try again later. "
+            "The current session has been rate-limited by YouTube for up to an hour.",
+            "YouTube is limiting downloads right now. Try again in a few minutes.",
+        ),
+        (
+            "ERROR: [youtube] abc: Sign in to confirm your age. "
+            "This video may be inappropriate for some users.",
+            "Video is age-restricted",
+        ),
+        (
+            "ERROR: [youtube] abc: The uploader has not made this video available in your country",
+            "Video is not available in this country",
+        ),
+        (
+            "ERROR: [youtube] xiAoME9BIvE: Requested format is not available. "
+            "Use --list-formats for a list of available formats",
+            "YouTube didn't offer a playable version this time. Try again.",
+        ),
+        ("something nobody planned for", "something nobody planned for"),
+    ],
+)
+def test_friendly_download_error(raw, expected):
+    assert _friendly_download_error(raw) == expected
+
+
+def test_friendly_download_error_ignores_403_inside_video_id():
+    raw = "ERROR: [youtube] ab403cdEFgh: This video is unavailable"
+    assert _friendly_download_error(raw) == "Video is unavailable or has been removed"
 
 
 # =========================================================================
