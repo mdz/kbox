@@ -11,8 +11,9 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from kbox.alerts import KIND_DOWNLOAD_FAILED, AlertCenter
 from kbox.database import Database
-from kbox.queue import MoveOutcome, MoveResult, QueueManager
+from kbox.queue import DOWNLOAD_RETRY_DELAYS_SECONDS, MoveOutcome, MoveResult, QueueManager
 from kbox.user import UserManager
 
 
@@ -333,6 +334,31 @@ def test_move_after_nonexistent_reference(queue_manager, test_users):
     assert queue_manager.move_after(id1, 9999) is None
 
 
+def test_move_before_moving_up(queue_manager, test_users):
+    ids = [
+        queue_manager.add_song(test_users["alice"], f"youtube:v{i}", f"Song {i}") for i in range(4)
+    ]
+
+    assert queue_manager.move_before(ids[3], ids[1]) == 2
+
+    assert [item.id for item in queue_manager.get_queue()] == [ids[0], ids[3], ids[1], ids[2]]
+
+
+def test_move_before_moving_down(queue_manager, test_users):
+    ids = [
+        queue_manager.add_song(test_users["alice"], f"youtube:v{i}", f"Song {i}") for i in range(4)
+    ]
+
+    assert queue_manager.move_before(ids[0], ids[3]) == 3
+
+    assert [item.id for item in queue_manager.get_queue()] == [ids[1], ids[2], ids[0], ids[3]]
+
+
+def test_move_before_nonexistent(queue_manager, test_users):
+    item_id = queue_manager.add_song(test_users["alice"], "youtube:v", "Song")
+    assert queue_manager.move_before(item_id, 9999) is None
+
+
 def test_move_to_end(queue_manager, test_users):
     """Test moving a song to the end of the queue."""
     id1 = queue_manager.add_song(test_users["alice"], "youtube:vid1", "Song 1")
@@ -553,38 +579,173 @@ def test_download_callback_updates_status_ready(temp_db, user_manager):
     assert item.content_path == "/path/to/video.mp4"
 
 
-def test_download_callback_updates_status_error(temp_db, user_manager):
-    """Test that download callback updates queue item to error status."""
-    captured_callback = None
+class FakeClock:
+    """A clock tests move by hand, so download retries need no waiting."""
 
-    def capture_callback(video_id, callback=None):
-        nonlocal captured_callback
-        captured_callback = callback
+    def __init__(self):
+        self.now = datetime(2026, 1, 1, 20, 0, 0)
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += timedelta(seconds=seconds)
+
+
+class FailingDownloads:
+    """
+    A QueueManager whose video library records every download request, so a
+    test can answer each attempt with success or failure.
+    """
+
+    def __init__(self, temp_db, user_manager):
+        self.callbacks = []
+        library = MagicMock()
+        library.request.side_effect = self._request
+        library.get_path.return_value = None
+        library.manage_storage.return_value = 0
+        self.library = library
+        self.clock = FakeClock()
+        self.alerts = AlertCenter()
+        self.qm = QueueManager(temp_db, video_library=library, alerts=self.alerts, clock=self.clock)
+        self.qm.stop_content_monitor()
+        self.alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+
+    def _request(self, video_id, callback=None):
+        self.callbacks.append(callback)
         return None
 
-    mock_video_library = MagicMock()
-    mock_video_library.request.side_effect = capture_callback
-    mock_video_library.get_path.return_value = None
-    mock_video_library.manage_storage.return_value = 0
+    @property
+    def attempts(self):
+        return len(self.callbacks)
 
-    alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
-    qm = QueueManager(temp_db, video_library=mock_video_library)
-    qm.stop_content_monitor()
+    def fail_latest(self, error="Requested format is not available"):
+        self.callbacks[-1]("error", None, error)
 
-    item_id = qm.add_song(alice, "youtube:test_vid", "Test Song")
+    def fail_every_attempt(self, item_id):
+        """Run the item through every attempt, each one failing."""
+        self.qm._process_pending_content()
+        self.fail_latest()
+        for delay in DOWNLOAD_RETRY_DELAYS_SECONDS:
+            self.clock.advance(delay)
+            self.qm._process_pending_content()
+            self.fail_latest()
+        assert self.qm.get_item(item_id).content_status == QueueManager.STATUS_ERROR
 
-    # Directly trigger download processing
-    qm._process_pending_content()
 
-    assert captured_callback is not None
+@pytest.fixture
+def failing(temp_db, user_manager):
+    return FailingDownloads(temp_db, user_manager)
 
-    # Simulate failed download
-    captured_callback("error", None, "Download failed: network error")
 
-    # Verify status was updated
-    item = qm.get_item(item_id)
-    assert item.content_status == QueueManager.STATUS_ERROR
-    assert item.error_message == "Download failed: network error"
+def test_failed_download_is_retried_before_anyone_is_told(failing):
+    """A failed attempt leaves the song getting ready and tries again after a delay."""
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+
+    failing.qm._process_pending_content()
+    failing.fail_latest()
+
+    item = failing.qm.get_item(item_id)
+    assert item.content_status == QueueManager.STATUS_PENDING
+    assert failing.alerts.active() == []
+
+    # Not before the delay is up...
+    failing.qm._process_pending_content()
+    assert failing.attempts == 1
+
+    # ...and then straight away.
+    failing.clock.advance(DOWNLOAD_RETRY_DELAYS_SECONDS[0])
+    failing.qm._process_pending_content()
+    assert failing.attempts == 2
+
+
+def test_download_that_succeeds_on_retry_never_alerts(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+    failing.qm._process_pending_content()
+    failing.fail_latest()
+    failing.clock.advance(DOWNLOAD_RETRY_DELAYS_SECONDS[0])
+    failing.qm._process_pending_content()
+
+    failing.callbacks[-1]("ready", "/videos/test.mp4", None)
+
+    assert failing.qm.get_item(item_id).content_status == QueueManager.STATUS_READY
+    assert failing.alerts.active() == []
+
+
+def test_download_failing_every_attempt_errors_and_alerts(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+
+    failing.fail_every_attempt(item_id)
+
+    assert failing.attempts == len(DOWNLOAD_RETRY_DELAYS_SECONDS) + 1
+    item = failing.qm.get_item(item_id)
+    assert item.error_message == "Requested format is not available"
+
+    # No further attempts on their own once it has failed for good.
+    failing.clock.advance(3600)
+    failing.qm._process_pending_content()
+    assert failing.attempts == len(DOWNLOAD_RETRY_DELAYS_SECONDS) + 1
+
+    [alert] = failing.alerts.active()
+    assert alert.kind == KIND_DOWNLOAD_FAILED
+    assert alert.queue_item_id == item_id
+    assert alert.user_ids == frozenset({ALICE_ID})
+    assert "Test Song" in alert.message
+    assert alert.operator_message == "Alice's song couldn't be loaded."
+    # The room hears who, never what: titles are private to the singer.
+    assert "Alice" in alert.room_message
+    assert "Test Song" not in alert.room_message
+
+
+def test_retry_download_starts_over(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+    failing.fail_every_attempt(item_id)
+    attempts_so_far = failing.attempts
+
+    assert failing.qm.retry_download(item_id)
+
+    assert failing.alerts.active() == []
+    assert failing.qm.get_item(item_id).content_status == QueueManager.STATUS_PENDING
+    failing.qm._process_pending_content()
+    assert failing.attempts == attempts_so_far + 1
+
+    # A fresh set of retries: one failure doesn't put it straight back in error.
+    failing.fail_latest()
+    assert failing.qm.get_item(item_id).content_status == QueueManager.STATUS_PENDING
+
+
+def test_retry_download_only_for_failed_songs(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+    assert not failing.qm.retry_download(item_id)
+    assert not failing.qm.retry_download(9999)
+
+
+def test_replacing_a_failed_song_resolves_its_alert(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+    failing.fail_every_attempt(item_id)
+
+    failing.qm.replace_song(item_id, video_id="youtube:other", title="Other Upload")
+
+    assert failing.alerts.active() == []
+    assert failing.qm.get_item(item_id).content_status == QueueManager.STATUS_PENDING
+
+
+def test_removing_a_failed_song_resolves_its_alert(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+    failing.fail_every_attempt(item_id)
+
+    failing.qm.remove_song(item_id)
+
+    assert failing.alerts.active() == []
+
+
+def test_clearing_the_queue_resolves_alerts(failing):
+    item_id = failing.qm.add_song(failing.alice, "youtube:test_vid", "Test Song")
+    failing.fail_every_attempt(item_id)
+
+    failing.qm.clear_queue()
+
+    assert failing.alerts.active() == []
 
 
 def test_cleanup_storage_calls_video_library(temp_db, user_manager):

@@ -40,8 +40,14 @@ def get_queue(
     queue_mgr: QueueManager = Depends(get_queue_manager),
     playback: PlaybackController = Depends(get_playback_controller),
     current_user_id: Optional[str] = Depends(get_current_user_id),
+    is_operator: bool = Depends(check_operator),
 ):
-    """Get current queue with current/played flags for UI rendering."""
+    """
+    Get current queue with current/played flags for UI rendering.
+
+    Also carries the alerts addressed to this viewer (see kbox/alerts.py):
+    every open page polls this, which is how alerts reach phones today.
+    """
     queue_items = queue_mgr.get_queue()
 
     status = playback.get_status()
@@ -88,6 +94,12 @@ def get_queue(
     queue_depth_count = len(upcoming)
     queue_depth_seconds = sum(u.item.metadata.duration_seconds or 0 for u in upcoming)
 
+    alerts = (
+        queue_mgr.alerts.for_viewer(current_user_id, is_operator)
+        if queue_mgr.alerts is not None
+        else []
+    )
+
     return {
         "queue": queue,
         "current_song_id": current_song_id,
@@ -95,6 +107,7 @@ def get_queue(
         "my_next_turn": my_next_turn,
         "queue_depth_seconds": queue_depth_seconds,
         "queue_depth_count": queue_depth_count,
+        "alerts": alerts,
     }
 
 
@@ -236,6 +249,31 @@ def replace_song(
         raise HTTPException(status_code=404, detail="Queue item not found")
 
     return {"status": "replaced", "slot": queue_slot(playback, item_id)}
+
+
+@router.post("/api/queue/{item_id}/retry")
+def retry_download(
+    item_id: int,
+    queue_mgr: QueueManager = Depends(get_queue_manager),
+    is_operator: bool = Depends(check_operator),
+    current_user_id: Optional[str] = Depends(get_current_user_id),
+):
+    """
+    Try a song's failed download again (e.g. after a passing YouTube hiccup).
+
+    Operators can retry any song; users can only retry their own.
+    """
+    item = queue_mgr.get_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Queue item not found")
+
+    if not is_operator:
+        if not current_user_id or current_user_id != item.user_id:
+            raise HTTPException(status_code=403, detail="You can only retry songs you added")
+
+    if not queue_mgr.retry_download(item_id):
+        raise HTTPException(status_code=409, detail="This song's download hasn't failed")
+    return {"status": "retrying"}
 
 
 @router.patch("/api/queue/{item_id}/position")

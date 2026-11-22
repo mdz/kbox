@@ -278,9 +278,11 @@ def test_download_and_ready_status(full_system):
     assert item.content_path is not None
 
 
-def test_download_error_handling(full_system):
-    """Test that download errors are handled correctly."""
+def test_download_error_handling(full_system, monkeypatch):
+    """A download that fails on every attempt ends in the error status."""
     system = full_system
+    # Retry straight away, so the test needn't wait out the real delays.
+    monkeypatch.setattr("kbox.queue.DOWNLOAD_RETRY_DELAYS_SECONDS", (0.0, 0.0))
 
     system["fake_provider"].set_fail_downloads(True, "Test error message")
 
@@ -291,10 +293,11 @@ def test_download_error_handling(full_system):
         title="Fail Test Song",
     )
 
-    # Trigger download processing
-    system["queue"]._process_pending_content()
+    # One pass per attempt: the first try and each retry
+    for _ in range(3):
+        system["queue"]._process_pending_content()
+        wait_for_download(system["queue"], item_id, QueueManager.STATUS_PENDING)
 
-    # Wait for async download to complete
     item = wait_for_download(system["queue"], item_id, QueueManager.STATUS_ERROR)
 
     # Song should have error status
@@ -761,3 +764,179 @@ def test_singer_ending_their_turn_moves_on_and_the_song_never_comes_back(full_sy
     assert playback.state == PlaybackState.IDLE
     assert system["queue"].get_item(bob_id) is not None
     assert [h.metadata.title for h in system["history"].get_user_history(BOB_ID)] == []
+
+
+# =============================================================================
+# A song whose download failed for good
+# =============================================================================
+
+
+def _failed_song(system, user_key, video_id, title):
+    """Add a song for a user whose download has failed for good."""
+    item_id = system["queue"].add_song(
+        user=system["users"][user_key], video_id=video_id, title=title, duration_seconds=180
+    )
+    system["queue"].update_content_status(
+        item_id, QueueManager.STATUS_ERROR, error_message="Requested format is not available"
+    )
+    return item_id
+
+
+def _queue_order(system):
+    return [item.id for item in system["queue"].get_queue()]
+
+
+@pytest.fixture
+def long_transition(full_system):
+    """A transition long enough that no timer starts a song behind the test's back."""
+    full_system["playback"]._monitor.request_stop()
+    full_system["config"].set("transition_duration_seconds", "3600")
+    return full_system
+
+
+def test_failed_song_steps_aside_and_keeps_its_place(long_transition):
+    """
+    The party bug: Bob's download failed, and when his turn came playback
+    went idle on "That's all for now!" with Charlie's song ready behind it.
+
+    Now Charlie goes next, and Bob's song stays next in line after him.
+    """
+    system = long_transition
+    playback = system["playback"]
+    alice_id = _ready_song(system, "alice", "fake:a", "Song A")
+    bob_id = _failed_song(system, "bob", "fake:b", "Song B")
+    charlie_id = _ready_song(system, "charlie", "fake:c", "Song C")
+
+    playback.play()
+    playback.on_song_end()
+
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending.id == charlie_id
+    assert _queue_order(system) == [alice_id, charlie_id, bob_id]
+
+    playback.play()  # skip the wait
+    assert playback.current_song_id == charlie_id
+
+    # Bob fixes his song while Charlie sings, and goes right after him.
+    system["queue"].replace_song(bob_id, video_id="fake:b2", title="Song B, other upload")
+    system["queue"].update_content_status(
+        bob_id, QueueManager.STATUS_READY, content_path="/path/to/b2.mp4"
+    )
+    playback.on_song_end()
+    assert playback._next_song_pending.id == bob_id
+
+
+def test_failed_song_does_not_stall_auto_start(long_transition):
+    """Idle with only a failed song next: the next song to arrive plays, not nothing."""
+    system = long_transition
+    playback = system["playback"]
+    alice_id = _ready_song(system, "alice", "fake:a", "Song A")
+    bob_id = _failed_song(system, "bob", "fake:b", "Song B")
+
+    playback.play()
+    playback.on_song_end()
+    assert playback.state == PlaybackState.IDLE
+
+    charlie_id = _ready_song(system, "charlie", "fake:c", "Song C")
+    playback._on_monitor_tick()
+
+    assert playback.current_song_id == charlie_id
+    assert _queue_order(system) == [alice_id, charlie_id, bob_id]
+
+
+def test_skip_steps_past_a_failed_song(long_transition):
+    system = long_transition
+    playback = system["playback"]
+    _ready_song(system, "alice", "fake:a", "Song A")
+    _failed_song(system, "bob", "fake:b", "Song B")
+    charlie_id = _ready_song(system, "charlie", "fake:c", "Song C")
+
+    playback.play()
+    assert playback.skip()
+
+    assert playback._next_song_pending.id == charlie_id
+
+
+def test_up_next_never_announces_a_song_that_cannot_play(long_transition):
+    system = long_transition
+    playback = system["playback"]
+    _ready_song(system, "alice", "fake:a", "Song A")
+    _failed_song(system, "bob", "fake:b", "Song B")
+    _ready_song(system, "charlie", "fake:c", "Song C")
+
+    playback.play()
+    system["streaming"].get_position.return_value = 170  # 10s left of 180
+    playback._on_monitor_tick()
+
+    system["streaming"].set_overlay_text.assert_called_with("Up next: Charlie")
+    upcoming = [u.item.user_name for u in playback.get_upcoming()]
+    assert upcoming == ["Charlie"]
+
+
+def test_only_failed_songs_left_shows_end_of_queue(long_transition):
+    system = long_transition
+    playback = system["playback"]
+    _ready_song(system, "alice", "fake:a", "Song A")
+    _failed_song(system, "bob", "fake:b", "Song B")
+
+    playback.play()
+    playback.on_song_end()
+
+    assert playback.state == PlaybackState.IDLE
+
+
+def test_failed_download_alerts_singer_and_operator_via_queue_api(full_system, monkeypatch):
+    """The alert reaches the singer's and operator's polls, and nobody else's."""
+    from fastapi.testclient import TestClient
+
+    from kbox.alerts import AlertCenter
+    from kbox.favorites import FavoritesManager
+    from kbox.web.app import create_app
+
+    system = full_system
+    monkeypatch.setattr("kbox.queue.DOWNLOAD_RETRY_DELAYS_SECONDS", ())
+    system["queue"].alerts = AlertCenter()
+    system["fake_provider"].set_fail_downloads(True, "Requested format is not available")
+
+    item_id = system["queue"].add_song(
+        user=system["users"]["bob"], video_id="fake:b", title="Song B"
+    )
+    system["queue"]._process_pending_content()
+    wait_for_download(system["queue"], item_id, QueueManager.STATUS_ERROR)
+
+    app = create_app(
+        queue_manager=system["queue"],
+        video_library=system["video_library"],
+        playback_controller=system["playback"],
+        config_manager=system["config"],
+        user_manager=system["user"],
+        history_manager=system["history"],
+        favorites_manager=FavoritesManager(system["queue"].database),
+        streaming_controller=system["streaming"],
+    )
+
+    names = {ALICE_ID: "Alice", BOB_ID: "Bob"}
+
+    def alerts_for(user_id, operator=False):
+        client = TestClient(app)
+        with client:
+            client.post("/api/users", json={"user_id": user_id, "display_name": names[user_id]})
+            if operator:
+                system["config"].set("operator_pin", "1234")
+                client.post("/api/auth/operator", json={"pin": "1234"})
+            return client.get("/api/queue").json()["alerts"]
+
+    [bob_alert] = alerts_for(BOB_ID)
+    assert bob_alert["queue_item_id"] == item_id
+    assert "Song B" in bob_alert["message"]
+    assert alerts_for(ALICE_ID) == []
+    [operator_alert] = alerts_for(ALICE_ID, operator=True)
+    assert operator_alert["message"] == "Bob's song couldn't be loaded."
+
+    # Retrying clears it for everyone.
+    system["fake_provider"].set_fail_downloads(False)
+    client = TestClient(app)
+    with client:
+        client.post("/api/users", json={"user_id": BOB_ID, "display_name": "Bob"})
+        assert client.post(f"/api/queue/{item_id}/retry").json() == {"status": "retrying"}
+    assert alerts_for(BOB_ID) == []
