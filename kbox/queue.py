@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
-from .alerts import KIND_DOWNLOAD_FAILED, Alert, AlertCenter
 from .database import Database, QueueRepository, UserRepository
 from .models import QueueItem, SongMetadata, SongSettings, User
 from .periodic import PeriodicThread
@@ -27,8 +26,7 @@ CONTENT_MONITOR_INTERVAL_SECONDS = 2.0
 # Wait longer after a pass raised, so a persistent failure doesn't spin.
 CONTENT_MONITOR_ERROR_BACKOFF_SECONDS = 5.0
 # After a failed download, wait this long before each further attempt. The
-# song only counts as failed -- and its singer is told -- once every retry
-# has failed too. Downloads mostly fail for reasons that pass in seconds
+# song only counts as failed once every retry has failed too. Downloads mostly fail for reasons that pass in seconds
 # (YouTube once offered nothing but storyboard images for a video that
 # downloaded fine the next day), so a quick retry fixes most of them without
 # anyone noticing, and the short total keeps the singer's time to fix a real
@@ -78,7 +76,6 @@ class QueueManager:
         loudness_analyzer: Optional["LoudnessAnalyzer"] = None,
         session_manager: Optional["SessionManager"] = None,
         before_clear: Optional[Callable[[], None]] = None,
-        alerts: Optional[AlertCenter] = None,
         clock: Callable[[], datetime] = datetime.now,
     ):
         """
@@ -96,9 +93,6 @@ class QueueManager:
             before_clear: Optional callback run just before clear_queue
                 deletes anything (used to snapshot the database). Failures
                 are logged and never block the clear.
-            alerts: Optional AlertCenter. When provided, a song whose download
-                has failed for good raises an alert to its singer and the
-                operators, resolved once the song is fixed or gone.
             clock: Returns the current time; tests pass a fake one to step
                 through download retries without waiting.
         """
@@ -111,7 +105,6 @@ class QueueManager:
         self.silence_analyzer = silence_analyzer
         self.loudness_analyzer = loudness_analyzer
         self.session_manager = session_manager
-        self.alerts = alerts
         self._clock = clock
         self.logger = logging.getLogger(__name__)
 
@@ -267,8 +260,7 @@ class QueueManager:
 
         While a retry is pending the item stays PENDING, so the queue (and
         the guest's phone) treats it as still getting ready. Only after the
-        last retry fails does it become STATUS_ERROR, and only then is
-        anyone told.
+        last retry fails does it become STATUS_ERROR.
 
         Like every callback update, both are guarded by video_id: the failure
         of a video the item no longer holds (it was replaced mid-download)
@@ -308,54 +300,11 @@ class QueueManager:
             attempts,
             error,
         )
-        self._raise_download_failed_alert(item_id)
-
-    @staticmethod
-    def _download_failed_key(item_id: int) -> str:
-        return f"{KIND_DOWNLOAD_FAILED}:{item_id}"
-
-    def _raise_download_failed_alert(self, item_id: int) -> None:
-        """Tell the singer, the operators and the room that a song can't play."""
-        if self.alerts is None:
-            return
-        item = self.get_item(item_id)
-        if item is None:
-            return
-        song = item.metadata.song_name or item.metadata.title
-        self.alerts.publish(
-            Alert(
-                key=self._download_failed_key(item_id),
-                kind=KIND_DOWNLOAD_FAILED,
-                message=f"“{song}” couldn't be loaded. Tap to pick another version.",
-                user_ids=frozenset({item.user_id}),
-                operator_message=f"{item.user_name}'s song couldn't be loaded.",
-                # No title: only the singer and operators see titles.
-                room_message=f"{item.user_name}: your song couldn't load. Check your phone.",
-                queue_item_id=item_id,
-            )
-        )
 
     def _forget_failures(self, item_id: int) -> None:
-        """Drop retry bookkeeping and any alert for an item that is fixed or gone."""
+        """Drop retry bookkeeping for an item that is fixed or gone."""
         self._failed_attempts.pop(item_id, None)
         self._retry_not_before.pop(item_id, None)
-        if self.alerts is not None:
-            self.alerts.resolve(self._download_failed_key(item_id))
-
-    def retry_download(self, item_id: int) -> bool:
-        """
-        Try a failed download again, with a fresh set of retries.
-
-        Returns:
-            True if the item had failed and is now waiting to download again,
-            False if it doesn't exist or hadn't failed.
-        """
-        item = self.get_item(item_id)
-        if item is None or item.content_status != self.STATUS_ERROR:
-            return False
-        self.logger.info("Retrying download for queue item %s on request", item_id)
-        self._forget_failures(item_id)
-        return self.update_content_status(item_id, self.STATUS_PENDING, video_id=item.video_id)
 
     def _run_post_download_analysis(self, item_id: int, video_id: str, path: str) -> None:
         """Run per-video analysis steps once a queue item's content is ready.
@@ -787,8 +736,6 @@ class QueueManager:
         count = self.repository.clear()
         self._failed_attempts.clear()
         self._retry_not_before.clear()
-        if self.alerts is not None:
-            self.alerts.clear()
         if self.session_manager is not None:
             self.session_manager.end_and_rotate()
         return count

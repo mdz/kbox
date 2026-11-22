@@ -160,13 +160,7 @@ export async function search() {
         const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
         const data = await response.json();
 
-        // Replacing a song whose download failed: its own upload is no
-        // use, so leave it out.
-        const exclude = currentSelectionTarget && currentSelectionTarget.excludeVideoId;
-        const results = exclude
-            ? (data.results || []).filter(video => video.id !== exclude)
-            : data.results;
-        renderResultsList(resultsDiv, results);
+        renderResultsList(resultsDiv, data.results);
     } catch (e) {
         // The guest gets a message either way; without this the cause was
         // discarded entirely.

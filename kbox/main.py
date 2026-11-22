@@ -12,7 +12,6 @@ from pathlib import Path
 
 import uvicorn
 
-from .alerts import Alert, AlertCenter
 from .backup import create_snapshot
 from .config_manager import ConfigManager
 from .database import Database
@@ -139,9 +138,6 @@ class KboxServer:
             self.database, self.config_manager, on_token_rotated=self._on_access_token_rotated
         )
 
-        # Alerts to particular guests and operators (see kbox/alerts.py)
-        self.alerts = AlertCenter()
-
         # Initialize queue manager with video library and metadata extractor
         self.queue_manager = QueueManager(
             self.database,
@@ -151,7 +147,6 @@ class KboxServer:
             loudness_analyzer=self.loudness_analyzer,
             session_manager=self.session_manager,
             before_clear=self._snapshot_database,
-            alerts=self.alerts,
         )
         self.user_manager = UserManager(self.database)
         self.history_manager = HistoryManager(self.database, session_manager=self.session_manager)
@@ -171,10 +166,6 @@ class KboxServer:
             loudness_analyzer=self.loudness_analyzer,
             pitch_log=self.pitch_log,
         )
-        # The TV is one of the alert channels: an alert with a line for the
-        # room shows it there, so whoever it is for hears about it even if
-        # they aren't looking at their phone.
-        self.alerts.subscribe(self._show_alert_on_display)
 
         # SuggestionEngine for AI-powered song recommendations
         self.suggestion_engine = SuggestionEngine(
@@ -206,11 +197,6 @@ class KboxServer:
         self.server_thread = None
 
         logger.info("kbox server initialized")
-
-    def _show_alert_on_display(self, alert: Alert):
-        """Show an alert's room_message, if it has one, on the TV."""
-        if alert.room_message:
-            self.playback_controller.show_notification(alert.room_message, duration_seconds=10.0)
 
     def _snapshot_database(self):
         """Snapshot the database before the queue is cleared (end of a party)."""

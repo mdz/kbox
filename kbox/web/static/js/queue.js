@@ -14,7 +14,6 @@ import { escapeHtml } from './utils.js';
 import { updatePitchDisplay, updatePitchButtons } from './pitch.js';
 import { showToast } from './toast.js';
 import { updatePlayPauseButton, renderNowPlaying, renderUpNext } from './playback.js';
-import { handleAlerts } from './alerts.js';
 
 // Check if playback controls are open
 export function arePlaybackControlsOpen() {
@@ -74,8 +73,6 @@ export function showEditQueueItemModal(item) {
     const ownerOptions = document.getElementById('edit-queue-item-owner-options');
     const operatorOptions = document.getElementById('edit-queue-item-operator-options');
     const isOwnSong = userId && item.user_id === userId;
-
-    renderProblemBox(item);
 
     // Owner options visible to song owner OR operator (superset principle)
     ownerOptions.style.display = (isOwnSong || isOperator) ? 'block' : 'none';
@@ -237,94 +234,21 @@ export async function moveToEndQueueItem() {
 // replaces this item instead of adding a new one.
 export function replaceQueueItem() {
     if (!currentQueueItemToEdit) return;
-    const item = currentQueueItemToEdit;
-    cancelEditQueueItem();
-    startReplacing(item);
-}
 
-function startReplacing(item, { excludeVideoId = null } = {}) {
+    const item = currentQueueItemToEdit;
     const label = (item.artist && item.song_name)
         ? `${item.song_name} by ${item.artist}`
         : item.title;
 
-    setCurrentSelectionTarget({ itemId: item.id, label, userName: item.user_name, excludeVideoId });
+    setCurrentSelectionTarget({ itemId: item.id, label, userName: item.user_name });
     updateReplaceTargetBanner();
+    cancelEditQueueItem();
 
     const searchInput = document.getElementById('search-input');
     if (searchInput) {
         searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
         searchInput.focus();
     }
-}
-
-// Pure: what to search for to find another upload of the same song. Drops
-// the bracketed and |-separated decorations uploaders add to titles
-// ("(Karaoke Version)", "| KaraFun"), which would mostly find the same upload
-// again.
-export function searchQueryForReplacement(title) {
-    const stripped = String(title || '')
-        .split('|')[0]
-        .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    return stripped || String(title || '').trim();
-}
-
-// The fix for a song whose download failed: search for other uploads of the
-// same song, the picked one replacing it in place (so its singer keeps their
-// spot). Reached from the turn bar, the queue list and the edit dialog.
-export function fixFailedSong(itemId) {
-    const item = currentQueue.find(q => q.id === itemId);
-    if (!item) return;
-    if (currentQueueItemToEdit) cancelEditQueueItem();
-
-    // The upload that failed is no use as its own replacement.
-    startReplacing(item, { excludeVideoId: item.video_id });
-    const searchInput = document.getElementById('search-input');
-    if (searchInput) {
-        searchInput.value = searchQueryForReplacement(item.song_name || item.title);
-        window.search();
-    }
-}
-
-export function fixFailedSongFromModal() {
-    if (currentQueueItemToEdit) fixFailedSong(currentQueueItemToEdit.id);
-}
-
-// Ask for a failed download to be tried again (song owner or operator).
-export async function retryQueueItem() {
-    if (!currentQueueItemToEdit) return;
-    const itemId = currentQueueItemToEdit.id;
-    try {
-        const response = await fetch(`/api/queue/${itemId}/retry`, { method: 'POST' });
-        if (response.ok) {
-            cancelEditQueueItem();
-            showToast('Trying again…');
-            loadQueue();
-        } else {
-            const error = await response.json().catch(() => ({}));
-            showToast('Could not retry: ' + (error.detail || 'unknown error'), { error: true });
-        }
-    } catch (e) {
-        showToast('Could not retry', { error: true });
-    }
-}
-
-// The edit dialog's explanation and fixes for a song that failed to load.
-function renderProblemBox(item) {
-    const box = document.getElementById('edit-queue-item-problem');
-    if (!box) return;
-    if (item.content_status !== 'error') {
-        box.classList.add('hidden');
-        return;
-    }
-    // The raw error means nothing to a guest, but tells an operator why.
-    const detail = document.getElementById('edit-queue-item-problem-detail');
-    if (detail) {
-        detail.textContent = isOperator && item.error_message ? item.error_message : '';
-        detail.classList.toggle('hidden', !(isOperator && item.error_message));
-    }
-    box.classList.remove('hidden');
 }
 
 // Keep the "Replacing: X" banner above the search box in sync with
@@ -464,21 +388,8 @@ const STATUS_LABELS = {
     pending: 'Getting ready…',
     preparing: 'Getting ready…',
     ready: 'Ready',
-    error: "Couldn't load",
+    error: 'Problem',
 };
-// What the singer (or an operator) sees on a failed song: it's theirs to fix.
-const FIXABLE_ERROR_LABEL = "Couldn't load · tap to fix";
-
-// Pure: the current user's upcoming song whose download failed for good.
-export function findMyFailedSong(queue, myUserId) {
-    if (!myUserId) return null;
-    return (queue || []).find(item =>
-        item.user_id === myUserId
-        && item.content_status === 'error'
-        && !item.is_current
-        && !item.is_played
-    ) || null;
-}
 
 // Load queue
 export async function loadQueue() {
@@ -508,13 +419,7 @@ export async function loadQueue() {
         renderNowPlaying(statusData);
 
         // Render Up Next section (backend provides next_song and my_next_turn - single source of truth)
-        renderUpNext(
-            statusData, queueData.next_song, queueData.my_next_turn,
-            findMyFailedSong(currentQueue, userId)
-        );
-
-        // Buzz and show any alert this phone hasn't seen yet
-        handleAlerts(queueData.alerts);
+        renderUpNext(statusData, queueData.next_song, queueData.my_next_turn);
 
         // Render Clear Queue button (operator only)
         const clearQueueContainer = document.getElementById('clear-queue-button-container');
@@ -544,10 +449,8 @@ export async function loadQueue() {
             const isMine = !!userId && item.user_id === userId;
             const canSeeTitle = isOperator || isMine;
             const canEdit = canSeeTitle;
-            const isFailed = item.content_status === 'error';
             const isUpcoming = !isCurrent && !isPlayed;
-            // A failed song has no turn to number until it's fixed.
-            if (isUpcoming && !isFailed) position += 1;
+            if (isUpcoming) position += 1;
 
             // Build class list based on state
             let classes = ['queue-item'];
@@ -555,15 +458,10 @@ export async function loadQueue() {
             if (isPlayed) classes.push('played');
             if (isMine) classes.push('mine');
             if (!canEdit) classes.push('readonly');
-            if (isFailed && isUpcoming) classes.push('failed');
             div.className = classes.join(' ');
 
             const statusClass = `status-${escapeHtml(item.content_status)}`;
-            const statusLabel = escapeHtml(
-                isFailed && canEdit && isUpcoming
-                    ? FIXABLE_ERROR_LABEL
-                    : (STATUS_LABELS[item.content_status] || item.content_status)
-            );
+            const statusLabel = escapeHtml(STATUS_LABELS[item.content_status] || item.content_status);
             const duration = item.duration_seconds || 0;
             const durationStr = `${Math.floor(duration / 60)}:${(duration % 60).toString().padStart(2, '0')}`;
 
@@ -577,9 +475,7 @@ export async function loadQueue() {
                 ? `<div class="queue-item-original" style="color: #666; font-size: 0.8em; margin-top: 2px;">${escapeHtml(item.title)}</div>`
                 : '';
 
-            const positionBadge = isUpcoming && !isFailed
-                ? `<span class="queue-item-position">${position}</span>`
-                : '';
+            const positionBadge = isUpcoming ? `<span class="queue-item-position">${position}</span>` : '';
             const youBadge = isMine ? '<span class="queue-item-you">You</span>' : '';
 
             div.innerHTML = `

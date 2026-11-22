@@ -8,7 +8,6 @@ import { createPitchControlHTML, updatePitchButtons, updatePitchDisplay } from '
 import { toggleControlsLock, pitchLockLabel } from './controls.js';
 import { renderKeyFix, updateKeyFix } from './key-fix.js';
 import { renderEndTurn } from './end-turn.js';
-import { buzz } from './alerts.js';
 
 // What the Now Playing section was last fully rendered for (song + which
 // controls this viewer gets), so polls only patch values in place.
@@ -341,11 +340,8 @@ function formatEta(secs) {
 }
 
 // Pure: decide what the guest should be told about their turn.
-// level: 'none' | 'later' | 'next' | 'playing' | 'idle-first' | 'problem'
-// myFailedSong is the guest's upcoming song whose download failed for good,
-// if any. It outranks a turn that is still a while away, but not singing now
-// or being next with another song: those need them at the mic first.
-export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId, myFailedSong = null) {
+// level: 'none' | 'later' | 'next' | 'playing' | 'idle-first'
+export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId) {
     const currentSong = statusData && statusData.current_song;
     if (currentSong && currentSong.user_id === myUserId) {
         return { level: 'playing', text: "🎤 You're on! Sing it!", title: "🎤 You're singing! – kbox" };
@@ -359,14 +355,6 @@ export function computeTurnStatus(statusData, nextSong, myNextTurn, myUserId, my
             };
         }
         return { level: 'next', text: "🎤 You're next! Head to the mic", title: "🎤 You're next! – kbox" };
-    }
-    if (myFailedSong) {
-        return {
-            level: 'problem',
-            text: "⚠️ Your song couldn't load — tap to fix it",
-            title: '⚠️ Fix your song – kbox',
-            itemId: myFailedSong.id,
-        };
     }
     if (myNextTurn) {
         const n = myNextTurn.songs_away;
@@ -387,24 +375,13 @@ function applyTurnStatus(status) {
         bar.textContent = status.text;
         bar.className = `turn-bar turn-${status.level}`;
         bar.hidden = status.level === 'none';
-        // Only the problem bar does anything when tapped: it opens the fix.
-        if (status.level === 'problem') {
-            bar.onclick = () => window.fixFailedSong(status.itemId);
-            bar.setAttribute('role', 'button');
-            bar.tabIndex = 0;
-        } else {
-            bar.onclick = null;
-            bar.setAttribute('role', 'status');
-            bar.removeAttribute('tabindex');
-        }
     }
     document.body.classList.toggle('has-turn-bar', status.level !== 'none');
     document.title = status.title;
 
-    // Vibrate once on the transition into being the immediate next singer.
-    // (A failed song buzzes through its alert instead; see alerts.js.)
-    if (status.level === 'next' && lastTurnLevel !== 'next') {
-        buzz([200, 100, 200]);
+    // Vibrate once on the transition into being the immediate next singer
+    if (status.level === 'next' && lastTurnLevel !== 'next' && typeof navigator.vibrate === 'function') {
+        try { navigator.vibrate([200, 100, 200]); } catch (e) { /* ignore */ }
     }
     lastTurnLevel = status.level;
 }
@@ -413,6 +390,6 @@ function applyTurnStatus(status) {
 // nextSong and myNextTurn are provided by the backend (single source of truth).
 // (This replaced the mid-page "Up Next" box: the display and the queue list
 // already show who is singing next.)
-export function renderUpNext(statusData, nextSong, myNextTurn, myFailedSong = null) {
-    applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId, myFailedSong));
+export function renderUpNext(statusData, nextSong, myNextTurn) {
+    applyTurnStatus(computeTurnStatus(statusData, nextSong, myNextTurn, userId));
 }

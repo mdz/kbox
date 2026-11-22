@@ -45,15 +45,6 @@
         <div id="edit-queue-item-content">
             <!-- Song settings will be rendered here by JavaScript -->
         </div>
-        <!-- A song whose download failed: why, and how to fix it -->
-        <div id="edit-queue-item-problem" class="problem-box hidden">
-            <p><strong>This song couldn't be loaded.</strong> Pick another version of it and you keep your place in line.</p>
-            <p id="edit-queue-item-problem-detail" class="problem-detail hidden"></p>
-            <div style="display: flex; flex-direction: column; gap: 10px;">
-                <button onclick="fixFailedSongFromModal()" style="width: 100%; background: #27ae60;">🔍 Pick another version</button>
-                <button onclick="retryQueueItem()" style="width: 100%;">↻ Try again</button>
-            </div>
-        </div>
         <!-- Owner options (visible to song owner OR operator) -->
         <div id="edit-queue-item-owner-options" style="display: none; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid #444;">
             <div style="display: flex; flex-direction: column; gap: 10px;">
