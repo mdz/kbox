@@ -1058,6 +1058,27 @@ class TestQueueRepository:
     def test_update_status_nonexistent(self, queue_repo):
         assert queue_repo.update_status(9999, "ready") is False
 
+    def test_update_status_for_current_video_applies(self, queue_repo):
+        item_id = queue_repo.add(_make_user(), "vid:1", _make_meta(), SongSettings())
+        assert queue_repo.update_status(
+            item_id, QueueRepository.STATUS_READY, content_path="/tmp/1.mp4", video_id="vid:1"
+        )
+        assert queue_repo.get_item(item_id).content_status == "ready"
+
+    def test_update_status_for_replaced_video_is_ignored(self, queue_repo):
+        item_id = queue_repo.add(_make_user(), "vid:1", _make_meta(), SongSettings())
+        queue_repo.replace(item_id, "vid:2", _make_meta("B"))
+
+        assert (
+            queue_repo.update_status(
+                item_id, QueueRepository.STATUS_READY, content_path="/tmp/1.mp4", video_id="vid:1"
+            )
+            is False
+        )
+        item = queue_repo.get_item(item_id)
+        assert item.content_status == QueueRepository.STATUS_PENDING
+        assert item.content_path is None
+
     def test_reorder_move_down(self, queue_repo):
         queue_repo.add(_make_user(), "vid:1", _make_meta("A"), SongSettings())
         id2 = queue_repo.add(_make_user(), "vid:2", _make_meta("B"), SongSettings())
@@ -1127,6 +1148,15 @@ class TestQueueRepository:
 
     def test_update_extracted_metadata_nonexistent(self, queue_repo):
         assert queue_repo.update_extracted_metadata(9999, "X", "Y") is False
+
+    def test_update_extracted_metadata_for_replaced_video_is_ignored(self, queue_repo):
+        item_id = queue_repo.add(_make_user(), "vid:1", _make_meta("A"), SongSettings())
+        queue_repo.replace(item_id, "vid:2", _make_meta("B"))
+
+        assert queue_repo.update_extracted_metadata(item_id, "X", "Y", video_id="vid:1") is False
+        item = queue_repo.get_item(item_id)
+        assert item.metadata.artist is None
+        assert item.metadata.song_name is None
 
     def test_clear(self, queue_repo):
         queue_repo.add(_make_user(), "vid:1", _make_meta(), SongSettings())
