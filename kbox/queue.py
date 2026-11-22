@@ -25,6 +25,13 @@ if TYPE_CHECKING:
 CONTENT_MONITOR_INTERVAL_SECONDS = 2.0
 # Wait longer after a pass raised, so a persistent failure doesn't spin.
 CONTENT_MONITOR_ERROR_BACKOFF_SECONDS = 5.0
+# After a failed download, wait this long before each further attempt. The
+# song only counts as failed once every retry has failed too. Downloads mostly fail for reasons that pass in seconds
+# (YouTube once offered nothing but storyboard images for a video that
+# downloaded fine the next day), so a quick retry fixes most of them without
+# anyone noticing, and the short total keeps the singer's time to fix a real
+# failure long.
+DOWNLOAD_RETRY_DELAYS_SECONDS = (10.0, 60.0)
 
 
 class MoveOutcome(Enum):
@@ -69,6 +76,7 @@ class QueueManager:
         loudness_analyzer: Optional["LoudnessAnalyzer"] = None,
         session_manager: Optional["SessionManager"] = None,
         before_clear: Optional[Callable[[], None]] = None,
+        clock: Callable[[], datetime] = datetime.now,
     ):
         """
         Initialize QueueManager.
@@ -85,6 +93,8 @@ class QueueManager:
             before_clear: Optional callback run just before clear_queue
                 deletes anything (used to snapshot the database). Failures
                 are logged and never block the clear.
+            clock: Returns the current time; tests pass a fake one to step
+                through download retries without waiting.
         """
         self.database = database
         self.before_clear = before_clear
@@ -95,6 +105,7 @@ class QueueManager:
         self.silence_analyzer = silence_analyzer
         self.loudness_analyzer = loudness_analyzer
         self.session_manager = session_manager
+        self._clock = clock
         self.logger = logging.getLogger(__name__)
 
         self._content_timeout = timedelta(minutes=10)
@@ -112,6 +123,12 @@ class QueueManager:
         # items that reach STATUS_PREPARING without going through
         # _start_content_preparation (e.g. restored from a prior process).
         self._prep_started_at: Dict[int, datetime] = {}
+
+        # Download retries, keyed by item id: how many attempts have failed,
+        # and the earliest time the next attempt may start. Only in memory: a
+        # restart gives a song that was mid-retry a fresh set of attempts.
+        self._failed_attempts: Dict[int, int] = {}
+        self._retry_not_before: Dict[int, datetime] = {}
 
         self._start_content_monitor()
 
@@ -132,6 +149,10 @@ class QueueManager:
 
         for item in queue:
             if item.content_status == self.STATUS_PENDING:
+                not_before = self._retry_not_before.get(item.id)
+                if not_before is not None and self._clock() < not_before:
+                    continue  # Waiting out the delay before a retry
+                self._retry_not_before.pop(item.id, None)
                 self._start_content_preparation(item)
             elif item.content_status == self.STATUS_PREPARING:
                 self._check_stuck_content(item)
@@ -227,15 +248,63 @@ class QueueManager:
                 return
             self.logger.info("Content ready for queue item %s: %s", item_id, path)
             self._prep_started_at.pop(item_id, None)
+            self._forget_failures(item_id)
             self._run_post_download_analysis(item_id, video_id, path)
             self._cleanup_storage()
         elif status == "error" and error:
-            if not self.update_content_status(
-                item_id, self.STATUS_ERROR, error_message=error, video_id=video_id
-            ):
+            self._on_download_failed(item_id, video_id, error)
+
+    def _on_download_failed(self, item_id: int, video_id: str, error: str) -> None:
+        """
+        One download attempt failed: schedule another, or give up.
+
+        While a retry is pending the item stays PENDING, so the queue (and
+        the guest's phone) treats it as still getting ready. Only after the
+        last retry fails does it become STATUS_ERROR.
+
+        Like every callback update, both are guarded by video_id: the failure
+        of a video the item no longer holds (it was replaced mid-download)
+        is dropped, and counts against nothing.
+        """
+        attempts = self._failed_attempts.get(item_id, 0) + 1
+
+        if attempts <= len(DOWNLOAD_RETRY_DELAYS_SECONDS):
+            delay = DOWNLOAD_RETRY_DELAYS_SECONDS[attempts - 1]
+            # Set before the item goes back to PENDING, so the monitor can't
+            # start the retry early in between.
+            self._retry_not_before[item_id] = self._clock() + timedelta(seconds=delay)
+            if not self.update_content_status(item_id, self.STATUS_PENDING, video_id=video_id):
+                self._retry_not_before.pop(item_id, None)
                 return
+            self._failed_attempts[item_id] = attempts
             self._prep_started_at.pop(item_id, None)
-            self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
+            self.logger.warning(
+                "Download attempt %d failed for queue item %s, retrying in %.0fs: %s",
+                attempts,
+                item_id,
+                delay,
+                error,
+            )
+            return
+
+        if not self.update_content_status(
+            item_id, self.STATUS_ERROR, error_message=error, video_id=video_id
+        ):
+            return
+        self._failed_attempts[item_id] = attempts
+        self._retry_not_before.pop(item_id, None)
+        self._prep_started_at.pop(item_id, None)
+        self.logger.error(
+            "Content preparation failed for queue item %s after %d attempts: %s",
+            item_id,
+            attempts,
+            error,
+        )
+
+    def _forget_failures(self, item_id: int) -> None:
+        """Drop retry bookkeeping for an item that is fixed or gone."""
+        self._failed_attempts.pop(item_id, None)
+        self._retry_not_before.pop(item_id, None)
 
     def _run_post_download_analysis(self, item_id: int, video_id: str, path: str) -> None:
         """Run per-video analysis steps once a queue item's content is ready.
@@ -395,6 +464,7 @@ class QueueManager:
 
         if not self.repository.replace(item_id, video_id, metadata):
             return False
+        self._forget_failures(item_id)
 
         self.logger.info("Replaced queue item %s with: %s (video_id: %s)", item_id, title, video_id)
 
@@ -402,7 +472,10 @@ class QueueManager:
 
     def remove_song(self, item_id: int) -> bool:
         """Remove a song from the queue."""
-        return self.repository.remove(item_id)
+        removed = self.repository.remove(item_id)
+        if removed:
+            self._forget_failures(item_id)
+        return removed
 
     def reorder_song(self, item_id: int, new_position: int) -> bool:
         """Move a song to a new position in the queue."""
@@ -547,6 +620,37 @@ class QueueManager:
 
         return target_position
 
+    def move_before(self, item_id: int, reference_song_id: int) -> Optional[int]:
+        """
+        Move a song to the position just before a reference song.
+
+        Both positions are queried fresh, like move_after().
+
+        Args:
+            item_id: ID of the queue item to move
+            reference_song_id: ID of the song it should end up right before
+
+        Returns:
+            The song's new position, or None if the move could not be made
+        """
+        self.logger.info("Moving song %s before song %s", item_id, reference_song_id)
+        item = self.get_item(item_id)
+        reference_song = self.get_item(reference_song_id)
+        if item is None or reference_song is None:
+            self.logger.error("Song %s or %s not found", item_id, reference_song_id)
+            return None
+        if item.position < reference_song.position:
+            # Moving down: reorder() shifts the reference up one first.
+            target_position = reference_song.position - 1
+        else:
+            target_position = reference_song.position
+        if target_position == item.position:
+            return target_position
+        if not self.reorder_song(item_id, target_position):
+            self.logger.error("Failed to move song %s before %s", item_id, reference_song_id)
+            return None
+        return target_position
+
     def move_to_end(self, item_id: int) -> Optional[int]:
         """
         Move a song to the end of the queue.
@@ -630,6 +734,8 @@ class QueueManager:
             except Exception:
                 self.logger.exception("before_clear callback failed; clearing queue anyway")
         count = self.repository.clear()
+        self._failed_attempts.clear()
+        self._retry_not_before.clear()
         if self.session_manager is not None:
             self.session_manager.end_and_rotate()
         return count

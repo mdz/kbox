@@ -436,16 +436,13 @@ class PlaybackController:
 
         Respects queue order: if the next song isn't ready yet, we wait
         rather than skipping ahead to a later song that happened to
-        download faster.
+        download faster. A song whose download failed for good is the one
+        exception (see _step_past_failed()).
 
         Assumes lock is already held.
         """
         self._require_locked()
-        cursor = self.get_cursor()
-        if cursor is not None:
-            next_song = self.queue_manager.get_song_at_offset(cursor, +1)
-        else:
-            next_song = self.queue_manager.get_song_at_offset(None, 0)
+        next_song = self._step_past_failed(self._song_after_cursor())
         if next_song and next_song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
             self._play_locked()
@@ -554,8 +551,9 @@ class PlaybackController:
         if time_remaining > 15:
             return
 
-        # Get next song by queue position (show who's up next regardless of download status)
-        next_song = self.queue_manager.get_song_at_offset(song_id, +1)
+        # Get next song by queue position (show who's up next even if their
+        # song is still downloading, but never someone whose song can't play)
+        next_song = self._step_past_failed(self.queue_manager.get_song_at_offset(song_id, +1))
         if next_song:
             overlay_text = f"Up next: {next_song.user_name}"
             self._overlay.set_base(overlay_text)
@@ -652,16 +650,13 @@ class PlaybackController:
         falls back to the first song in the queue.
 
         Respects queue order: if the next song isn't ready yet, we go idle
-        rather than skipping ahead to a later song.
+        rather than skipping ahead to a later song. A song whose download
+        failed for good is stepped past (see _take_turn_from_failed()).
 
         Assumes lock is already held.
         """
         self._require_locked()
-        cursor = self.get_cursor()
-        if cursor is not None:
-            next_song = self.queue_manager.get_song_at_offset(cursor, +1)
-        else:
-            next_song = self.queue_manager.get_song_at_offset(None, 0)
+        next_song = self._take_turn_from_failed(self._song_after_cursor())
 
         if not next_song:
             self._set_state(PlaybackState.IDLE, "no more songs")
@@ -672,6 +667,61 @@ class PlaybackController:
             return False
 
         return self._play_song(next_song)
+
+    def _song_after_cursor(self) -> Optional[QueueItem]:
+        """The song after the cursor, or the first song with no cursor."""
+        cursor = self.get_cursor()
+        if cursor is not None:
+            return self.queue_manager.get_song_at_offset(cursor, +1)
+        return self.queue_manager.get_song_at_offset(None, 0)
+
+    def _step_past_failed(self, candidate: Optional[QueueItem]) -> Optional[QueueItem]:
+        """
+        The song that will actually go next in candidate's place.
+
+        That is candidate itself unless its download has failed for good
+        (STATUS_ERROR, after every retry), in which case it is the first song
+        after it that hasn't: waiting for a song that will never be ready
+        would stall the party. A song that is still downloading is not
+        stepped past -- the queue waits for it, as it always has.
+
+        Moves nothing; see _take_turn_from_failed() for that.
+
+        Returns:
+            The song to start, or None if only failed songs are left
+        """
+        seen = set()
+        song = candidate
+        while song is not None and song.content_status == QueueManager.STATUS_ERROR:
+            if song.id in seen:  # Defensive: never loop on a stale reference
+                return None
+            seen.add(song.id)
+            song = self.queue_manager.get_song_at_offset(song.id, +1)
+        return song
+
+    def _take_turn_from_failed(self, candidate: Optional[QueueItem]) -> Optional[QueueItem]:
+        """
+        _step_past_failed(), and move the song that goes instead to the
+        failed song's place in the queue.
+
+        The failed song (and any failed songs right behind it) then stay
+        next in line rather than falling behind the cursor: its singer keeps
+        their turn, and if they fix the song -- replace it or retry it --
+        they sing right after this one. Still broken by then, it steps aside
+        again.
+
+        For the paths that are about to start (or announce) the song this
+        returns; anything that only displays the next song uses
+        _step_past_failed() instead.
+        """
+        self._require_locked()
+        chosen = self._step_past_failed(candidate)
+        if candidate is not None and chosen is not None and chosen.id != candidate.id:
+            self.logger.info(
+                "Song %s failed to download; song %s goes ahead of it", candidate.id, chosen.id
+            )
+            self.queue_manager.move_before(chosen.id, candidate.id)
+        return chosen
 
     def _play_song(self, song: QueueItem) -> bool:
         """
@@ -911,6 +961,8 @@ class PlaybackController:
             # points at the song that actually finished/was skipped).
             reference_song_id = self._next_song_pending.id
             target_song = self.queue_manager.get_song_at_offset(reference_song_id, offset)
+            if offset > 0:
+                target_song = self._take_turn_from_failed(target_song)
             if not target_song:
                 self.logger.info("No song available to navigate to")
                 return False
@@ -927,7 +979,11 @@ class PlaybackController:
             self._next_song_pending = None
 
             # Re-show the interstitial for the newly-chosen song.
-            self._show_transition_or_end(finished_song_id=self._cursor.get(), next_song=target_song)
+            self._show_transition_or_end(
+                finished_song_id=self._cursor.get(),
+                next_song=target_song,
+                step_past_failed=False,
+            )
             return True
 
         if not self.current_song_id:
@@ -947,6 +1003,8 @@ class PlaybackController:
                 return False
 
         target_song = self.queue_manager.get_song_at_offset(self.current_song_id, offset)
+        if offset > 0:
+            target_song = self._take_turn_from_failed(target_song)
         if not target_song:
             self.logger.info("No song available to navigate to")
             return False
@@ -967,7 +1025,11 @@ class PlaybackController:
             # Active performance - show the interstitial, same flow as a
             # natural end-of-song, before starting the target song.
             previous_song_id = self.current_song_id
-            self._show_transition_or_end(finished_song_id=previous_song_id, next_song=target_song)
+            self._show_transition_or_end(
+                finished_song_id=previous_song_id,
+                next_song=target_song,
+                step_past_failed=False,
+            )
         else:
             # Nothing actually playing (e.g. stopped mid replace-download) -
             # switch immediately, no interstitial delay needed.
@@ -1396,6 +1458,7 @@ class PlaybackController:
         self,
         finished_song_id: Optional[int] = None,
         next_song: Optional[QueueItem] = None,
+        step_past_failed: bool = True,
     ):
         """
         Show transition screen for next song, or end-of-queue screen.
@@ -1416,6 +1479,10 @@ class PlaybackController:
                 performed while the interstitial is already showing (see
                 _navigate()), where the target isn't simply
                 finished_song_id + 1.
+            step_past_failed: whether a next song whose download failed for
+                good gives way to the song after it (see
+                _take_turn_from_failed()). False for a caller that has
+                already done that itself.
 
         Note: Called with lock held.
         """
@@ -1434,6 +1501,9 @@ class PlaybackController:
                 return
 
             next_song = self.queue_manager.get_song_at_offset(finished_song_id, +1)
+
+        if step_past_failed:
+            next_song = self._take_turn_from_failed(next_song)
 
         if not next_song:
             # No more songs - show end-of-queue screen
