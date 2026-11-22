@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
 from ..models import QueueItem
+from ..queue import QueueManager
 
 
 @dataclass(frozen=True)
@@ -33,9 +34,17 @@ def upcoming_songs(
     The estimate is the time left in the song now playing plus the durations
     of the upcoming songs ahead of it. With no cursor (or a cursor song no
     longer in the queue) the whole queue is upcoming.
+
+    A song whose download failed for good is left out: playback steps past
+    it, so it has no turn to count down to, and it takes no time from
+    anyone else's wait.
     """
     cursor_idx = next((i for i, s in enumerate(queue) if s.id == cursor_id), None)
-    upcoming_items = queue[(cursor_idx + 1) if cursor_idx is not None else 0 :]
+    upcoming_items = [
+        s
+        for s in queue[(cursor_idx + 1) if cursor_idx is not None else 0 :]
+        if s.content_status != QueueManager.STATUS_ERROR
+    ]
 
     wait = 0.0
     current = next((s for s in queue if s.id == current_song_id), None)
