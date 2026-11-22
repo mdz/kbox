@@ -7,8 +7,11 @@ Generates images for display between songs, during idle, and at end of queue.
 import logging
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Sequence, Tuple
+
+from .models import QueueItem
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,59 @@ WORDMARK_PINK = (255, 63, 164)  # Hot mic pink, "box" in the kbox wordmark
 SECONDARY_TEXT_COLOR = (150, 150, 160)  # Muted gray
 
 WORDMARK_FONT_PATH = Path(__file__).resolve().parent / "assets" / "fonts" / "Baloo2-Variable.ttf"
+
+
+@dataclass(frozen=True)
+class QueueSummary:
+    """
+    What the idle screen says about the queue before playback starts.
+
+    Not the queue itself: just enough to show the room that the party is
+    filling up (who is in line, roughly how long it runs) and nudge the
+    rest to add their songs. Frozen and comparable, so the caller can
+    redraw only when it changes.
+    """
+
+    song_count: int = 0
+    total_seconds: int = 0
+    singer_names: Tuple[str, ...] = ()
+
+    @classmethod
+    def from_items(cls, items: Sequence[QueueItem]) -> "QueueSummary":
+        """Summarize the songs waiting to be sung, in queue order."""
+        names: list[str] = []
+        seen_users: set[str] = set()
+        for item in items:
+            if item.user_id not in seen_users:
+                seen_users.add(item.user_id)
+                names.append(item.user_name)
+        return cls(
+            song_count=len(items),
+            total_seconds=sum(item.metadata.duration_seconds or 0 for item in items),
+            singer_names=tuple(names),
+        )
+
+    def stats_text(self) -> str:
+        """E.g. "3 singers · 5 songs · about 18 min"; songs of unknown length count as 0."""
+        singers = len(self.singer_names)
+        parts = [
+            f"{singers} {'singer' if singers == 1 else 'singers'}",
+            f"{self.song_count} {'song' if self.song_count == 1 else 'songs'}",
+        ]
+        if self.total_seconds > 0:
+            parts.append(f"about {_format_minutes(self.total_seconds)}")
+        return " · ".join(parts)
+
+
+def _format_minutes(seconds: int) -> str:
+    """Round a duration to whole minutes for display: "18 min", "1 hr 5 min", "2 hr"."""
+    minutes = max(1, round(seconds / 60))
+    hours, minutes = divmod(minutes, 60)
+    if hours == 0:
+        return f"{minutes} min"
+    if minutes == 0:
+        return f"{hours} hr"
+    return f"{hours} hr {minutes} min"
 
 
 class InterstitialGenerator:
@@ -153,14 +209,35 @@ class InterstitialGenerator:
         draw.text((start_x, y), "k", font=font, fill=ACCENT_COLOR)
         draw.text((start_x + k_width, y), "box", font=font, fill=WORDMARK_PINK)
 
-    def generate_idle_screen(self, party_theme: Optional[str] = None) -> str:
+    def _fit_names(self, draw: Any, names: Sequence[str], font: Any, max_width: int) -> str:
+        """
+        Join names with " · ", dropping names from the end into "+N more"
+        until the line fits in max_width. Always keeps at least one name.
+        """
+        for shown in range(len(names), 0, -1):
+            text = " · ".join(names[:shown])
+            hidden = len(names) - shown
+            if hidden:
+                text += f" · +{hidden} more"
+            bbox = draw.textbbox((0, 0), text, font=font)
+            if bbox[2] - bbox[0] <= max_width or shown == 1:
+                return text
+        return ""
+
+    def generate_idle_screen(
+        self, party_theme: Optional[str] = None, queue: Optional[QueueSummary] = None
+    ) -> str:
         """
         Generate the idle screen (before playback starts).
 
-        Instructs the audience to scan the QR code overlay to pick songs.
+        Instructs the audience to scan the QR code overlay to pick songs, and
+        shows who is already in line, so the room can see the party filling
+        up and the rest are nudged to add theirs.
 
         Args:
             party_theme: Optional party theme to display below the QR instruction.
+            queue: Summary of the songs waiting to be sung. None or empty
+                invites someone to go first.
 
         Returns:
             Path to the generated image file
@@ -172,39 +249,60 @@ class InterstitialGenerator:
 
         # Title (kbox wordmark: k in violet, box in pink)
         title_font = self._get_wordmark_font(120)
-        self._center_wordmark(draw, self.height // 4, title_font)
+        self._center_wordmark(draw, self.height // 4 - 40, title_font)
 
         # Subtitle
         subtitle_font = self._get_font(48)
         self._center_text(
-            draw, "Karaoke", self.height // 4 + 140, subtitle_font, SECONDARY_TEXT_COLOR
+            draw, "Karaoke", self.height // 4 + 100, subtitle_font, SECONDARY_TEXT_COLOR
         )
 
         # Main instruction - tell users to scan the QR code
         instruction_font = self._get_font(56, bold=True)
+        y = self.height // 2 + 10
         self._center_text(
             draw,
             "Scan the QR code to pick a song",
-            self.height // 2 + 50,
+            y,
             instruction_font,
             PRIMARY_TEXT_COLOR,
         )
+        y += 80
 
         if party_theme:
             theme_font = self._get_font(40)
             self._center_text(
                 draw,
                 f"Tonight's theme: {party_theme}",
-                self.height // 2 + 130,
+                y,
                 theme_font,
                 ACCENT_COLOR,
             )
+            y += 70
+        else:
+            y += 20
+
+        if queue is None or queue.song_count == 0:
+            self._center_text(
+                draw, "Be the first to sing!", y, self._get_font(40, bold=True), WORDMARK_PINK
+            )
+        else:
+            self._center_text(draw, queue.stats_text(), y, self._get_font(34), SECONDARY_TEXT_COLOR)
+            names_font = self._get_font(40, bold=True)
+            names = self._fit_names(
+                draw, queue.singer_names, names_font, max_width=int(self.width * 0.85)
+            )
+            self._center_text(draw, names, y + 50, names_font, WORDMARK_PINK)
 
         # Note: QR code is handled by the streaming overlay for consistency
 
-        # Save and return path
+        # Save and return path. Written aside and renamed into place: this
+        # screen is redrawn as the queue changes, and the display must never
+        # read a half-written file.
         output_path = os.path.join(self.cache_dir, "interstitial_idle.png")
-        img.save(output_path, "PNG")
+        tmp_path = output_path + ".tmp"
+        img.save(tmp_path, "PNG")
+        os.replace(tmp_path, output_path)
         self.logger.info("Generated idle interstitial: %s", output_path)
         return output_path
 

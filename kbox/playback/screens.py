@@ -1,7 +1,8 @@
 """
 The interstitial screens shown between songs and while idle.
 
-ScreenPresenter owns the lazily-created InterstitialGenerator -- the only
+ScreenPresenter owns the lazily-created InterstitialGenerator and a note of
+the queue summary the idle screen on display was drawn with -- the only
 state here -- and takes the config manager and streaming controller it needs
 to render and display. Generation failure is never fatal: every method logs
 and returns, because a missing interstitial is a blank screen, not a broken
@@ -10,6 +11,8 @@ party.
 
 import logging
 from typing import Optional
+
+from ..interstitials import QueueSummary
 
 
 class ScreenPresenter:
@@ -30,6 +33,12 @@ class ScreenPresenter:
 
         # Interstitial generator (lazy-initialized)
         self._interstitial_generator = None
+
+        # The queue summary the idle screen on display was drawn with, or
+        # None while some other screen (or a song) is up. refresh_idle()
+        # redraws only while the idle screen is showing, and only when
+        # this changes.
+        self._idle_queue: Optional[QueueSummary] = None
 
     def _get_interstitial_generator(self):
         """Get or create the interstitial generator (lazy initialization)."""
@@ -52,18 +61,42 @@ class ScreenPresenter:
             return getattr(server, "external_url", None)
         return None
 
-    def show_idle(self):
-        """Show the idle screen interstitial with QR code instructions."""
+    def show_idle(self, queue: QueueSummary):
+        """
+        Show the idle screen interstitial: QR code instructions, plus who is
+        already in line.
+
+        Args:
+            queue: Summary of the songs waiting to be sung
+        """
         self.logger.info("Showing idle screen")
 
         generator = self._get_interstitial_generator()
         party_theme = self.config_manager.get("suggestion_theme") or None
-        image_path = generator.generate_idle_screen(party_theme=party_theme)
+        image_path = generator.generate_idle_screen(party_theme=party_theme, queue=queue)
 
+        # Recorded even if generation failed, so the monitor does not retry
+        # a failing render every tick; the next queue change tries again.
+        self._idle_queue = queue
         if image_path:
             self.streaming_controller.display_image(image_path)
         else:
             self.logger.warning("Could not generate idle screen")
+
+    def refresh_idle(self, queue: QueueSummary):
+        """
+        Redraw the idle screen if it is showing and the queue has changed.
+
+        A no-op while any other screen is up, so a periodic caller cannot
+        replace a message or transition screen with the idle one.
+        """
+        if self._idle_queue is not None and queue != self._idle_queue:
+            self.logger.debug("Queue changed while idle, redrawing idle screen")
+            self.show_idle(queue)
+
+    def leave_idle(self):
+        """Note that the idle screen is no longer on display (a song started)."""
+        self._idle_queue = None
 
     def show_transition(
         self, singer_name: str, song_title: Optional[str] = None, artist: Optional[str] = None
@@ -77,6 +110,7 @@ class ScreenPresenter:
             artist: Optional artist name (from extracted metadata)
         """
         self.logger.info("Showing transition screen for: %s", singer_name)
+        self._idle_queue = None
 
         generator = self._get_interstitial_generator()
         web_url = self._get_web_url()
@@ -102,6 +136,7 @@ class ScreenPresenter:
             message: Message to display
         """
         self.logger.info("Showing message screen: %s", message)
+        self._idle_queue = None
 
         generator = self._get_interstitial_generator()
         image_path = generator.generate_message_screen(message)
@@ -119,6 +154,7 @@ class ScreenPresenter:
             message: Message to display
         """
         self.logger.info("Showing end-of-queue screen: %s", message)
+        self._idle_queue = None
 
         generator = self._get_interstitial_generator()
         image_path = generator.generate_end_of_queue_screen(message=message)
