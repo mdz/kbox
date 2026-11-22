@@ -65,12 +65,13 @@ docker run -d --name kbox --restart unless-stopped \
   mdzz/kbox:<version>
 ```
 
-Or build from source with Compose:
+Or with Compose, which pulls `mdzz/kbox:latest` by default (edit `docker-compose.yml` to pin a version):
 
 ```bash
-docker-compose build
 docker-compose up
 ```
+
+To build from source instead, swap the `image:` line in `docker-compose.yml` for the commented-out `build: .`, then run `docker-compose up --build`.
 
 Then open `http://localhost:8000` in your browser and configure your YouTube API key in Settings (see `docs/setup/youtube-api.md` if you need help getting one).
 
