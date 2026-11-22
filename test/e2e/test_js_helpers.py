@@ -200,6 +200,92 @@ def test_compute_turn_status_later_text(mobile_page, live_app):
     assert text == "🎤 You're up in 2 songs (~8 min)"
 
 
+def test_compute_turn_status_failed_song(mobile_page, live_app):
+    """A failed song asks to be fixed, unless singing or being next comes first."""
+    mobile_page.goto(live_app)
+    results = mobile_page.evaluate(
+        """async () => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { computeTurnStatus } = await import(new URL('./playback.js', appSrc).href);
+            const failed = {id: 7, user_id: 'me'};
+            const later = {songs_away: 2, estimated_seconds: 480};
+            return [
+                computeTurnStatus({current_song: {user_id: 'x'}}, {user_id: 'y'}, later, 'me', failed),
+                computeTurnStatus({current_song: {user_id: 'x'}}, {user_id: 'me'}, null, 'me', failed),
+                computeTurnStatus({current_song: {user_id: 'me'}}, null, null, 'me', failed),
+            ].map(s => [s.level, s.itemId ?? null]);
+        }"""
+    )
+    assert results == [["problem", 7], ["next", None], ["playing", None]]
+
+
+# ---------------------------------------------------------------------------
+# Failed songs and alerts (queue.js, alerts.js)
+# ---------------------------------------------------------------------------
+
+_REPLACEMENT_QUERY_CASES = [
+    ("Royals - Lorde | Karaoke Version | KaraFun", "Royals - Lorde"),
+    (
+        "Neutral Milk Hotel - King Of Carrot Flowers, Part 1 (Tuul Karaoke)",
+        "Neutral Milk Hotel - King Of Carrot Flowers, Part 1",
+    ),
+    ("Song [Lyrics] (Karaoke)", "Song"),
+    ("(Karaoke)", "(Karaoke)"),  # nothing left once stripped: keep the title
+    ("Plain Title", "Plain Title"),
+]
+
+
+def test_search_query_for_replacement(mobile_page, live_app):
+    mobile_page.goto(live_app)
+    results = mobile_page.evaluate(
+        """async (titles) => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { searchQueryForReplacement } = await import(new URL('./queue.js', appSrc).href);
+            return titles.map(searchQueryForReplacement);
+        }""",
+        [c[0] for c in _REPLACEMENT_QUERY_CASES],
+    )
+    assert results == [c[1] for c in _REPLACEMENT_QUERY_CASES]
+
+
+def test_find_my_failed_song(mobile_page, live_app):
+    mobile_page.goto(live_app)
+    result = mobile_page.evaluate(
+        """async () => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { findMyFailedSong } = await import(new URL('./queue.js', appSrc).href);
+            const queue = [
+                {id: 1, user_id: 'me', content_status: 'error', is_played: true},
+                {id: 2, user_id: 'x', content_status: 'error'},
+                {id: 3, user_id: 'me', content_status: 'ready'},
+                {id: 4, user_id: 'me', content_status: 'error'},
+            ];
+            return [
+                findMyFailedSong(queue, 'me')?.id ?? null,
+                findMyFailedSong(queue.slice(0, 3), 'me'),
+                findMyFailedSong(queue, null),
+            ];
+        }"""
+    )
+    assert result == [4, None, None]
+
+
+def test_unseen_alerts(mobile_page, live_app):
+    mobile_page.goto(live_app)
+    result = mobile_page.evaluate(
+        """async () => {
+            const appSrc = document.querySelector('script[type="module"]').src;
+            const { unseenAlerts } = await import(new URL('./alerts.js', appSrc).href);
+            const alerts = [{id: 'a'}, {id: 'b'}, {id: 'c'}];
+            return [
+                unseenAlerts(alerts, ['b']).map(a => a.id),
+                unseenAlerts(null, []),
+            ];
+        }"""
+    )
+    assert result == [["a", "c"], []]
+
+
 # ---------------------------------------------------------------------------
 # Key fix helpers (key-fix.js)
 # ---------------------------------------------------------------------------
