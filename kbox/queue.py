@@ -171,19 +171,24 @@ class QueueManager:
         """Check if content preparation is stuck and recover if possible."""
         cached_path = self.video_library.get_path(item.video_id)
         if cached_path and cached_path.exists():
-            self.logger.info(
-                "Found completed content for %s (ID: %s), updating status",
-                item.metadata.title,
-                item.id,
-            )
+            # `item` is from the start of this poll, so the download's own
+            # completion callback may have marked it READY since, and be
+            # analysing it right now. Only the thread whose update actually
+            # flips the status analyses the file.
             if self.update_content_status(
                 item.id,
                 self.STATUS_READY,
                 content_path=str(cached_path),
                 video_id=item.video_id,
+                only_if_changed=True,
             ):
+                self.logger.info(
+                    "Found completed content for %s (ID: %s), updated status",
+                    item.metadata.title,
+                    item.id,
+                )
                 self._run_post_download_analysis(item.id, item.video_id, str(cached_path))
-                self._prep_started_at.pop(item.id, None)
+            self._prep_started_at.pop(item.id, None)
             return
 
         # Prefer the current prep attempt's start time over created_at: a
@@ -221,13 +226,20 @@ class QueueManager:
         if status == "downloading":
             self.update_content_status(item_id, self.STATUS_PREPARING, video_id=video_id)
         elif status == "ready" and path:
-            if not self.update_content_status(
-                item_id, self.STATUS_READY, content_path=path, video_id=video_id
+            # only_if_changed: the content monitor can find the file and
+            # mark the item READY first, and then it does the analysis.
+            if self.update_content_status(
+                item_id,
+                self.STATUS_READY,
+                content_path=path,
+                video_id=video_id,
+                only_if_changed=True,
             ):
-                return
-            self.logger.info("Content ready for queue item %s: %s", item_id, path)
-            self._prep_started_at.pop(item_id, None)
-            self._run_post_download_analysis(item_id, video_id, path)
+                self.logger.info("Content ready for queue item %s: %s", item_id, path)
+                self._prep_started_at.pop(item_id, None)
+                self._run_post_download_analysis(item_id, video_id, path)
+            # Whoever marked it READY, a download just landed: keep the
+            # library within its size limit.
             self._cleanup_storage()
         elif status == "error" and error:
             if not self.update_content_status(
@@ -641,15 +653,22 @@ class QueueManager:
         content_path: Optional[str] = None,
         error_message: Optional[str] = None,
         video_id: Optional[str] = None,
+        only_if_changed: bool = False,
     ) -> bool:
         """
         Update content status for a queue item.
 
-        With video_id, applies only while the item still holds that video
-        (see QueueRepository.update_status).
+        With video_id, applies only while the item still holds that video;
+        with only_if_changed, returns True only if this call changed the
+        status (see QueueRepository.update_status).
         """
         return self.repository.update_status(
-            item_id, status, content_path, error_message, video_id=video_id
+            item_id,
+            status,
+            content_path,
+            error_message,
+            video_id=video_id,
+            only_if_changed=only_if_changed,
         )
 
     def get_item(self, item_id: int) -> Optional[QueueItem]:

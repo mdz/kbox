@@ -1065,6 +1065,15 @@ class TestQueueRepository:
         )
         assert queue_repo.get_item(item_id).content_status == "ready"
 
+    def test_update_status_only_if_changed(self, queue_repo):
+        item_id = queue_repo.add(_make_user(), "vid:1", _make_meta(), SongSettings())
+        ready = QueueRepository.STATUS_READY
+
+        assert queue_repo.update_status(item_id, ready, "/tmp/1.mp4", only_if_changed=True)
+        assert queue_repo.update_status(item_id, ready, "/tmp/1.mp4", only_if_changed=True) is False
+        # Without the flag, re-setting the same status still reports success.
+        assert queue_repo.update_status(item_id, ready, "/tmp/1.mp4")
+
     def test_update_status_for_replaced_video_is_ignored(self, queue_repo):
         item_id = queue_repo.add(_make_user(), "vid:1", _make_meta(), SongSettings())
         queue_repo.replace(item_id, "vid:2", _make_meta("B"))
