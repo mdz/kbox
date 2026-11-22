@@ -883,3 +883,60 @@ def test_only_failed_songs_left_shows_end_of_queue(long_transition):
     playback.on_song_end()
 
     assert playback.state == PlaybackState.IDLE
+
+
+def test_failed_download_alerts_singer_and_operator_via_queue_api(full_system, monkeypatch):
+    """The alert reaches the singer's and operator's polls, and nobody else's."""
+    from fastapi.testclient import TestClient
+
+    from kbox.alerts import AlertCenter
+    from kbox.favorites import FavoritesManager
+    from kbox.web.app import create_app
+
+    system = full_system
+    monkeypatch.setattr("kbox.queue.DOWNLOAD_RETRY_DELAYS_SECONDS", ())
+    system["queue"].alerts = AlertCenter()
+    system["fake_provider"].set_fail_downloads(True, "Requested format is not available")
+
+    item_id = system["queue"].add_song(
+        user=system["users"]["bob"], video_id="fake:b", title="Song B"
+    )
+    system["queue"]._process_pending_content()
+    wait_for_download(system["queue"], item_id, QueueManager.STATUS_ERROR)
+
+    app = create_app(
+        queue_manager=system["queue"],
+        video_library=system["video_library"],
+        playback_controller=system["playback"],
+        config_manager=system["config"],
+        user_manager=system["user"],
+        history_manager=system["history"],
+        favorites_manager=FavoritesManager(system["queue"].database),
+        streaming_controller=system["streaming"],
+    )
+
+    names = {ALICE_ID: "Alice", BOB_ID: "Bob"}
+
+    def alerts_for(user_id, operator=False):
+        client = TestClient(app)
+        with client:
+            client.post("/api/users", json={"user_id": user_id, "display_name": names[user_id]})
+            if operator:
+                system["config"].set("operator_pin", "1234")
+                client.post("/api/auth/operator", json={"pin": "1234"})
+            return client.get("/api/queue").json()["alerts"]
+
+    [bob_alert] = alerts_for(BOB_ID)
+    assert bob_alert["queue_item_id"] == item_id
+    assert "Song B" in bob_alert["message"]
+    assert alerts_for(ALICE_ID) == []
+    [operator_alert] = alerts_for(ALICE_ID, operator=True)
+    assert operator_alert["message"] == "Bob's song couldn't be loaded."
+
+    # Retrying clears it for everyone.
+    system["fake_provider"].set_fail_downloads(False)
+    client = TestClient(app)
+    with client:
+        client.post("/api/users", json={"user_id": BOB_ID, "display_name": "Bob"})
+        assert client.post(f"/api/queue/{item_id}/retry").json() == {"status": "retrying"}
+    assert alerts_for(BOB_ID) == []
