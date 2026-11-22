@@ -50,6 +50,10 @@ class StreamingController:
     # the rate the display pipeline pulls or black frames interleave with it.
     INTERSTITIAL_FRAMERATE = 30
 
+    # Name of the application message marking the start of a load generation
+    # on playbin's bus. See _load_generation in __init__.
+    LOAD_GENERATION_MESSAGE = "kbox-load-generation"
+
     def __init__(self, config_manager, server, use_fakesinks: bool = False):
         """
         Initialize StreamingController with persistent pipeline.
@@ -135,6 +139,32 @@ class StreamingController:
         # 1s timeout, so that would strand the thread rather than hang
         # forever -- still worth not writing.
         self._pipeline_lock = threading.Lock()
+
+        # Which load of playbin an EOS belongs to, so the playback layer can
+        # tell a song ending from a stale EOS left over from an earlier one.
+        #
+        # The race: the bus thread pops song A's EOS and then waits on
+        # PlaybackController.lock, which another thread holds while it skips
+        # or jumps to song B. By the time the EOS gets the lock, "the current
+        # song" is B, and B would be completed the moment it started.
+        # Dropping playbin to READY does not help: GStreamer only flushes the
+        # bus on READY->NULL, so an EOS queued before load_file() survives it.
+        #
+        # _load_generation is bumped by every transition that ends what
+        # playbin was playing (load_file, stop_playback, a rebuild), under
+        # _pipeline_lock. Reading it at pop time is not enough to tag a
+        # message -- A's EOS can be queued before the bump and popped after
+        # it -- so each bump also posts a marker message carrying the new
+        # value onto playbin's bus, after READY, when A can post nothing
+        # more. The bus is FIFO: everything popped before the marker is from
+        # the earlier load, everything after it from the new one. The bus
+        # thread keeps the last value it saw in _bus_generation (only that
+        # thread touches it) and hands it to eos_callback, and the playback
+        # layer compares it with load_generation under its own lock -- the
+        # lock its load_file/stop_playback calls are made under, so the value
+        # cannot move during the comparison.
+        self._load_generation = 0
+        self._bus_generation = 0
 
         # GStreamer initialization state
         self._gst_initialized = False
@@ -230,6 +260,11 @@ class StreamingController:
             self.DISPLAY_CHANNEL, self._on_source_caps_event, self._on_video_buffer
         )
         self.playbin.set_property("video-sink", self.video_bin)
+
+        # A new playbin has a new, empty bus, so nothing on it can predate
+        # the current generation. Set before the watcher thread starts, which
+        # is the only thing that touches this afterwards.
+        self._bus_generation = self._load_generation
 
         # Bus messages are delivered by polling threads, not by
         # bus.add_signal_watch() + bus.connect(): a signal watch only fires
@@ -374,6 +409,7 @@ class StreamingController:
             # renegotiation" trap in docs/development/gstreamer-pipeline.md.
             self.playbin.set_state(Gst.State.READY)
             self.logger.debug("load_file: after READY")
+            self._begin_load_generation_locked()
 
             # Forget the previous song's last frame, so a pause before the new
             # song shows anything cannot put the old one back on screen.
@@ -436,6 +472,7 @@ class StreamingController:
             self.logger.debug("stop_playback: before READY, state=%s", self.state)
             self.playbin.set_state(Gst.State.READY)
             self.logger.debug("stop_playback: after READY")
+            self._begin_load_generation_locked()
 
             # Stopping while paused: drop the held frame along with the song.
             self.still_image.stop()
@@ -444,6 +481,36 @@ class StreamingController:
             self.state = "idle"
             self.current_file = None
             self.logger.info("Returned to idle state")
+
+    @property
+    def load_generation(self) -> int:
+        """
+        The current load of playbin. eos_callback is passed the generation
+        its EOS was posted under; if that is not this, the EOS is stale.
+        See the note on _load_generation in __init__.
+        """
+        return self._load_generation
+
+    def _begin_load_generation_locked(self):
+        """
+        Start a new load generation and mark where it begins on the bus.
+
+        Call with _pipeline_lock held, after playbin has reached READY: by
+        then the previous load's streaming threads have stopped, so every
+        message it will ever post is already queued ahead of the marker.
+        Posting with playbin in NULL would be dropped (its bus is flushing),
+        which is the other reason this has to come after READY.
+        """
+        Gst = _get_gst()
+        self._load_generation += 1
+        structure = Gst.Structure.new_empty(self.LOAD_GENERATION_MESSAGE)
+        structure.set_value("generation", self._load_generation)
+        # No source element: the bus is all that identifies the marker.
+        if not self.playbin.get_bus().post(Gst.Message.new_application(None, structure)):
+            # Cannot happen after READY; if it ever does, the cost is that
+            # the next song's EOS is taken as stale and the operator has to
+            # skip. Loud, so it is not mistaken for a hang.
+            self.logger.error("Could not post load generation %s to bus", self._load_generation)
 
     def pause(self):
         """Pause playback."""
@@ -587,6 +654,12 @@ class StreamingController:
             self.state = "idle"
             self.current_file = None
             self._is_interstitial = False
+
+            # Whatever the old playbin was playing is over. A watcher the
+            # join above gave up on can still be inside eos_callback with an
+            # EOS from it; this makes that EOS stale. No marker is needed:
+            # the new playbin's bus starts empty, at this generation.
+            self._load_generation += 1
 
             # Recreate the pipeline with fresh config
             self._create_persistent_pipeline()
@@ -848,12 +921,28 @@ class StreamingController:
     # =========================================================================
 
     def set_eos_callback(self, callback):
-        """Set callback for end-of-stream events."""
+        """
+        Set callback for end-of-stream events.
+
+        It is called on the bus thread with one argument, the load generation
+        the EOS was posted under. Compare it with load_generation, under
+        whatever lock the caller's load_file/stop_playback calls are made
+        under, to tell a song ending from a stale EOS.
+        """
         self.eos_callback = callback
+
+    def _on_load_generation(self, message):
+        """Bus thread: a load generation starts here. See _load_generation."""
+        self._bus_generation = message.get_structure().get_value("generation")
+        self.logger.debug("Bus reached load generation %s", self._bus_generation)
 
     def _on_eos(self, bus, message):
         """Handle end-of-stream message."""
-        self.logger.info("End of stream reached (interstitial=%s)", self._is_interstitial)
+        self.logger.info(
+            "End of stream reached (interstitial=%s, generation=%s)",
+            self._is_interstitial,
+            self._bus_generation,
+        )
 
         # Guard against a stale flag only. Interstitials no longer run through
         # playbin at all -- they have their own imagefreeze pipeline, which
@@ -863,7 +952,7 @@ class StreamingController:
             return
 
         if self.eos_callback:
-            self.eos_callback()
+            self.eos_callback(self._bus_generation)
 
     def _on_error(self, bus, message):
         """Handle error message."""
@@ -895,6 +984,10 @@ class StreamingController:
             self._on_error(bus, msg)
         elif msg.type == Gst.MessageType.WARNING:
             self._on_warning(bus, msg)
+        elif msg.type == Gst.MessageType.APPLICATION:
+            structure = msg.get_structure()
+            if structure is not None and structure.get_name() == self.LOAD_GENERATION_MESSAGE:
+                self._on_load_generation(msg)
 
     def _start_bus_polling(self):
         """
