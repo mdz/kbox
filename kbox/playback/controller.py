@@ -735,7 +735,7 @@ class PlaybackController:
             # Mark song ID as currently playing
             # NOTE: This is one of only 2 places current_song_id is mutated:
             #   1. _play_song() - sets it when starting playback
-            #   2. on_song_end() - clears it when song finishes naturally
+            #   2. _complete_current_song() - clears it when song finishes
             # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
             self._start_pitch = pitch
@@ -1283,9 +1283,48 @@ class PlaybackController:
         self.current_song_id = None
         self._show_idle_screen_locked()
 
-    def on_song_end(self):
-        """Called when current song ends (EOS)."""
+    def on_song_end(self, load_generation: Optional[int] = None):
+        """
+        Called when the current song ends (EOS).
+
+        The GStreamer EOS arrives on the bus thread, which may have popped it
+        while another thread held self.lock to skip, end a turn, jump or
+        trim trailing silence. By the time this gets the lock, the song that
+        ended may no longer be current, and completing "the current song"
+        would act on the wrong one: the end-of-queue screen drawn over an
+        "up next" interstitial, or a song finished the moment it started.
+        So an EOS is acted on only if it still applies:
+
+        - The state must be PLAYING. Every navigation path leaves it
+          (TRANSITION, STOPPED, IDLE), and none of them wants an EOS.
+          PAUSED is ignored too: a song that reached its end just as it was
+          paused gets its EOS again from GStreamer on resume.
+        - The EOS must be from the load that is playing now. A jump_to_song
+          or any other immediate _play_song() goes straight back to PLAYING,
+          so the state alone cannot tell the old song's EOS from the new
+          song's. load_file/stop_playback are only called under self.lock,
+          so load_generation cannot change while it is compared here.
+
+        Args:
+            load_generation: the StreamingController load generation the EOS
+                was posted under, as passed to its eos_callback. None from a
+                caller that cannot say (the browser display's song-ended
+                request), in which case only the state is checked.
+        """
         with self._locked():
+            if self.state != PlaybackState.PLAYING:
+                self.logger.info("Ignoring end of stream in state %s", self.state.value)
+                return
+            if (
+                load_generation is not None
+                and load_generation != self.streaming_controller.load_generation
+            ):
+                self.logger.info(
+                    "Ignoring stale end of stream from load %s (now on load %s)",
+                    load_generation,
+                    self.streaming_controller.load_generation,
+                )
+                return
             self._complete_current_song()
 
     def _complete_current_song(

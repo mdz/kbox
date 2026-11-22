@@ -761,3 +761,98 @@ def test_singer_ending_their_turn_moves_on_and_the_song_never_comes_back(full_sy
     assert playback.state == PlaybackState.IDLE
     assert system["queue"].get_item(bob_id) is not None
     assert [h.metadata.title for h in system["history"].get_user_history(BOB_ID)] == []
+
+
+# =============================================================================
+# A stale end-of-stream: the EOS for one song applied after the next started
+# =============================================================================
+#
+# GStreamer's bus thread can pop a song's EOS and then wait on the playback
+# lock while another request holds it to skip, end a turn, go back or jump.
+# Each test below runs that request and then delivers the EOS, which is the
+# order the lock imposes. The mock streaming controller counts load
+# generations the way StreamingController does, so the EOS carries the load
+# it was posted under.
+
+
+def _count_load_generations(streaming):
+    """Bump load_generation on every load_file/stop_playback, as the real one does."""
+    streaming.load_generation = 0
+
+    def next_generation(*args, **kwargs):
+        streaming.load_generation += 1
+
+    streaming.load_file.side_effect = next_generation
+    streaming.stop_playback.side_effect = next_generation
+
+
+def test_eos_racing_end_turn_keeps_the_next_singer_announced(full_system):
+    """
+    Bob taps "end my turn" during his outro, just as his file runs out.
+
+    Before the fix the late EOS found TRANSITION with no current song, threw
+    away the "Charlie is up next" screen and showed the end-of-queue screen.
+    """
+    system = full_system
+    playback = system["playback"]
+    _count_load_generations(system["streaming"])
+    _, bob_id, charlie_id = _start_second_song(system)
+    bobs_load = system["streaming"].load_generation
+
+    assert playback.end_turn(bob_id) is True
+    playback.on_song_end(bobs_load)
+
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending.id == charlie_id
+    playback.play()  # skip the interstitial
+    assert playback.current_song_id == charlie_id
+
+
+def test_eos_racing_previous_keeps_going_back(full_system):
+    """
+    The operator goes back to Alice just as Bob's song ends.
+
+    Before the fix the late EOS completed Bob's song after all -- recording
+    it as sung -- and re-targeted the interstitial from Alice to Charlie.
+    """
+    system = full_system
+    playback = system["playback"]
+    _count_load_generations(system["streaming"])
+    alice_id, bob_id, _ = _start_second_song(system)
+    bobs_load = system["streaming"].load_generation
+
+    assert playback.previous() is True
+    system["streaming"].get_position.return_value = 180  # Bob's song did reach its end
+    playback.on_song_end(bobs_load)
+
+    assert playback.state == PlaybackState.TRANSITION
+    assert playback._next_song_pending.id == alice_id
+    assert system["history"].get_user_history(BOB_ID) == []
+    playback.play()
+    assert playback.current_song_id == alice_id
+
+
+def test_eos_racing_jump_does_not_end_the_new_song(full_system):
+    """
+    The operator jumps to Charlie just as Bob's song ends.
+
+    jump_to_song() goes straight back to PLAYING, so only the load generation
+    tells Bob's EOS from Charlie's. Before the fix Bob's late EOS "finished"
+    Charlie's song the moment it started.
+    """
+    system = full_system
+    playback = system["playback"]
+    _count_load_generations(system["streaming"])
+    _, _, charlie_id = _start_second_song(system)
+    bobs_load = system["streaming"].load_generation
+
+    assert playback.jump_to_song(charlie_id) is True
+    playback.on_song_end(bobs_load)
+
+    assert playback.state == PlaybackState.PLAYING
+    assert playback.current_song_id == charlie_id
+
+    # Charlie's own EOS still ends Charlie's song.
+    playback.on_song_end(system["streaming"].load_generation)
+    assert playback.current_song_id is None
+    assert playback.state == PlaybackState.IDLE

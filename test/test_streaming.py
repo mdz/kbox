@@ -786,14 +786,21 @@ def test_seek_returns_false_when_idle(controller):
 
 
 def test_eos_callback_fires(controller, test_video_1s):
-    """Test that EOS callback is called when song ends."""
+    """The EOS callback fires when a song ends, tagged with that song's load."""
     eos_received = threading.Event()
-    controller.set_eos_callback(lambda: eos_received.set())
+    generations = []
+
+    def on_eos(generation):
+        generations.append(generation)
+        eos_received.set()
+
+    controller.set_eos_callback(on_eos)
 
     controller.load_file(test_video_1s)
 
     # Wait for EOS (1 second video + some buffer)
     assert eos_received.wait(timeout=3), "EOS callback not received"
+    assert generations == [controller.load_generation]
 
     controller.stop_playback()
 
@@ -801,7 +808,7 @@ def test_eos_callback_fires(controller, test_video_1s):
 def test_multiple_eos_callbacks(controller, test_video_1s):
     """Test that EOS callback fires for multiple songs."""
     eos_count = []
-    controller.set_eos_callback(lambda: eos_count.append(1))
+    controller.set_eos_callback(lambda generation: eos_count.append(1))
 
     # Play first song
     controller.load_file(test_video_1s)
@@ -815,6 +822,74 @@ def test_multiple_eos_callbacks(controller, test_video_1s):
     assert len(eos_count) >= 1  # At least one EOS
 
     controller.stop_playback()
+
+
+def _drain_playbin_bus_until(controller, done):
+    """
+    Be the bus thread by hand: pop playbin's bus and dispatch each message as
+    BusWatcher would, until done() is true.
+
+    Blocks on the bus (bounded), never sleeps: what it waits for is either
+    already queued or a 1s video playing to its end.
+    """
+    Gst = _get_gst()
+    bus = controller.playbin.get_bus()
+    while not done():
+        msg = bus.timed_pop(5 * Gst.SECOND)
+        assert msg is not None, "playbin's bus went quiet before the expected EOS"
+        controller._dispatch_playbin_message(bus, msg)
+
+
+def test_eos_queued_before_a_load_keeps_the_earlier_generation(controller, test_video_1s):
+    """
+    An EOS still on the bus when the next song loads is tagged as the old load's.
+
+    The stale-EOS race: song A's EOS is queued, then load_file(B) runs before
+    anything pops it. Dropping playbin to READY does not flush the bus, so the
+    EOS survives the load; read alone, the generation at pop time would be
+    B's. The marker load_file posts after READY is what keeps them apart.
+    """
+    Gst = _get_gst()
+    generations = []
+    controller.set_eos_callback(generations.append)
+    # Pop the bus by hand from here on, so nothing consumes the EOS early.
+    controller.stop_bus_polling()
+
+    controller.load_file(test_video_1s)
+    song_a = controller.load_generation
+    # Song A ends -- queued on the bus, not yet popped.
+    controller.playbin.get_bus().post(Gst.Message.new_eos(controller.playbin))
+
+    controller.load_file(test_video_1s)
+    song_b = controller.load_generation
+    assert song_b != song_a
+
+    # A's EOS comes off the bus first, then B plays its 1s to the end.
+    _drain_playbin_bus_until(controller, lambda: song_b in generations)
+
+    # Had A's own 1s run out before the second load, that EOS is A's too.
+    assert generations[0] == song_a
+    assert set(generations[:-1]) == {song_a}
+    assert generations[-1] == song_b == controller.load_generation
+
+    controller.stop_playback()
+
+
+def test_every_transition_away_from_a_song_starts_a_new_load_generation(controller, test_video_1s):
+    """load_file, stop_playback and a rebuild each make any pending EOS stale."""
+    seen = [controller.load_generation]
+
+    controller.load_file(test_video_1s)
+    seen.append(controller.load_generation)
+    controller.stop_playback()
+    seen.append(controller.load_generation)
+    controller.reinitialize_pipeline()
+    seen.append(controller.load_generation)
+
+    assert seen == sorted(set(seen)), f"generations did not strictly increase: {seen}"
+    # The rebuilt playbin's bus starts at the current generation, with no
+    # marker on it to say so.
+    assert controller._bus_generation == controller.load_generation
 
 
 # =========================================================================
@@ -1038,7 +1113,7 @@ def test_eos_suppressed_during_interstitial(controller):
     between-song screen is still displayed.
     """
     eos_fired = threading.Event()
-    controller.set_eos_callback(eos_fired.set)
+    controller.set_eos_callback(lambda generation: eos_fired.set())
 
     controller._is_interstitial = True
     controller._on_eos(None, None)
@@ -1049,7 +1124,7 @@ def test_eos_suppressed_during_interstitial(controller):
 def test_eos_fires_for_song(controller):
     """EOS propagates normally for regular songs (counterpart to suppression test)."""
     eos_fired = threading.Event()
-    controller.set_eos_callback(eos_fired.set)
+    controller.set_eos_callback(lambda generation: eos_fired.set())
 
     controller._is_interstitial = False
     controller._on_eos(None, None)

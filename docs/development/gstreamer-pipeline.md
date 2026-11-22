@@ -451,6 +451,25 @@ matches `stop_playback()`. This is flagged for the next pre-release burn-in pass
 watch specifically for anything on song transitions between very different source
 formats (resolution, codec, channel layout) that didn't happen before this change.
 
+### READY does not flush the bus
+
+A bin sets its bus flushing only on **READY→NULL** (and clears it on
+NULL→READY). Dropping `playbin` to READY to load the next song leaves every
+message still queued on the bus in place, so the previous song's EOS can
+survive the load and be popped after the next song has started. Reading "the
+current song" when the EOS is handled is therefore not enough to know which
+song ended.
+
+`StreamingController` keeps a load generation for this: `load_file()` and
+`stop_playback()` bump it and post an application message carrying it, after
+READY, when the old song can post nothing more. The bus is FIFO, so the bus
+thread tags each EOS with the last marker it passed, and
+`PlaybackController.on_song_end()` drops one whose generation is not current.
+Flushing the bus instead would not be enough: the bus thread may already have
+popped the old EOS and be waiting on the playback lock. (Also measured: a
+message posted while `playbin` is in NULL is dropped, and GStreamer posts EOS
+again when a pipeline that has reached it goes PAUSED→PLAYING.)
+
 ### `intervideosrc`'s `timeout` does not hold the last frame
 
 Its description — *"Timeout after which to start outputting black frames"* —
