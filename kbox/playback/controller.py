@@ -59,6 +59,17 @@ class PlaybackStatus:
     position_seconds: Optional[int]
 
 
+@dataclass(frozen=True)
+class _StateSnapshot:
+    """
+    (state, current_song_id) as of the last time the playback lock was
+    released. See PlaybackController._publish_snapshot().
+    """
+
+    state: PlaybackState
+    current_song_id: Optional[int]
+
+
 class SeekOutcome(Enum):
     """How a seek (or a restart, which is a seek to zero) ended."""
 
@@ -124,8 +135,12 @@ class PlaybackController:
         self.loudness_analyzer = loudness_analyzer
         self.pitch_log = pitch_log
         self.logger = logging.getLogger(__name__)
-        self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
-        self.current_song_id: Optional[int] = None
+        # Backing fields for the state and current_song_id properties.
+        self._state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
+        self._current_song_id: Optional[int] = None
+        # What get_status()/get_upcoming() read instead of taking the lock.
+        # Replaced (never mutated) by _publish_snapshot().
+        self._snapshot = _StateSnapshot(self._state, self._current_song_id)
 
         # The one lock in the playback layer: the collaborators below
         # (cursor, overlay, screens) have none of their own and rely on it.
@@ -211,6 +226,10 @@ class PlaybackController:
             try:
                 yield
             finally:
+                # Publish only once the whole critical section is done, so
+                # lock-free readers never see a half-made transition (e.g.
+                # _play_song() sets current_song_id well before PLAYING).
+                self._publish_snapshot()
                 self._lock_owner = None
 
     def _require_locked(self) -> None:
@@ -231,6 +250,58 @@ class PlaybackController:
             )
 
     # =========================================================================
+    # State snapshot
+    # =========================================================================
+    #
+    # Guest phones poll /api/queue and /api/playback/status every second, and
+    # both need (state, current_song_id). If they took self.lock for it, a
+    # poll arriving while _play_song() holds the lock across load_file() (up
+    # to several seconds) would park a server threadpool thread until the
+    # load finished; a dozen phones fill the pool and stall every other
+    # request, the operator's Skip included.
+    #
+    # So readers that only need a consistent view read self._snapshot, an
+    # immutable _StateSnapshot, with no lock: one attribute read is atomic
+    # under the GIL. Writers still mutate state and current_song_id only
+    # under self.lock, and _locked() publishes the new snapshot on release.
+    # A reader therefore sees exactly what it would have seen by waiting for
+    # the lock, as of the last release, minus the wait.
+
+    @property
+    def state(self) -> PlaybackState:
+        return self._state
+
+    @state.setter
+    def state(self, value: PlaybackState) -> None:
+        self._state = value
+        self._publish_snapshot_if_unlocked()
+
+    @property
+    def current_song_id(self) -> Optional[int]:
+        return self._current_song_id
+
+    @current_song_id.setter
+    def current_song_id(self, value: Optional[int]) -> None:
+        self._current_song_id = value
+        self._publish_snapshot_if_unlocked()
+
+    def _publish_snapshot(self) -> None:
+        """Replace the snapshot. Called by _locked() as it releases."""
+        self._snapshot = _StateSnapshot(self._state, self._current_song_id)
+
+    def _publish_snapshot_if_unlocked(self) -> None:
+        """
+        Publish now if this assignment isn't inside a _locked() block.
+
+        Under the lock (every assignment kbox itself makes) publishing waits
+        for _locked() to release, so the transition appears all at once. An
+        assignment outside it -- a test setting up a scenario -- has no
+        release to wait for, so it is published immediately.
+        """
+        if self._lock_owner != threading.get_ident():
+            self._publish_snapshot()
+
+    # =========================================================================
     # Queue Cursor
     # =========================================================================
 
@@ -243,10 +314,14 @@ class PlaybackController:
         return self._cursor.get()
 
     def get_upcoming(self) -> List[UpcomingItem]:
-        """Songs after the cursor, with estimated start times (see upcoming_songs)."""
-        with self._locked():
-            state = self.state
-            current_song_id = self.current_song_id
+        """
+        Songs after the cursor, with estimated start times (see upcoming_songs).
+
+        Lock-free, like get_status(): see "State snapshot" above.
+        """
+        snapshot = self._snapshot
+        state = snapshot.state
+        current_song_id = snapshot.current_song_id
 
         position = None
         if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
@@ -1438,26 +1513,25 @@ class PlaybackController:
         """
         Get current playback status.
 
-        Only briefly holds self.lock to snapshot (state, current_song_id) for
-        a consistent view; the position query (GStreamer) and queue lookup
-        (SQLite) below are blocking I/O and run outside the lock so status
-        polls don't contend with in-progress song transitions (e.g.
-        _play_song() holding the lock across load_file()).
+        Never takes self.lock: (state, current_song_id) come from the
+        published snapshot (see "State snapshot" above), and the position
+        query (GStreamer) and queue lookup (SQLite) need no lock. So a status
+        poll returns at once even while _play_song() holds the lock across
+        load_file(), reporting the state from before the load began.
 
-        Because the snapshot is taken before the I/O, the song can end or a
-        new one can start while this method is running. That's acceptable
-        for a status read (a UI poll, not a control decision), but it means
-        current_song_id may no longer match the live queue by the time
-        get_item() runs -- handled below the same way a missing item is
-        always handled.
+        The song can end or a new one can start while this method is
+        running. That's acceptable for a status read (a UI poll, not a
+        control decision), but it means current_song_id may no longer match
+        the live queue by the time get_item() runs -- handled below the same
+        way a missing item is always handled.
 
         Returns:
             PlaybackStatus with the state, the current QueueItem (or None)
             and the position in seconds
         """
-        with self._locked():
-            state = self.state
-            current_song_id = self.current_song_id
+        snapshot = self._snapshot
+        state = snapshot.state
+        current_song_id = snapshot.current_song_id
 
         position = None
         if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):

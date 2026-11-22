@@ -391,14 +391,54 @@ const STATUS_LABELS = {
     error: 'Problem',
 };
 
-// Load queue
+// At most one queue refresh in flight per page. Every phone polls each
+// second, and each request holds a server worker thread until it answers;
+// if the server is slow, overlapping polls would pile up there.
+let queueRefreshInFlight = false;
+// Set when loadQueue() was asked for while a refresh was in flight.
+let queueRefreshWanted = false;
+// Give up on a refresh after this long. Polls wait for the one in flight,
+// so without a limit one hung request (a phone changing networks) would
+// stop that phone's updates until the browser itself gave up.
+const QUEUE_REFRESH_TIMEOUT_MS = 10000;
+
+// The once-a-second poll: skip the tick if the last one hasn't answered.
+export function pollQueue() {
+    if (!queueRefreshInFlight) loadQueue();
+}
+
+// Refresh the queue now, e.g. after an action changed it. If a refresh is
+// already in flight, its answer may predate the change, so run one more
+// as soon as it finishes instead of overlapping it.
 export async function loadQueue() {
+    if (queueRefreshInFlight) {
+        queueRefreshWanted = true;
+        return;
+    }
+    queueRefreshInFlight = true;
+    try {
+        do {
+            queueRefreshWanted = false;
+            const abort = new AbortController();
+            const timer = setTimeout(() => abort.abort(), QUEUE_REFRESH_TIMEOUT_MS);
+            try {
+                await refreshQueue(abort.signal);
+            } finally {
+                clearTimeout(timer);
+            }
+        } while (queueRefreshWanted);
+    } finally {
+        queueRefreshInFlight = false;
+    }
+}
+
+async function refreshQueue(signal) {
     if (authExpired) return;
     try {
         // Get queue and current playback status
         const [queueResponse, statusResponse] = await Promise.all([
-            fetch('/api/queue'),
-            fetch('/api/playback/status')
+            fetch('/api/queue', { signal }),
+            fetch('/api/playback/status', { signal })
         ]);
 
         if (queueResponse.status === 401 || statusResponse.status === 401) {
