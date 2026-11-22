@@ -66,6 +66,12 @@ RUN sed -i 's/include-system-site-packages = false/include-system-site-packages 
 # Place venv executables at front of path
 ENV PATH="/app/.venv/bin:$PATH"
 
+# A segfault or abort in native code (GStreamer, the pitch plugin) kills the
+# process before Python can log anything, and the restart policy brings it back
+# with no trace of why. faulthandler dumps every thread's Python stack to stderr
+# on SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL, so the cause lands in the container log.
+ENV PYTHONFAULTHANDLER=1
+
 EXPOSE 8000
 
 CMD ["python3", "-m", "kbox.main"]
