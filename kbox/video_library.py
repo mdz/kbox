@@ -410,14 +410,27 @@ class VideoLibrary:
         if not video_dir.exists():
             return None
 
+        # The finished file, video.<ext> (the download's output template).
+        # Checked for every extension before any fallback, so a leftover
+        # intermediate .mp4 cannot win over a finished video.mkv.
         for ext in VIDEO_EXTENSIONS:
-            # Check for video.ext pattern (new style)
             video_file = video_dir / f"video{ext}"
-            if video_file.exists():
+            if video_file.is_file():
                 return video_file
-            # Also check for source_id.ext pattern (legacy/yt-dlp default)
+
+        # Fallback for older downloads named <source_id>.<ext>. Anything with
+        # a dot in its stem is skipped: those are yt-dlp's in-progress files.
+        # With a "bestvideo+bestaudio" format it writes each stream to
+        # video.f<format_id>.<ext>, then merges them via video.temp.<ext>,
+        # and only renames the result to video.<ext> at the very end. The
+        # video stream finishes first, so for the length of the audio
+        # download and the merge, video.f<id>.mp4 is a complete-looking file
+        # with no audio. The content monitor polls this every couple of
+        # seconds during a download; matching it would mark the song READY
+        # on a silent file that is about to be deleted.
+        for ext in VIDEO_EXTENSIONS:
             for path in video_dir.glob(f"*{ext}"):
-                if path.is_file():
+                if "." not in path.stem and path.is_file():
                     return path
 
         return None

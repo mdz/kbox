@@ -1,6 +1,10 @@
 services:
   kbox:
-    build: .
+    # Pre-built multi-arch image from Docker Hub. `latest` is the newest verified
+    # release; pin an exact version (e.g. 0.2.0, or 0.2.0-rc.1 for a pre-release).
+    image: mdzz/kbox:latest
+    # To build from source instead, comment out `image:` above and use:
+    # build: .
     devices:
       - "/dev/snd:/dev/snd"
       - "/dev/dri:/dev/dri"  # For KMS video

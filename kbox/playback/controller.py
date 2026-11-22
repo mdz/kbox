@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Iterator, List, Optional
 
 from ..database import ConfigRepository
+from ..interstitials import QueueSummary
 from ..models import QueueItem
 from ..periodic import PeriodicThread
 from ..queue import MoveResult, QueueManager
@@ -341,6 +342,11 @@ class PlaybackController:
             # Auto-resume a song that was stopped to replace its content,
             # once the replacement has finished downloading
             self._check_auto_resume_after_replace()
+        elif self.state == PlaybackState.STOPPED:
+            # Before the operator presses Play, keep the idle screen's
+            # "who's in line" current as guests add songs, so the room sees
+            # the party filling up. Redraws only when the summary changes.
+            self._screens.refresh_idle(self._idle_queue_summary())
 
     def _check_auto_start_when_idle(self):
         """
@@ -722,6 +728,7 @@ class PlaybackController:
             self.set_cursor(song.id)
 
             self._set_state(PlaybackState.PLAYING, f"playing: {song.metadata.title}")
+            self._screens.leave_idle()
             return True
 
         except Exception as e:
@@ -1461,7 +1468,26 @@ class PlaybackController:
     def _show_idle_screen_locked(self):
         """show_idle_screen() for a caller that already holds the lock."""
         self._require_locked()
-        self._screens.show_idle()
+        self._screens.show_idle(self._idle_queue_summary())
+
+    def _idle_queue_summary(self) -> QueueSummary:
+        """
+        Summarize the songs Play would work through from here.
+
+        That is the stopped song, if one is remembered (Play resumes it),
+        then everything after it; with none, everything after the cursor.
+
+        Assumes lock is already held.
+        """
+        self._require_locked()
+        queue = self.queue_manager.get_queue()
+        ids = [item.id for item in queue]
+        if self.current_song_id in ids:
+            start = ids.index(self.current_song_id)
+        else:
+            cursor = self.get_cursor()
+            start = ids.index(cursor) + 1 if cursor in ids else 0
+        return QueueSummary.from_items(queue[start:])
 
     def update_qr_overlay(self, image_path: str):
         """

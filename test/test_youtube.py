@@ -2,6 +2,7 @@
 Unit tests for YouTubeAPI (YouTube Data API v3 client).
 """
 
+import threading
 from unittest.mock import Mock, patch
 
 import pytest
@@ -30,16 +31,16 @@ def mock_config_no_key():
 
 
 @pytest.fixture
-def youtube_api(mock_config_manager):
-    """YouTubeAPI instance with a mocked Google API client."""
-    with patch("kbox.youtube.build") as mock_build:
-        mock_client = Mock()
-        mock_build.return_value = mock_client
-        api = YouTubeAPI(mock_config_manager)
-        # Force lazy initialization
-        api._youtube = mock_client
-        api._last_api_key = "fake_api_key"
-        yield api
+def mock_client():
+    """The Google API client that the patched build() hands out."""
+    return Mock()
+
+
+@pytest.fixture
+def youtube_api(mock_config_manager, mock_client):
+    """YouTubeAPI instance whose build() returns mock_client."""
+    with patch("kbox.youtube.build", return_value=mock_client):
+        yield YouTubeAPI(mock_config_manager)
 
 
 # =========================================================================
@@ -57,11 +58,55 @@ def test_is_available_without_key(mock_config_no_key):
 
 
 # =========================================================================
+# Per-thread clients
+# =========================================================================
+
+
+def test_client_is_reused_within_a_thread(mock_config_manager):
+    with patch("kbox.youtube.build", side_effect=lambda *a, **kw: Mock()) as mock_build:
+        api = YouTubeAPI(mock_config_manager)
+        first = api._get_client()
+        assert api._get_client() is first
+    assert mock_build.call_count == 1
+
+
+def test_each_thread_gets_its_own_client(mock_config_manager):
+    """Concurrent searches must not share one client: its httplib2 connection is not thread-safe."""
+    with patch("kbox.youtube.build", side_effect=lambda *a, **kw: Mock()) as mock_build:
+        api = YouTubeAPI(mock_config_manager)
+        main_client = api._get_client()
+
+        other: list = []
+        thread = threading.Thread(target=lambda: other.append(api._get_client()))
+        thread.start()
+        thread.join()
+
+    assert other[0] is not None
+    assert other[0] is not main_client
+    assert mock_build.call_count == 2
+
+
+def test_client_is_rebuilt_when_api_key_changes():
+    keys = iter(["key_one", "key_one", "key_two"])
+    config = Mock()
+    config.get.side_effect = lambda key, default=None: next(keys)
+
+    with patch("kbox.youtube.build", side_effect=lambda *a, **kw: Mock()) as mock_build:
+        api = YouTubeAPI(config)
+        first = api._get_client()
+        assert api._get_client() is first
+        second = api._get_client()
+
+    assert second is not first
+    assert [c.kwargs["developerKey"] for c in mock_build.call_args_list] == ["key_one", "key_two"]
+
+
+# =========================================================================
 # Search
 # =========================================================================
 
 
-def test_search_success(youtube_api):
+def test_search_success(youtube_api, mock_client):
     mock_search_response = {
         "items": [
             {"id": {"videoId": "vid1"}, "snippet": {}},
@@ -98,12 +143,12 @@ def test_search_success(youtube_api):
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_videos_response
 
-    youtube_api._youtube.search.return_value = mock_search
-    youtube_api._youtube.videos.return_value = mock_videos
+    mock_client.search.return_value = mock_search
+    mock_client.videos.return_value = mock_videos
 
     results = youtube_api.search("test query")
 
-    call_args = youtube_api._youtube.search.return_value.list.call_args
+    call_args = mock_client.search.return_value.list.call_args
     assert "karaoke" in call_args[1]["q"].lower()
 
     assert len(results) == 2
@@ -113,10 +158,10 @@ def test_search_success(youtube_api):
     assert results[1]["duration_seconds"] == 255
 
 
-def test_search_no_results(youtube_api):
+def test_search_no_results(youtube_api, mock_client):
     mock_search = Mock()
     mock_search.list.return_value.execute.return_value = {"items": []}
-    youtube_api._youtube.search.return_value = mock_search
+    mock_client.search.return_value = mock_search
 
     results = youtube_api.search("nonexistent")
     assert len(results) == 0
@@ -133,7 +178,7 @@ def test_search_raises_without_key(mock_config_no_key):
 # =========================================================================
 
 
-def test_get_video_info_success(youtube_api):
+def test_get_video_info_success(youtube_api, mock_client):
     mock_response = {
         "items": [
             {
@@ -150,7 +195,7 @@ def test_get_video_info_success(youtube_api):
     }
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = mock_response
-    youtube_api._youtube.videos.return_value = mock_videos
+    mock_client.videos.return_value = mock_videos
 
     info = youtube_api.get_video_info("vid1")
 
@@ -160,10 +205,10 @@ def test_get_video_info_success(youtube_api):
     assert info["duration_seconds"] == 210
 
 
-def test_get_video_info_not_found(youtube_api):
+def test_get_video_info_not_found(youtube_api, mock_client):
     mock_videos = Mock()
     mock_videos.list.return_value.execute.return_value = {"items": []}
-    youtube_api._youtube.videos.return_value = mock_videos
+    mock_client.videos.return_value = mock_videos
 
     assert youtube_api.get_video_info("nonexistent") is None
 

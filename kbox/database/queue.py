@@ -229,16 +229,40 @@ class QueueRepository:
         status: str,
         content_path: Optional[str] = None,
         error_message: Optional[str] = None,
+        video_id: Optional[str] = None,
     ) -> bool:
-        """Update content status for a queue item."""
+        """
+        Update content status for a queue item.
+
+        video_id, when given, is the video the caller's result belongs to:
+        the update only applies while the item still holds that video. A
+        download runs for many seconds, and the item can be replaced with a
+        different video meanwhile; without the check, the old download
+        finishing would mark the replacement READY with the old file.
+        """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            # The read below merges into download_json, so the read and the
+            # write must be one unit, and the video_id check must still hold
+            # when the write lands.
+            self._begin_write(cursor)
 
-            cursor.execute("SELECT download_json FROM queue_items WHERE id = ?", (item_id,))
+            cursor.execute(
+                "SELECT download_json, video_id FROM queue_items WHERE id = ?", (item_id,)
+            )
             result = cursor.fetchone()
             if not result:
                 self.logger.warning("Queue item %s not found for status update", item_id)
+                return False
+            if video_id is not None and result["video_id"] != video_id:
+                self.logger.info(
+                    "Ignoring %s status for item %s: it now holds %s, not %s",
+                    status,
+                    item_id,
+                    result["video_id"],
+                    video_id,
+                )
                 return False
 
             content_info = self._decode_content_info(result["download_json"])
@@ -375,17 +399,36 @@ class QueueRepository:
         finally:
             conn.close()
 
-    def update_extracted_metadata(self, item_id: int, artist: str, song_name: str) -> bool:
-        """Update extracted artist/song metadata for a queue item."""
+    def update_extracted_metadata(
+        self, item_id: int, artist: str, song_name: str, video_id: Optional[str] = None
+    ) -> bool:
+        """
+        Update extracted artist/song metadata for a queue item.
+
+        video_id, when given, is the video the artist/song were extracted
+        for: the update only applies while the item still holds that video,
+        so a replace that lands during extraction keeps its own metadata.
+        """
         conn = self.database.get_connection()
         try:
             cursor = conn.cursor()
+            self._begin_write(cursor)
 
             # Get current metadata to merge
-            cursor.execute("SELECT song_metadata_json FROM queue_items WHERE id = ?", (item_id,))
+            cursor.execute(
+                "SELECT song_metadata_json, video_id FROM queue_items WHERE id = ?", (item_id,)
+            )
             result = cursor.fetchone()
             if not result:
                 self.logger.warning("Queue item %s not found", item_id)
+                return False
+            if video_id is not None and result["video_id"] != video_id:
+                self.logger.info(
+                    "Ignoring extracted metadata for item %s: it now holds %s, not %s",
+                    item_id,
+                    result["video_id"],
+                    video_id,
+                )
                 return False
 
             metadata = _decode_metadata(result["song_metadata_json"])

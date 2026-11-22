@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from kbox.interstitials import QueueSummary
 from kbox.models import QueueItem, SongMetadata, SongSettings
 from kbox.pitch_log import PitchLog
 from kbox.playback import (
@@ -2368,6 +2369,83 @@ class TestStreamingConfigRebuildLocking:
         playback_controller.show_idle_screen()
 
         assert calls == [("display_image", True)]
+
+    def test_idle_screen_summarizes_whole_queue_before_first_play(
+        self, playback_controller, mock_queue_manager
+    ):
+        mock_queue_manager.get_queue.return_value = [
+            create_mock_queue_item(id=1, user_id="a", user_name="Alice", duration_seconds=200),
+            create_mock_queue_item(id=2, user_id="b", user_name="Bob", duration_seconds=100),
+        ]
+
+        playback_controller.show_idle_screen()
+
+        assert playback_controller._screens._idle_queue == QueueSummary(
+            song_count=2, total_seconds=300, singer_names=("Alice", "Bob")
+        )
+
+    def test_idle_screen_counts_stopped_song_and_skips_played_ones(
+        self, playback_controller, mock_queue_manager
+    ):
+        """Play resumes the stopped song, so it is still in line; earlier songs are done."""
+        mock_queue_manager.get_queue.return_value = [
+            create_mock_queue_item(id=1, user_id="a", user_name="Alice"),
+            create_mock_queue_item(id=2, user_id="b", user_name="Bob"),
+            create_mock_queue_item(id=3, user_id="c", user_name="Cat"),
+        ]
+        playback_controller.set_cursor(2)
+        playback_controller.current_song_id = 2
+
+        playback_controller.show_idle_screen()
+
+        assert playback_controller._screens._idle_queue.singer_names == ("Bob", "Cat")
+
+    def test_idle_screen_starts_after_cursor_with_no_remembered_song(
+        self, playback_controller, mock_queue_manager
+    ):
+        mock_queue_manager.get_queue.return_value = [
+            create_mock_queue_item(id=1, user_id="a", user_name="Alice"),
+            create_mock_queue_item(id=2, user_id="b", user_name="Bob"),
+        ]
+        playback_controller.set_cursor(1)
+
+        playback_controller.show_idle_screen()
+
+        assert playback_controller._screens._idle_queue.singer_names == ("Bob",)
+
+    def test_monitor_redraws_idle_screen_when_queue_changes(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        playback_controller.show_idle_screen()
+        assert mock_streaming_controller.display_image.call_count == 1
+
+        # Nothing changed: no redraw
+        playback_controller._on_monitor_tick()
+        assert mock_streaming_controller.display_image.call_count == 1
+
+        # A guest adds a song while the operator has not pressed Play yet
+        mock_queue_manager.get_queue.return_value = [
+            create_mock_queue_item(id=1, user_id="a", user_name="Alice")
+        ]
+        playback_controller._on_monitor_tick()
+        assert mock_streaming_controller.display_image.call_count == 2
+        assert playback_controller._screens._idle_queue.singer_names == ("Alice",)
+
+        playback_controller._on_monitor_tick()
+        assert mock_streaming_controller.display_image.call_count == 2
+
+    def test_monitor_does_not_draw_idle_over_another_screen(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """Only the idle screen is refreshed; a message screen stays up."""
+        playback_controller._screens.show_message("Loading new video for Alice...")
+        mock_queue_manager.get_queue.return_value = [
+            create_mock_queue_item(id=1, user_id="a", user_name="Alice")
+        ]
+
+        playback_controller._on_monitor_tick()
+
+        assert mock_streaming_controller.display_image.call_count == 1
 
     def test_update_qr_overlay_takes_lock(self, playback_controller, mock_streaming_controller):
         calls: list[tuple[str, bool]] = []

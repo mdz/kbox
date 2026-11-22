@@ -1261,3 +1261,142 @@ def test_position_reads_happen_inside_the_write_transaction(
 
     assert statements[0] == "BEGIN IMMEDIATE"
     assert any("SELECT" in sql and "position" in sql for sql in statements[1:])
+
+
+class TestReplacedWhileDownloading:
+    """
+    A download runs on the provider's worker for many seconds, and its item
+    can be replaced with a different video meanwhile. The old download's
+    result must not be applied to the replacement.
+    """
+
+    def _make_qm(self, temp_db, **kwargs):
+        captured = {}
+
+        def capture(video_id, callback=None):
+            captured[video_id] = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(temp_db, video_library=mock_video_library, **kwargs)
+        qm.stop_content_monitor()
+        return qm, captured, mock_video_library
+
+    def test_old_download_finishing_does_not_mark_replacement_ready(self, temp_db, user_manager):
+        silence = Mock()
+        loudness = Mock()
+        extractor = Mock()
+        qm, captured, _ = self._make_qm(
+            temp_db,
+            silence_analyzer=silence,
+            loudness_analyzer=loudness,
+            metadata_extractor=extractor,
+        )
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "Wrong Version")
+        qm._process_pending_content()
+
+        qm.replace_song(item_id, video_id="youtube:b", title="Right Version")
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+        item = qm.get_item(item_id)
+        assert item.video_id == "youtube:b"
+        assert item.content_status == QueueManager.STATUS_PENDING
+        assert item.content_path is None
+        # Nothing about A's file is cached under B (or at all).
+        silence.analyze.assert_not_called()
+        loudness.analyze.assert_not_called()
+        extractor.extract.assert_not_called()
+
+    def test_old_download_failing_does_not_mark_replacement_failed(self, temp_db, user_manager):
+        qm, captured, _ = self._make_qm(temp_db)
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "Wrong Version")
+        qm._process_pending_content()
+
+        qm.replace_song(item_id, video_id="youtube:b", title="Right Version")
+        captured["youtube:a"]("error", None, "Video unavailable")
+
+        item = qm.get_item(item_id)
+        assert item.content_status == QueueManager.STATUS_PENDING
+        assert item.error_message is None
+
+    def test_replacement_still_downloads_after_old_result_is_dropped(self, temp_db, user_manager):
+        qm, captured, _ = self._make_qm(temp_db)
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "Wrong Version")
+        qm._process_pending_content()
+
+        qm.replace_song(item_id, video_id="youtube:b", title="Right Version")
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+        qm._process_pending_content()
+        captured["youtube:b"]("ready", "/lib/youtube/b/video.mp4", None)
+
+        item = qm.get_item(item_id)
+        assert item.content_status == QueueManager.STATUS_READY
+        assert item.content_path == "/lib/youtube/b/video.mp4"
+
+    def test_replace_during_metadata_extraction_keeps_replacement_metadata(
+        self, temp_db, user_manager
+    ):
+        """The LLM call takes seconds; a replace can land while it runs."""
+        silence = Mock()
+        extractor = Mock()
+        qm, captured, _ = self._make_qm(
+            temp_db, silence_analyzer=silence, metadata_extractor=extractor
+        )
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "Wrong Version")
+        qm._process_pending_content()
+
+        def replace_mid_extraction(**kwargs):
+            qm.replace_song(item_id, video_id="youtube:b", title="Right Version")
+            return ("Artist A", "Song A")
+
+        extractor.extract.side_effect = replace_mid_extraction
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+        item = qm.get_item(item_id)
+        assert item.metadata.title == "Right Version"
+        assert item.metadata.artist is None
+        assert item.metadata.song_name is None
+        # The analysis that did run is keyed by the video the file holds.
+        silence.analyze.assert_called_once_with("youtube:a", "/lib/youtube/a/video.mp4")
+
+    def test_stale_poll_snapshot_does_not_request_old_video(self, temp_db, user_manager):
+        """An item replaced after the poll read the queue is not prepared as the old video."""
+        qm, captured, mock_video_library = self._make_qm(temp_db)
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "Wrong Version")
+        stale = qm.get_item(item_id)
+
+        qm.replace_song(item_id, video_id="youtube:b", title="Right Version")
+        qm._start_content_preparation(stale)
+
+        mock_video_library.request.assert_not_called()
+        assert qm.get_item(item_id).content_status == QueueManager.STATUS_PENDING
+
+    def test_stale_poll_snapshot_does_not_recover_old_file(self, temp_db, user_manager):
+        """The stuck check must not mark the replacement READY with the old video's file."""
+        silence = Mock()
+        qm, captured, mock_video_library = self._make_qm(temp_db, silence_analyzer=silence)
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "Wrong Version")
+        qm._process_pending_content()
+        stale = qm.get_item(item_id)
+
+        qm.replace_song(item_id, video_id="youtube:b", title="Right Version")
+        found = MagicMock(spec=Path)
+        found.exists.return_value = True
+        found.__str__ = lambda self: "/lib/youtube/a/video.mp4"
+        mock_video_library.get_path.return_value = found
+        qm._check_stuck_content(stale)
+
+        item = qm.get_item(item_id)
+        assert item.content_status == QueueManager.STATUS_PENDING
+        assert item.content_path is None
+        silence.analyze.assert_not_called()
