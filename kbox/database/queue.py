@@ -230,6 +230,7 @@ class QueueRepository:
         content_path: Optional[str] = None,
         error_message: Optional[str] = None,
         video_id: Optional[str] = None,
+        only_if_changed: bool = False,
     ) -> bool:
         """
         Update content status for a queue item.
@@ -239,6 +240,12 @@ class QueueRepository:
         download runs for many seconds, and the item can be replaced with a
         different video meanwhile; without the check, the old download
         finishing would mark the replacement READY with the old file.
+
+        only_if_changed makes this a compare-and-set: nothing is written,
+        and False is returned, if the item already has this status. Two
+        threads can both find a download finished (its completion callback
+        and the content monitor's stuck check); with this, exactly one of
+        them sees True, and only that one goes on to analyse the file.
         """
         conn = self.database.get_connection()
         try:
@@ -249,7 +256,8 @@ class QueueRepository:
             self._begin_write(cursor)
 
             cursor.execute(
-                "SELECT download_json, video_id FROM queue_items WHERE id = ?", (item_id,)
+                "SELECT download_json, download_status, video_id FROM queue_items WHERE id = ?",
+                (item_id,),
             )
             result = cursor.fetchone()
             if not result:
@@ -263,6 +271,8 @@ class QueueRepository:
                     result["video_id"],
                     video_id,
                 )
+                return False
+            if only_if_changed and result["download_status"] == status:
                 return False
 
             content_info = self._decode_content_info(result["download_json"])

@@ -1239,3 +1239,76 @@ class TestReplacedWhileDownloading:
         assert item.content_status == QueueManager.STATUS_PENDING
         assert item.content_path is None
         silence.analyze.assert_not_called()
+
+
+class TestDownloadFinishedTwice:
+    """
+    A finished download can be noticed by two threads: its own completion
+    callback on the library worker, and the content monitor's stuck check,
+    which acts on a queue snapshot taken at the start of its poll. Only the
+    one that marks the item READY analyses the file.
+    """
+
+    def _make_qm(self, temp_db, **kwargs):
+        captured = {}
+
+        def capture(video_id, callback=None):
+            captured[video_id] = callback
+            return None
+
+        mock_video_library = MagicMock()
+        mock_video_library.request.side_effect = capture
+        mock_video_library.get_path.return_value = None
+        mock_video_library.manage_storage.return_value = 0
+
+        qm = QueueManager(temp_db, video_library=mock_video_library, **kwargs)
+        qm.stop_content_monitor()
+        return qm, captured, mock_video_library
+
+    @staticmethod
+    def _file_found(mock_video_library, path):
+        found = MagicMock(spec=Path)
+        found.exists.return_value = True
+        found.__str__ = lambda self: path
+        mock_video_library.get_path.return_value = found
+
+    def test_callback_first_then_stale_monitor_snapshot(self, temp_db, user_manager):
+        silence = Mock()
+        extractor = Mock()
+        extractor.extract.return_value = ("Don McLean", "American Pie")
+        qm, captured, lib = self._make_qm(
+            temp_db, silence_analyzer=silence, metadata_extractor=extractor
+        )
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "American Pie")
+        qm._process_pending_content()
+        snapshot = qm.get_item(item_id)  # the monitor's read, still PREPARING
+
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+        self._file_found(lib, "/lib/youtube/a/video.mp4")
+        qm._check_stuck_content(snapshot)
+
+        assert qm.get_item(item_id).content_status == QueueManager.STATUS_READY
+        assert extractor.extract.call_count == 1
+        assert silence.analyze.call_count == 1
+
+    def test_monitor_first_then_callback(self, temp_db, user_manager):
+        silence = Mock()
+        extractor = Mock()
+        extractor.extract.return_value = ("Don McLean", "American Pie")
+        qm, captured, lib = self._make_qm(
+            temp_db, silence_analyzer=silence, metadata_extractor=extractor
+        )
+        alice = user_manager.get_or_create_user(ALICE_ID, "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "American Pie")
+        qm._process_pending_content()
+
+        self._file_found(lib, "/lib/youtube/a/video.mp4")
+        qm._process_pending_content()
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+        assert qm.get_item(item_id).content_status == QueueManager.STATUS_READY
+        assert extractor.extract.call_count == 1
+        assert silence.analyze.call_count == 1
+        # The callback still keeps the library within its size limit.
+        lib.manage_storage.assert_called()
