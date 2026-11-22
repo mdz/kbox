@@ -186,6 +186,37 @@ class TestStorageManagement:
         found = video_library._find_video_file(video_dir)
         assert found is None
 
+    def test_find_video_file_ignores_ytdlp_intermediates(self, video_library, temp_storage_dir):
+        """A finished video-only stream mid-download is not the finished video."""
+        video_dir = Path(temp_storage_dir) / "youtube" / "test123"
+        video_dir.mkdir(parents=True)
+        (video_dir / "video.f134.mp4").touch()  # video stream, complete
+        (video_dir / "video.f140.m4a.part").touch()  # audio stream, downloading
+        (video_dir / "video.temp.mkv").touch()  # merge in progress
+
+        assert video_library._find_video_file(video_dir) is None
+
+    def test_find_video_file_prefers_finished_file_over_leftovers(
+        self, video_library, temp_storage_dir
+    ):
+        """video.mkv wins even though an intermediate .mp4 sorts first by extension."""
+        video_dir = Path(temp_storage_dir) / "youtube" / "test123"
+        video_dir.mkdir(parents=True)
+        (video_dir / "video.f134.mp4").touch()
+        finished = video_dir / "video.mkv"
+        finished.touch()
+
+        assert video_library._find_video_file(video_dir) == finished
+
+    def test_find_video_file_legacy_source_id_name(self, video_library, temp_storage_dir):
+        """Older downloads named <source_id>.<ext> are still found."""
+        video_dir = Path(temp_storage_dir) / "youtube" / "test123"
+        video_dir.mkdir(parents=True)
+        legacy = video_dir / "test123.webm"
+        legacy.touch()
+
+        assert video_library._find_video_file(video_dir) == legacy
+
 
 # =============================================================================
 # Search Tests

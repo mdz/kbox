@@ -143,6 +143,7 @@ class QueueManager:
         )
 
         item_id = item.id
+        video_id = item.video_id
 
         # Mark PREPARING synchronously, before handing off to video_library,
         # so the next poll (as little as ~2s away) sees this item as already
@@ -152,16 +153,19 @@ class QueueManager:
         # lag behind a poll cycle while an earlier download is still running
         # — without this, each lagging poll queues another competing download
         # for the same video.
+        #
+        # Guarded by video_id: `item` is from the start of this poll, and if
+        # it has been replaced since, this video is no longer wanted.
+        if not self.update_content_status(item_id, self.STATUS_PREPARING, video_id=video_id):
+            return
         self._prep_started_at[item_id] = datetime.now()
-        self.update_content_status(item_id, self.STATUS_PREPARING)
 
+        # The callback carries the video it was requested for, so a result
+        # arriving after the item was replaced is recognised and dropped.
         def on_status(status: str, path: Optional[str], error: Optional[str]):
-            self._on_content_status(item_id, status, path, error)
+            self._on_content_status(item_id, video_id, status, path, error)
 
-        cached_path = self.video_library.request(item.video_id, callback=on_status)
-
-        if cached_path:
-            pass
+        self.video_library.request(video_id, callback=on_status)
 
     def _check_stuck_content(self, item: QueueItem):
         """Check if content preparation is stuck and recover if possible."""
@@ -172,9 +176,14 @@ class QueueManager:
                 item.metadata.title,
                 item.id,
             )
-            self.update_content_status(item.id, self.STATUS_READY, content_path=str(cached_path))
-            self._run_post_download_analysis(item.id, str(cached_path))
-            self._prep_started_at.pop(item.id, None)
+            if self.update_content_status(
+                item.id,
+                self.STATUS_READY,
+                content_path=str(cached_path),
+                video_id=item.video_id,
+            ):
+                self._run_post_download_analysis(item.id, item.video_id, str(cached_path))
+                self._prep_started_at.pop(item.id, None)
             return
 
         # Prefer the current prep attempt's start time over created_at: a
@@ -190,64 +199,89 @@ class QueueManager:
                     item.id,
                     self._content_timeout,
                 )
-                self.update_content_status(item.id, self.STATUS_PENDING)
+                self.update_content_status(item.id, self.STATUS_PENDING, video_id=item.video_id)
                 self._prep_started_at.pop(item.id, None)
 
     def _on_content_status(
-        self, item_id: int, status: str, path: Optional[str], error: Optional[str]
+        self,
+        item_id: int,
+        video_id: str,
+        status: str,
+        path: Optional[str],
+        error: Optional[str],
     ):
-        """Callback for content preparation status updates."""
+        """
+        Callback for content preparation status updates.
+
+        Runs on the download worker, possibly long after the request: every
+        update is guarded by the video_id it was requested for, and a result
+        for a video the item no longer holds (it was replaced mid-download)
+        is dropped rather than applied to the replacement.
+        """
         if status == "downloading":
-            self.update_content_status(item_id, self.STATUS_PREPARING)
+            self.update_content_status(item_id, self.STATUS_PREPARING, video_id=video_id)
         elif status == "ready" and path:
-            self.update_content_status(item_id, self.STATUS_READY, content_path=path)
+            if not self.update_content_status(
+                item_id, self.STATUS_READY, content_path=path, video_id=video_id
+            ):
+                return
             self.logger.info("Content ready for queue item %s: %s", item_id, path)
             self._prep_started_at.pop(item_id, None)
-            self._run_post_download_analysis(item_id, path)
+            self._run_post_download_analysis(item_id, video_id, path)
             self._cleanup_storage()
         elif status == "error" and error:
-            self.update_content_status(item_id, self.STATUS_ERROR, error_message=error)
+            if not self.update_content_status(
+                item_id, self.STATUS_ERROR, error_message=error, video_id=video_id
+            ):
+                return
             self._prep_started_at.pop(item_id, None)
             self.logger.error("Content preparation failed for queue item %s: %s", item_id, error)
 
-    def _run_post_download_analysis(self, item_id: int, path: str) -> None:
+    def _run_post_download_analysis(self, item_id: int, video_id: str, path: str) -> None:
         """Run per-video analysis steps once a queue item's content is ready.
 
         Runs synchronously on the caller's thread. Each step is independent
         and failures are logged, never allowed to break queue operations.
+
+        Every result is keyed by video_id, the video that `path` holds, never
+        by whatever the item holds now. The analyzers cache per video and
+        never re-run, so analysing one video's file under another's ID would
+        give that other video the wrong trim point and gain for good.
         """
         item = self.get_item(item_id)
-        if item is None:
+        if item is None or item.video_id != video_id:
             return
 
         if self.metadata_extractor:
             try:
                 artist, song_name = self.metadata_extractor.extract(
-                    video_id=item.video_id,
+                    video_id=video_id,
                     title=item.metadata.title,
                     description=None,
                     channel=item.metadata.channel,
                 )
                 if artist and song_name:
-                    self.update_extracted_metadata(item_id, artist, song_name)
-                    self.logger.info(
-                        "Extracted metadata for item %s: '%s' by '%s'",
-                        item_id,
-                        song_name,
-                        artist,
-                    )
+                    if self.update_extracted_metadata(
+                        item_id, artist, song_name, video_id=video_id
+                    ):
+                        self.logger.info(
+                            "Extracted metadata for item %s: '%s' by '%s'",
+                            item_id,
+                            song_name,
+                            artist,
+                        )
             except Exception as e:
                 self.logger.warning("Metadata extraction failed for item %s: %s", item_id, e)
 
         if self.silence_analyzer:
             try:
-                self.silence_analyzer.analyze(item.video_id, path)
+                self.silence_analyzer.analyze(video_id, path)
             except Exception as e:
                 self.logger.warning("Silence analysis failed for item %s: %s", item_id, e)
 
         if self.loudness_analyzer:
             try:
-                self.loudness_analyzer.analyze(item.video_id, path)
+                self.loudness_analyzer.analyze(video_id, path)
             except Exception as e:
                 self.logger.warning("Loudness analysis failed for item %s: %s", item_id, e)
 
@@ -606,9 +640,17 @@ class QueueManager:
         status: str,
         content_path: Optional[str] = None,
         error_message: Optional[str] = None,
+        video_id: Optional[str] = None,
     ) -> bool:
-        """Update content status for a queue item."""
-        return self.repository.update_status(item_id, status, content_path, error_message)
+        """
+        Update content status for a queue item.
+
+        With video_id, applies only while the item still holds that video
+        (see QueueRepository.update_status).
+        """
+        return self.repository.update_status(
+            item_id, status, content_path, error_message, video_id=video_id
+        )
 
     def get_item(self, item_id: int) -> Optional[QueueItem]:
         """Get a specific queue item by ID."""
@@ -618,6 +660,10 @@ class QueueManager:
         """Update pitch adjustment for a queue item."""
         return self.repository.update_pitch(item_id, pitch_semitones)
 
-    def update_extracted_metadata(self, item_id: int, artist: str, song_name: str) -> bool:
+    def update_extracted_metadata(
+        self, item_id: int, artist: str, song_name: str, video_id: Optional[str] = None
+    ) -> bool:
         """Update extracted artist/song metadata for a queue item."""
-        return self.repository.update_extracted_metadata(item_id, artist, song_name)
+        return self.repository.update_extracted_metadata(
+            item_id, artist, song_name, video_id=video_id
+        )
