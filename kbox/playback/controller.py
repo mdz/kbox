@@ -59,6 +59,17 @@ class PlaybackStatus:
     position_seconds: Optional[int]
 
 
+@dataclass(frozen=True)
+class _StateSnapshot:
+    """
+    (state, current_song_id) as of the last time the playback lock was
+    released. See PlaybackController._publish_snapshot().
+    """
+
+    state: PlaybackState
+    current_song_id: Optional[int]
+
+
 class SeekOutcome(Enum):
     """How a seek (or a restart, which is a seek to zero) ended."""
 
@@ -124,8 +135,12 @@ class PlaybackController:
         self.loudness_analyzer = loudness_analyzer
         self.pitch_log = pitch_log
         self.logger = logging.getLogger(__name__)
-        self.state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
-        self.current_song_id: Optional[int] = None
+        # Backing fields for the state and current_song_id properties.
+        self._state = PlaybackState.STOPPED  # Start in STOPPED so operator must press Play
+        self._current_song_id: Optional[int] = None
+        # What get_status()/get_upcoming() read instead of taking the lock.
+        # Replaced (never mutated) by _publish_snapshot().
+        self._snapshot = _StateSnapshot(self._state, self._current_song_id)
 
         # The one lock in the playback layer: the collaborators below
         # (cursor, overlay, screens) have none of their own and rely on it.
@@ -211,6 +226,10 @@ class PlaybackController:
             try:
                 yield
             finally:
+                # Publish only once the whole critical section is done, so
+                # lock-free readers never see a half-made transition (e.g.
+                # _play_song() sets current_song_id well before PLAYING).
+                self._publish_snapshot()
                 self._lock_owner = None
 
     def _require_locked(self) -> None:
@@ -231,6 +250,58 @@ class PlaybackController:
             )
 
     # =========================================================================
+    # State snapshot
+    # =========================================================================
+    #
+    # Guest phones poll /api/queue and /api/playback/status every second, and
+    # both need (state, current_song_id). If they took self.lock for it, a
+    # poll arriving while _play_song() holds the lock across load_file() (up
+    # to several seconds) would park a server threadpool thread until the
+    # load finished; a dozen phones fill the pool and stall every other
+    # request, the operator's Skip included.
+    #
+    # So readers that only need a consistent view read self._snapshot, an
+    # immutable _StateSnapshot, with no lock: one attribute read is atomic
+    # under the GIL. Writers still mutate state and current_song_id only
+    # under self.lock, and _locked() publishes the new snapshot on release.
+    # A reader therefore sees exactly what it would have seen by waiting for
+    # the lock, as of the last release, minus the wait.
+
+    @property
+    def state(self) -> PlaybackState:
+        return self._state
+
+    @state.setter
+    def state(self, value: PlaybackState) -> None:
+        self._state = value
+        self._publish_snapshot_if_unlocked()
+
+    @property
+    def current_song_id(self) -> Optional[int]:
+        return self._current_song_id
+
+    @current_song_id.setter
+    def current_song_id(self, value: Optional[int]) -> None:
+        self._current_song_id = value
+        self._publish_snapshot_if_unlocked()
+
+    def _publish_snapshot(self) -> None:
+        """Replace the snapshot. Called by _locked() as it releases."""
+        self._snapshot = _StateSnapshot(self._state, self._current_song_id)
+
+    def _publish_snapshot_if_unlocked(self) -> None:
+        """
+        Publish now if this assignment isn't inside a _locked() block.
+
+        Under the lock (every assignment kbox itself makes) publishing waits
+        for _locked() to release, so the transition appears all at once. An
+        assignment outside it -- a test setting up a scenario -- has no
+        release to wait for, so it is published immediately.
+        """
+        if self._lock_owner != threading.get_ident():
+            self._publish_snapshot()
+
+    # =========================================================================
     # Queue Cursor
     # =========================================================================
 
@@ -243,10 +314,14 @@ class PlaybackController:
         return self._cursor.get()
 
     def get_upcoming(self) -> List[UpcomingItem]:
-        """Songs after the cursor, with estimated start times (see upcoming_songs)."""
-        with self._locked():
-            state = self.state
-            current_song_id = self.current_song_id
+        """
+        Songs after the cursor, with estimated start times (see upcoming_songs).
+
+        Lock-free, like get_status(): see "State snapshot" above.
+        """
+        snapshot = self._snapshot
+        state = snapshot.state
+        current_song_id = snapshot.current_song_id
 
         position = None
         if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):
@@ -361,16 +436,13 @@ class PlaybackController:
 
         Respects queue order: if the next song isn't ready yet, we wait
         rather than skipping ahead to a later song that happened to
-        download faster.
+        download faster. A song whose download failed for good is the one
+        exception (see _step_past_failed()).
 
         Assumes lock is already held.
         """
         self._require_locked()
-        cursor = self.get_cursor()
-        if cursor is not None:
-            next_song = self.queue_manager.get_song_at_offset(cursor, +1)
-        else:
-            next_song = self.queue_manager.get_song_at_offset(None, 0)
+        next_song = self._step_past_failed(self._song_after_cursor())
         if next_song and next_song.content_status == QueueManager.STATUS_READY:
             self.logger.info("Idle with ready songs, auto-starting playback")
             self._play_locked()
@@ -479,8 +551,9 @@ class PlaybackController:
         if time_remaining > 15:
             return
 
-        # Get next song by queue position (show who's up next regardless of download status)
-        next_song = self.queue_manager.get_song_at_offset(song_id, +1)
+        # Get next song by queue position (show who's up next even if their
+        # song is still downloading, but never someone whose song can't play)
+        next_song = self._step_past_failed(self.queue_manager.get_song_at_offset(song_id, +1))
         if next_song:
             overlay_text = f"Up next: {next_song.user_name}"
             self._overlay.set_base(overlay_text)
@@ -577,16 +650,13 @@ class PlaybackController:
         falls back to the first song in the queue.
 
         Respects queue order: if the next song isn't ready yet, we go idle
-        rather than skipping ahead to a later song.
+        rather than skipping ahead to a later song. A song whose download
+        failed for good is stepped past (see _take_turn_from_failed()).
 
         Assumes lock is already held.
         """
         self._require_locked()
-        cursor = self.get_cursor()
-        if cursor is not None:
-            next_song = self.queue_manager.get_song_at_offset(cursor, +1)
-        else:
-            next_song = self.queue_manager.get_song_at_offset(None, 0)
+        next_song = self._take_turn_from_failed(self._song_after_cursor())
 
         if not next_song:
             self._set_state(PlaybackState.IDLE, "no more songs")
@@ -597,6 +667,61 @@ class PlaybackController:
             return False
 
         return self._play_song(next_song)
+
+    def _song_after_cursor(self) -> Optional[QueueItem]:
+        """The song after the cursor, or the first song with no cursor."""
+        cursor = self.get_cursor()
+        if cursor is not None:
+            return self.queue_manager.get_song_at_offset(cursor, +1)
+        return self.queue_manager.get_song_at_offset(None, 0)
+
+    def _step_past_failed(self, candidate: Optional[QueueItem]) -> Optional[QueueItem]:
+        """
+        The song that will actually go next in candidate's place.
+
+        That is candidate itself unless its download has failed for good
+        (STATUS_ERROR, after every retry), in which case it is the first song
+        after it that hasn't: waiting for a song that will never be ready
+        would stall the party. A song that is still downloading is not
+        stepped past -- the queue waits for it, as it always has.
+
+        Moves nothing; see _take_turn_from_failed() for that.
+
+        Returns:
+            The song to start, or None if only failed songs are left
+        """
+        seen = set()
+        song = candidate
+        while song is not None and song.content_status == QueueManager.STATUS_ERROR:
+            if song.id in seen:  # Defensive: never loop on a stale reference
+                return None
+            seen.add(song.id)
+            song = self.queue_manager.get_song_at_offset(song.id, +1)
+        return song
+
+    def _take_turn_from_failed(self, candidate: Optional[QueueItem]) -> Optional[QueueItem]:
+        """
+        _step_past_failed(), and move the song that goes instead to the
+        failed song's place in the queue.
+
+        The failed song (and any failed songs right behind it) then stay
+        next in line rather than falling behind the cursor: its singer keeps
+        their turn, and if they fix the song -- replace it or retry it --
+        they sing right after this one. Still broken by then, it steps aside
+        again.
+
+        For the paths that are about to start (or announce) the song this
+        returns; anything that only displays the next song uses
+        _step_past_failed() instead.
+        """
+        self._require_locked()
+        chosen = self._step_past_failed(candidate)
+        if candidate is not None and chosen is not None and chosen.id != candidate.id:
+            self.logger.info(
+                "Song %s failed to download; song %s goes ahead of it", candidate.id, chosen.id
+            )
+            self.queue_manager.move_before(chosen.id, candidate.id)
+        return chosen
 
     def _play_song(self, song: QueueItem) -> bool:
         """
@@ -660,7 +785,7 @@ class PlaybackController:
             # Mark song ID as currently playing
             # NOTE: This is one of only 2 places current_song_id is mutated:
             #   1. _play_song() - sets it when starting playback
-            #   2. on_song_end() - clears it when song finishes naturally
+            #   2. _complete_current_song() - clears it when song finishes
             # _stop_internal() does NOT clear it - the song is remembered for resume
             self.current_song_id = song.id
             self._start_pitch = pitch
@@ -836,6 +961,8 @@ class PlaybackController:
             # points at the song that actually finished/was skipped).
             reference_song_id = self._next_song_pending.id
             target_song = self.queue_manager.get_song_at_offset(reference_song_id, offset)
+            if offset > 0:
+                target_song = self._take_turn_from_failed(target_song)
             if not target_song:
                 self.logger.info("No song available to navigate to")
                 return False
@@ -852,7 +979,11 @@ class PlaybackController:
             self._next_song_pending = None
 
             # Re-show the interstitial for the newly-chosen song.
-            self._show_transition_or_end(finished_song_id=self._cursor.get(), next_song=target_song)
+            self._show_transition_or_end(
+                finished_song_id=self._cursor.get(),
+                next_song=target_song,
+                step_past_failed=False,
+            )
             return True
 
         if not self.current_song_id:
@@ -872,6 +1003,8 @@ class PlaybackController:
                 return False
 
         target_song = self.queue_manager.get_song_at_offset(self.current_song_id, offset)
+        if offset > 0:
+            target_song = self._take_turn_from_failed(target_song)
         if not target_song:
             self.logger.info("No song available to navigate to")
             return False
@@ -892,7 +1025,11 @@ class PlaybackController:
             # Active performance - show the interstitial, same flow as a
             # natural end-of-song, before starting the target song.
             previous_song_id = self.current_song_id
-            self._show_transition_or_end(finished_song_id=previous_song_id, next_song=target_song)
+            self._show_transition_or_end(
+                finished_song_id=previous_song_id,
+                next_song=target_song,
+                step_past_failed=False,
+            )
         else:
             # Nothing actually playing (e.g. stopped mid replace-download) -
             # switch immediately, no interstitial delay needed.
@@ -1208,9 +1345,48 @@ class PlaybackController:
         self.current_song_id = None
         self._show_idle_screen_locked()
 
-    def on_song_end(self):
-        """Called when current song ends (EOS)."""
+    def on_song_end(self, load_generation: Optional[int] = None):
+        """
+        Called when the current song ends (EOS).
+
+        The GStreamer EOS arrives on the bus thread, which may have popped it
+        while another thread held self.lock to skip, end a turn, jump or
+        trim trailing silence. By the time this gets the lock, the song that
+        ended may no longer be current, and completing "the current song"
+        would act on the wrong one: the end-of-queue screen drawn over an
+        "up next" interstitial, or a song finished the moment it started.
+        So an EOS is acted on only if it still applies:
+
+        - The state must be PLAYING. Every navigation path leaves it
+          (TRANSITION, STOPPED, IDLE), and none of them wants an EOS.
+          PAUSED is ignored too: a song that reached its end just as it was
+          paused gets its EOS again from GStreamer on resume.
+        - The EOS must be from the load that is playing now. A jump_to_song
+          or any other immediate _play_song() goes straight back to PLAYING,
+          so the state alone cannot tell the old song's EOS from the new
+          song's. load_file/stop_playback are only called under self.lock,
+          so load_generation cannot change while it is compared here.
+
+        Args:
+            load_generation: the StreamingController load generation the EOS
+                was posted under, as passed to its eos_callback. None from a
+                caller that cannot say (the browser display's song-ended
+                request), in which case only the state is checked.
+        """
         with self._locked():
+            if self.state != PlaybackState.PLAYING:
+                self.logger.info("Ignoring end of stream in state %s", self.state.value)
+                return
+            if (
+                load_generation is not None
+                and load_generation != self.streaming_controller.load_generation
+            ):
+                self.logger.info(
+                    "Ignoring stale end of stream from load %s (now on load %s)",
+                    load_generation,
+                    self.streaming_controller.load_generation,
+                )
+                return
             self._complete_current_song()
 
     def _complete_current_song(
@@ -1282,6 +1458,7 @@ class PlaybackController:
         self,
         finished_song_id: Optional[int] = None,
         next_song: Optional[QueueItem] = None,
+        step_past_failed: bool = True,
     ):
         """
         Show transition screen for next song, or end-of-queue screen.
@@ -1302,6 +1479,10 @@ class PlaybackController:
                 performed while the interstitial is already showing (see
                 _navigate()), where the target isn't simply
                 finished_song_id + 1.
+            step_past_failed: whether a next song whose download failed for
+                good gives way to the song after it (see
+                _take_turn_from_failed()). False for a caller that has
+                already done that itself.
 
         Note: Called with lock held.
         """
@@ -1320,6 +1501,9 @@ class PlaybackController:
                 return
 
             next_song = self.queue_manager.get_song_at_offset(finished_song_id, +1)
+
+        if step_past_failed:
+            next_song = self._take_turn_from_failed(next_song)
 
         if not next_song:
             # No more songs - show end-of-queue screen
@@ -1438,26 +1622,25 @@ class PlaybackController:
         """
         Get current playback status.
 
-        Only briefly holds self.lock to snapshot (state, current_song_id) for
-        a consistent view; the position query (GStreamer) and queue lookup
-        (SQLite) below are blocking I/O and run outside the lock so status
-        polls don't contend with in-progress song transitions (e.g.
-        _play_song() holding the lock across load_file()).
+        Never takes self.lock: (state, current_song_id) come from the
+        published snapshot (see "State snapshot" above), and the position
+        query (GStreamer) and queue lookup (SQLite) need no lock. So a status
+        poll returns at once even while _play_song() holds the lock across
+        load_file(), reporting the state from before the load began.
 
-        Because the snapshot is taken before the I/O, the song can end or a
-        new one can start while this method is running. That's acceptable
-        for a status read (a UI poll, not a control decision), but it means
-        current_song_id may no longer match the live queue by the time
-        get_item() runs -- handled below the same way a missing item is
-        always handled.
+        The song can end or a new one can start while this method is
+        running. That's acceptable for a status read (a UI poll, not a
+        control decision), but it means current_song_id may no longer match
+        the live queue by the time get_item() runs -- handled below the same
+        way a missing item is always handled.
 
         Returns:
             PlaybackStatus with the state, the current QueueItem (or None)
             and the position in seconds
         """
-        with self._locked():
-            state = self.state
-            current_song_id = self.current_song_id
+        snapshot = self._snapshot
+        state = snapshot.state
+        current_song_id = snapshot.current_song_id
 
         position = None
         if state in (PlaybackState.PLAYING, PlaybackState.PAUSED):

@@ -698,6 +698,112 @@ def test_on_song_end(playback_controller, mock_queue_manager, mock_streaming_con
     assert playback_controller._next_song_pending == mock_next_song
 
 
+class TestStaleEndOfStream:
+    """
+    on_song_end() acts only on an EOS that still applies.
+
+    The bus thread can pop an EOS and then wait on the playback lock while
+    another thread skips, ends a turn or jumps. These tests call on_song_end
+    in the order the lock would have let it run, after the other operation.
+    The full flows against the real queue are in test_integration.py.
+    """
+
+    def _playing(self, pc, mock_queue_manager, mock_streaming_controller):
+        pc.current_song_id = 1
+        pc.state = PlaybackState.PLAYING
+        mock_queue_manager.get_item.return_value = create_mock_queue_item(id=1)
+        mock_queue_manager.get_song_at_offset.return_value = create_mock_queue_item(
+            id=2, content_path="/path/to/next.mp4"
+        )
+        mock_streaming_controller.load_generation = 7
+
+    def _assert_not_completed(self, pc, mock_streaming_controller):
+        assert pc.current_song_id == 1
+        mock_streaming_controller.set_pitch_shift.assert_not_called()
+        mock_streaming_controller.display_image.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            PlaybackState.PAUSED,
+            PlaybackState.TRANSITION,
+            PlaybackState.IDLE,
+            PlaybackState.STOPPED,
+            PlaybackState.ERROR,
+        ],
+    )
+    def test_ignored_unless_playing(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller, state
+    ):
+        """
+        Every navigation path leaves PLAYING. PAUSED is ignored too: GStreamer
+        posts the EOS again when a song paused at its very end is resumed.
+        """
+        self._playing(playback_controller, mock_queue_manager, mock_streaming_controller)
+        playback_controller.state = state
+
+        playback_controller.on_song_end(7)
+
+        assert playback_controller.state == state
+        self._assert_not_completed(playback_controller, mock_streaming_controller)
+
+    def test_ignored_from_an_earlier_load(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """A jump goes straight back to PLAYING; only the load tells the EOSes apart."""
+        self._playing(playback_controller, mock_queue_manager, mock_streaming_controller)
+
+        playback_controller.on_song_end(6)
+
+        assert playback_controller.state == PlaybackState.PLAYING
+        self._assert_not_completed(playback_controller, mock_streaming_controller)
+
+    def test_completes_the_song_from_the_current_load(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        self._playing(playback_controller, mock_queue_manager, mock_streaming_controller)
+
+        playback_controller.on_song_end(7)
+
+        assert playback_controller.current_song_id is None
+        assert playback_controller.state == PlaybackState.TRANSITION
+        assert playback_controller._next_song_pending.id == 2
+
+    def test_without_a_load_only_the_state_is_checked(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """The browser display's song-ended request cannot say which load it was."""
+        self._playing(playback_controller, mock_queue_manager, mock_streaming_controller)
+
+        playback_controller.on_song_end()
+
+        assert playback_controller.state == PlaybackState.TRANSITION
+
+    def test_eos_popped_during_a_skip_runs_after_it_and_is_ignored(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """
+        The race itself, on real threads: the bus thread delivers song 1's EOS
+        while a skip holds the lock. Starting it with the lock already held
+        means it can only run after the skip, however the threads schedule.
+        """
+        self._playing(playback_controller, mock_queue_manager, mock_streaming_controller)
+
+        with playback_controller._locked():
+            bus_thread = threading.Thread(target=playback_controller.on_song_end, args=(7,))
+            bus_thread.start()
+            assert playback_controller._skip_internal() is True
+            screens_drawn = mock_streaming_controller.display_image.call_count
+        bus_thread.join(timeout=5)
+        assert not bus_thread.is_alive()
+
+        # Still announcing song 2, and nothing drew the end-of-queue screen
+        # over it.
+        assert playback_controller.state == PlaybackState.TRANSITION
+        assert playback_controller._next_song_pending.id == 2
+        assert mock_streaming_controller.display_image.call_count == screens_drawn
+
+
 def test_on_song_end_no_next(playback_controller, mock_queue_manager, mock_streaming_controller):
     """Test end of song when no next song."""
     current_song = create_mock_queue_item(
@@ -825,6 +931,151 @@ def test_get_status_does_not_hold_lock_during_io(
     assert status.current_song.id == 1
     mock_streaming_controller.get_position.assert_called_once()
     mock_queue_manager.get_item.assert_called_once_with(1)
+
+
+class TestLockFreeStatusReads:
+    """get_status() and get_upcoming() never wait for self.lock.
+
+    Guest phones poll both every second. If they waited for the lock while a
+    song loads (_play_song() holds it across load_file()), the polls would
+    pile up in the server's threadpool and stall every other request.
+
+    Readers run on their own thread and are joined with a timeout, so a
+    regression fails the test instead of hanging it. No sleeping.
+    """
+
+    def _read_on_thread(self, read):
+        """Run read() on another thread; return its result, or fail if it blocks."""
+        results = []
+        reader = threading.Thread(target=lambda: results.append(read()), daemon=True)
+        reader.start()
+        reader.join(timeout=10)
+        assert not reader.is_alive(), f"{read.__name__}() blocked on the playback lock"
+        return results[0]
+
+    def _hold_lock(self, playback_controller, while_held=lambda: None):
+        """Start a thread that takes the lock, runs while_held(), and keeps it
+        until the returned release event is set."""
+        acquired = threading.Event()
+        release = threading.Event()
+
+        def holder():
+            with playback_controller._locked():
+                while_held()
+                acquired.set()
+                release.wait(timeout=10)
+
+        thread = threading.Thread(target=holder, name="LockHolder", daemon=True)
+        thread.start()
+        assert acquired.wait(timeout=10), "holder thread never acquired the lock"
+        return thread, release
+
+    def test_reads_return_while_another_thread_holds_the_lock(
+        self, playback_controller, mock_queue_manager
+    ):
+        song = create_mock_queue_item(id=1)
+        mock_queue_manager.get_item.return_value = song
+        mock_queue_manager.get_queue.return_value = [song]
+        playback_controller.set_cursor(1)
+        playback_controller.current_song_id = 1
+        playback_controller.state = PlaybackState.PLAYING
+
+        holder, release = self._hold_lock(playback_controller)
+        try:
+            status = self._read_on_thread(playback_controller.get_status)
+            upcoming = self._read_on_thread(playback_controller.get_upcoming)
+            # Still held: the reads really did run while it was.
+            assert playback_controller.lock.locked()
+        finally:
+            release.set()
+            holder.join(timeout=10)
+
+        assert status.state == PlaybackState.PLAYING
+        assert status.current_song is song
+        assert upcoming == []
+
+    def test_a_transition_in_progress_is_not_seen_half_made(
+        self, playback_controller, mock_queue_manager
+    ):
+        """Changes made under the lock appear together, when it is released."""
+        mock_queue_manager.get_item.side_effect = lambda item_id: create_mock_queue_item(id=item_id)
+        playback_controller.current_song_id = 1
+        playback_controller.state = PlaybackState.PLAYING
+
+        def start_switching_songs():
+            # The first half of a switch, as _play_song() does it: the new
+            # ID is set well before the state moves on.
+            playback_controller.current_song_id = 2
+            playback_controller.state = PlaybackState.TRANSITION
+
+        holder, release = self._hold_lock(playback_controller, start_switching_songs)
+        try:
+            during = self._read_on_thread(playback_controller.get_status)
+        finally:
+            release.set()
+            holder.join(timeout=10)
+        after = playback_controller.get_status()
+
+        assert (during.state, during.current_song.id) == (PlaybackState.PLAYING, 1)
+        assert (after.state, after.current_song.id) == (PlaybackState.TRANSITION, 2)
+
+    def test_status_during_a_slow_load_shows_the_state_before_it(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """The real case: play() holds the lock while load_file() waits on GStreamer."""
+        song = create_mock_queue_item(id=1, content_status=QueueManager.STATUS_READY)
+        mock_queue_manager.get_song_at_offset.return_value = song
+        mock_queue_manager.get_item.return_value = song
+        loading = threading.Event()
+        finish_loading = threading.Event()
+
+        def slow_load_file(path):
+            loading.set()
+            finish_loading.wait(timeout=10)
+
+        mock_streaming_controller.load_file.side_effect = slow_load_file
+
+        player = threading.Thread(target=playback_controller.play, daemon=True)
+        player.start()
+        try:
+            assert loading.wait(timeout=10), "play() never reached load_file()"
+            during = self._read_on_thread(playback_controller.get_status)
+        finally:
+            finish_loading.set()
+            player.join(timeout=10)
+        after = playback_controller.get_status()
+
+        assert (during.state, during.current_song) == (PlaybackState.STOPPED, None)
+        assert (after.state, after.current_song) == (PlaybackState.PLAYING, song)
+
+    def test_snapshot_tracks_every_transition(
+        self, playback_controller, mock_queue_manager, mock_streaming_controller
+    ):
+        """After each operation, the lock-free view matches the live fields."""
+        song = create_mock_queue_item(id=1)
+        mock_queue_manager.get_item.side_effect = {1: song}.get
+        # Song 1 is the whole queue: play() starts it, and its end ends the queue.
+        mock_queue_manager.get_song_at_offset.side_effect = lambda item_id, offset: (
+            song if item_id is None else None
+        )
+
+        steps = [
+            (playback_controller.play, PlaybackState.PLAYING),
+            (playback_controller.pause, PlaybackState.PAUSED),
+            (playback_controller.play, PlaybackState.PLAYING),
+            (playback_controller.stop_playback, PlaybackState.STOPPED),
+            (playback_controller.play, PlaybackState.PLAYING),
+            (playback_controller.on_song_end, PlaybackState.IDLE),
+        ]
+        for step, expected_state in steps:
+            step()
+            assert playback_controller.state == expected_state, step.__name__
+            status = playback_controller.get_status()
+            current = status.current_song.id if status.current_song else None
+            assert (status.state, current) == (
+                playback_controller.state,
+                playback_controller.current_song_id,
+            ), step.__name__
 
 
 def test_jump_to_song_while_playing(

@@ -20,7 +20,7 @@ import {
     toggleCustomInput, updateSliderDisplay, selectPosition
 } from './config.js';
 import {
-    loadQueue, showEditQueueItemModal, cancelEditQueueItem,
+    loadQueue, pollQueue, showEditQueueItemModal, cancelEditQueueItem,
     jumpToQueueItem, playNextQueueItem, moveToEndQueueItem, removeQueueItem,
     moveUpQueueItem, moveDownQueueItem, clearQueue, replaceQueueItem
 } from './queue.js';
@@ -121,6 +121,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     loadQueue();
     loadFavorites();
 
-    // Auto-refresh queue every 1 second
-    setInterval(loadQueue, 1000);
+    // Auto-refresh queue every 1 second (pollQueue skips a tick while the
+    // previous refresh is still in flight)
+    setInterval(pollQueue, 1000);
 });

@@ -19,6 +19,41 @@ if TYPE_CHECKING:
     from .config_manager import ConfigManager
 
 
+# Most of yt-dlp's YouTube errors pass through YouTube's own wording
+# (playabilityStatus.reason), which changes without a yt-dlp release, so
+# match short lowercase fragments rather than whole sentences. The message
+# also carries the video ID, so a bare "403" would match IDs too.
+# First match wins; order the specific cases before the general ones.
+_DOWNLOAD_ERRORS: List[tuple[tuple[str, ...], str]] = [
+    (
+        ("http error 403", "forbidden"),
+        "YouTube blocked the download (403 Forbidden). Try updating yt-dlp.",
+    ),
+    (("not a bot",), "YouTube asked for a bot check. Try again in a few minutes."),
+    (
+        ("try again later",),
+        "YouTube is limiting downloads right now. Try again in a few minutes.",
+    ),
+    (("confirm your age", "age-restricted"), "Video is age-restricted"),
+    (("in your country",), "Video is not available in this country"),
+    (("private video",), "Video is private"),
+    (
+        ("requested format is not available", "only images are available"),
+        "YouTube didn't offer a playable version this time. Try again.",
+    ),
+    (("unavailable", "has been removed"), "Video is unavailable or has been removed"),
+]
+
+
+def _friendly_download_error(message: str) -> str:
+    """Turn a yt-dlp download error into a short message for the queue."""
+    lowered = message.lower()
+    for needles, friendly in _DOWNLOAD_ERRORS:
+        if any(needle in lowered for needle in needles):
+            return friendly
+    return message
+
+
 class _YtdlpLogAdapter:
     """Routes yt-dlp's internal messages through a stdlib logger instead of stdout."""
 
@@ -224,13 +259,5 @@ class YtDlpClient(VideoProvider):
             return downloaded_path
 
         except Exception as e:
-            error_msg = str(e)
-            if "403" in error_msg or "Forbidden" in error_msg:
-                error_msg = "YouTube blocked the download (403 Forbidden). Try updating yt-dlp."
-            elif "Private video" in error_msg:
-                error_msg = "Video is private or unavailable"
-            elif "Video unavailable" in error_msg:
-                error_msg = "Video is unavailable or has been removed"
-
-            self.logger.error("Error downloading video %s: %s", video_id, error_msg)
-            raise RuntimeError(error_msg) from e
+            self.logger.error("Error downloading video %s: %s", video_id, e)
+            raise RuntimeError(_friendly_download_error(str(e))) from e
