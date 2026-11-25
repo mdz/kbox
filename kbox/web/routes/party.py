@@ -1,10 +1,9 @@
 """
 Party status: what each open page polls to stay current.
 
-``GET /api/party/status`` returns the queue, who is up next, this viewer's
-own next turn and the alerts addressed to them. It sits beside
-``GET /api/playback/status`` (transport state and position), which phones
-poll alongside it.
+``GET /api/party/status`` returns what playback is doing, the queue, who is
+up next, this viewer's own next turn and the alerts addressed to them, all
+in one response so that a phone draws everything from one moment.
 
 Handlers get their collaborators through the providers in
 :mod:`kbox.web.dependencies`, which read ``request.app.state`` at request
@@ -23,7 +22,7 @@ from ..dependencies import (
     get_playback_controller,
     get_queue_manager,
 )
-from ..serializers import serialize_queue_item
+from ..serializers import serialize_playback_status, serialize_queue_item
 
 router = APIRouter()
 
@@ -36,14 +35,17 @@ def get_party_status(
     is_operator: bool = Depends(check_operator),
 ):
     """
-    The party as this viewer sees it: the queue with current/played flags,
-    who is up next, how long until this viewer's own next turn, how deep
-    the queue is, and the alerts addressed to this viewer (see
-    kbox/alerts.py).
+    The party as this viewer sees it: what playback is doing (``playback``,
+    the same shape as ``GET /api/playback/status``), the queue with
+    current/played flags, who is up next, how long until this viewer's own
+    next turn, how deep the queue is, and the alerts addressed to this
+    viewer (see kbox/alerts.py).
 
     Every open page (guest and operator phones, the display) polls this,
-    which is how alerts reach phones today. Transport state and position
-    come from ``GET /api/playback/status`` instead.
+    which is how alerts reach phones today. Playback and the queue come
+    back together, built moments apart in one handler, rather than from two
+    requests that each ran on their own schedule and could straddle a song
+    change.
     """
     queue_items = queue_mgr.get_queue()
 
@@ -98,6 +100,7 @@ def get_party_status(
     )
 
     return {
+        "playback": serialize_playback_status(status),
         "queue": queue,
         "current_song_id": current_song_id,
         "next_song": next_song,

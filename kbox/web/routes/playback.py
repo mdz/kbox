@@ -21,7 +21,7 @@ from ..dependencies import (
     get_queue_manager,
 )
 from ..models import EndTurnRequest, PitchRequest, SeekRequest
-from ..serializers import serialize_queue_item
+from ..serializers import serialize_playback_status
 
 router = APIRouter()
 
@@ -30,15 +30,14 @@ router = APIRouter()
 def get_playback_status(
     playback: PlaybackController = Depends(get_playback_controller),
 ):
-    """Get current playback status."""
-    status = playback.get_status()
-    return {
-        "state": status.state.value,
-        "current_song": (
-            serialize_queue_item(status.current_song) if status.current_song else None
-        ),
-        "position_seconds": status.position_seconds,
-    }
+    """
+    Get current playback status.
+
+    Phones don't poll this: the same fields come back as ``playback`` in
+    ``GET /api/party/status``. It is for one-off reads, such as the
+    play/pause button checking the state just before it toggles.
+    """
+    return serialize_playback_status(playback.get_status())
 
 
 @router.post("/api/playback/play")

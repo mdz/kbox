@@ -12,6 +12,7 @@ from dataclasses import asdict
 from typing import Any, Dict
 
 from ..models import QueueItem
+from ..playback import PlaybackStatus
 
 
 def serialize_queue_item(item: QueueItem) -> Dict[str, Any]:
@@ -39,3 +40,19 @@ def serialize_queue_item(item: QueueItem) -> Dict[str, Any]:
     item_dict["song_name"] = item.metadata.song_name
     item_dict["pitch_semitones"] = item.settings.pitch_semitones
     return item_dict
+
+
+def serialize_playback_status(status: PlaybackStatus) -> Dict[str, Any]:
+    """
+    Convert a PlaybackStatus to the dict the frontend reads.
+
+    Served on its own by ``GET /api/playback/status`` and as the
+    ``playback`` field of ``GET /api/party/status``, so both have one shape.
+    """
+    return {
+        "state": status.state.value,
+        "current_song": (
+            serialize_queue_item(status.current_song) if status.current_song else None
+        ),
+        "position_seconds": status.position_seconds,
+    }

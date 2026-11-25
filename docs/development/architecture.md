@@ -64,8 +64,9 @@ A FastAPI app assembled by `create_app()` in `web/app.py`.
 - **Routes** (`web/routes/`): one router per area: `party`, `queue`,
   `search`, `playback`, `users`, `history`, `favorites`, `config`, `auth`,
   and `pages` (the guest page, `/display`, icons). `party` holds
-  `GET /api/party/status`, which every open page polls for the queue, who is
-  up next, the viewer's own next turn and the alerts addressed to them.
+  `GET /api/party/status`, which every open page polls for what playback is
+  doing, the queue, who is up next, the viewer's own next turn and the
+  alerts addressed to them.
   Handlers are thin. They get their collaborators from
   `web/dependencies.py`, which reads them off `app.state`, and call into the
   domain layer.

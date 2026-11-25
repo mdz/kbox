@@ -188,6 +188,31 @@ class TestQueueEndpoints:
         assert "queue" in data
         assert data["queue"] == []
 
+    def test_party_status_carries_playback(self, client, alice, app_components):
+        """GET /api/party/status - playback has the /api/playback/status shape.
+
+        Phones draw Now Playing and the play/pause button from this field,
+        so it must match what /api/playback/status serves, from the same
+        snapshot as the queue's is_current flag.
+        """
+        queue_mgr = app_components["queue"]
+        item_id = queue_mgr.add_song(
+            user=alice, video_id="youtube:s1", title="Test Song", duration_seconds=180
+        )
+        app_components["playback"].get_status.return_value = PlaybackStatus(
+            state=PlaybackState.PLAYING,
+            current_song=queue_mgr.get_item(item_id),
+            position_seconds=60,
+        )
+
+        data = client.get("/api/party/status").json()
+
+        assert data["playback"] == client.get("/api/playback/status").json()
+        assert data["playback"]["state"] == "playing"
+        assert data["playback"]["position_seconds"] == 60
+        assert data["playback"]["current_song"]["id"] == item_id
+        assert data["queue"][0]["is_current"] is True
+
     def test_add_song(self, client, alice):
         """POST /api/queue - add song to queue."""
         # Establish session identity
