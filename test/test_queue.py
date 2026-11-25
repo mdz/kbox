@@ -5,6 +5,7 @@ Unit tests for QueueManager.
 import os
 import tempfile
 import threading
+from concurrent.futures import Executor, Future
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -15,6 +16,31 @@ from kbox.alerts import KIND_DOWNLOAD_FAILED, AlertCenter
 from kbox.database import Database
 from kbox.queue import DOWNLOAD_RETRY_DELAYS_SECONDS, MoveOutcome, MoveResult, QueueManager
 from kbox.user import UserManager
+
+
+class InlineExecutor(Executor):
+    """Runs each job as it is submitted, so analysis finishes before the call returns."""
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: Future = Future()
+        future.set_result(fn(*args, **kwargs))
+        return future
+
+
+class HeldExecutor(Executor):
+    """Holds submitted jobs until the test runs them."""
+
+    def __init__(self):
+        self.jobs = []
+
+    def submit(self, fn, /, *args, **kwargs):
+        self.jobs.append((fn, args, kwargs))
+        return Future()
+
+    def run_all(self):
+        jobs, self.jobs = self.jobs, []
+        for fn, args, kwargs in jobs:
+            fn(*args, **kwargs)
 
 
 @pytest.fixture
@@ -915,6 +941,7 @@ class TestMetadataExtraction:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             metadata_extractor=mock_extractor,
         )
         qm.stop_content_monitor()
@@ -1004,6 +1031,7 @@ class TestMetadataExtraction:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             metadata_extractor=mock_extractor,
         )
         qm.stop_content_monitor()
@@ -1043,6 +1071,7 @@ class TestSilenceAnalysis:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             silence_analyzer=mock_analyzer,
         )
         qm.stop_content_monitor()
@@ -1075,6 +1104,7 @@ class TestSilenceAnalysis:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             silence_analyzer=mock_analyzer,
         )
         qm.stop_content_monitor()
@@ -1106,6 +1136,7 @@ class TestSilenceAnalysis:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             silence_analyzer=mock_analyzer,
         )
         qm.stop_content_monitor()
@@ -1146,6 +1177,7 @@ class TestLoudnessAnalysis:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             loudness_analyzer=mock_analyzer,
         )
         qm.stop_content_monitor()
@@ -1178,6 +1210,7 @@ class TestLoudnessAnalysis:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             loudness_analyzer=mock_analyzer,
         )
         qm.stop_content_monitor()
@@ -1213,6 +1246,7 @@ class TestLoudnessAnalysis:
         qm = QueueManager(
             temp_db,
             video_library=mock_video_library,
+            analysis_executor=InlineExecutor(),
             loudness_analyzer=mock_analyzer,
         )
         qm.stop_content_monitor()
@@ -1282,7 +1316,12 @@ class TestReplacedWhileDownloading:
         mock_video_library.get_path.return_value = None
         mock_video_library.manage_storage.return_value = 0
 
-        qm = QueueManager(temp_db, video_library=mock_video_library, **kwargs)
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            analysis_executor=kwargs.pop("analysis_executor", InlineExecutor()),
+            **kwargs,
+        )
         qm.stop_content_monitor()
         return qm, captured, mock_video_library
 
@@ -1422,7 +1461,12 @@ class TestDownloadFinishedTwice:
         mock_video_library.get_path.return_value = None
         mock_video_library.manage_storage.return_value = 0
 
-        qm = QueueManager(temp_db, video_library=mock_video_library, **kwargs)
+        qm = QueueManager(
+            temp_db,
+            video_library=mock_video_library,
+            analysis_executor=kwargs.pop("analysis_executor", InlineExecutor()),
+            **kwargs,
+        )
         qm.stop_content_monitor()
         return qm, captured, mock_video_library
 
@@ -1473,3 +1517,135 @@ class TestDownloadFinishedTwice:
         assert silence.analyze.call_count == 1
         # The callback still keeps the library within its size limit.
         lib.manage_storage.assert_called()
+
+
+class TestAnalysisOffTheDownloadThread:
+    """
+    Post-download analysis takes 10-50 s on a Pi. It must not run on the
+    thread that noticed the download: on the download worker it held up the
+    next guest's download, and on the content monitor it stopped every other
+    download from starting.
+    """
+
+    def _make_qm(self, temp_db, executor, **kwargs):
+        captured = {}
+
+        def capture(video_id, callback=None):
+            captured[video_id] = callback
+            return None
+
+        library = MagicMock()
+        library.request.side_effect = capture
+        library.get_path.return_value = None
+        library.manage_storage.return_value = 0
+
+        qm = QueueManager(temp_db, video_library=library, analysis_executor=executor, **kwargs)
+        qm.stop_content_monitor()
+        return qm, captured, library
+
+    def test_download_callback_returns_before_analysis(self, temp_db, user_manager):
+        executor = HeldExecutor()
+        silence, loudness, extractor = Mock(), Mock(), Mock()
+        extractor.extract.return_value = ("Don McLean", "American Pie")
+        qm, captured, library = self._make_qm(
+            temp_db,
+            executor,
+            silence_analyzer=silence,
+            loudness_analyzer=loudness,
+            metadata_extractor=extractor,
+        )
+        alice = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "American Pie")
+        qm._process_pending_content()
+
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+        # Ready to play, and the library kept in bounds, with nothing analysed yet.
+        assert qm.get_item(item_id).content_status == QueueManager.STATUS_READY
+        library.manage_storage.assert_called()
+        extractor.extract.assert_not_called()
+        silence.analyze.assert_not_called()
+        loudness.analyze.assert_not_called()
+
+        executor.run_all()
+
+        silence.analyze.assert_called_once_with("youtube:a", "/lib/youtube/a/video.mp4")
+        loudness.analyze.assert_called_once_with("youtube:a", "/lib/youtube/a/video.mp4")
+        assert qm.get_item(item_id).metadata.song_name == "American Pie"
+
+    def test_content_monitor_returns_before_analysis(self, temp_db, user_manager):
+        executor = HeldExecutor()
+        silence = Mock()
+        qm, _, library = self._make_qm(temp_db, executor, silence_analyzer=silence)
+        alice = user_manager.get_or_create_user("u1", "Alice")
+        bob = user_manager.get_or_create_user("u2", "Bob")
+        first = qm.add_song(alice, "youtube:a", "American Pie")
+        qm._process_pending_content()
+
+        found = MagicMock(spec=Path)
+        found.exists.return_value = True
+        found.__str__ = lambda self: "/lib/youtube/a/video.mp4"
+        library.get_path.side_effect = lambda vid: found if vid == "youtube:a" else None
+        second = qm.add_song(bob, "youtube:b", "Hotel California")
+        qm._process_pending_content()
+
+        # The same poll that found the first file went on to start the next download.
+        assert qm.get_item(first).content_status == QueueManager.STATUS_READY
+        assert qm.get_item(second).content_status == QueueManager.STATUS_PREPARING
+        silence.analyze.assert_not_called()
+
+        executor.run_all()
+        silence.analyze.assert_called_once_with("youtube:a", "/lib/youtube/a/video.mp4")
+
+    def test_analysis_failure_is_logged_not_raised(self, temp_db, user_manager, caplog):
+        qm, captured, _ = self._make_qm(temp_db, InlineExecutor())
+        alice = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "American Pie")
+        qm._process_pending_content()
+
+        with patch.object(qm, "get_item", side_effect=RuntimeError("database is locked")):
+            captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+        assert "Post-download analysis failed" in caplog.text
+        assert qm.get_item(item_id).content_status == QueueManager.STATUS_READY
+
+    def test_default_executor_runs_analysis_on_its_own_thread(self, temp_db, user_manager):
+        release = threading.Event()
+        started = threading.Event()
+        ran_on = []
+
+        def slow_analyze(video_id, path):
+            ran_on.append(threading.current_thread().name)
+            started.set()
+            release.wait(timeout=10)
+
+        silence = Mock()
+        silence.analyze.side_effect = slow_analyze
+        qm, captured, _ = self._make_qm(temp_db, None, silence_analyzer=silence)
+        try:
+            alice = user_manager.get_or_create_user("u1", "Alice")
+            qm.add_song(alice, "youtube:a", "American Pie")
+            qm._process_pending_content()
+
+            # Returns while the analysis is still blocked on `release`.
+            captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+            assert started.wait(timeout=10)
+            assert ran_on[0].startswith("kbox-analysis")
+            assert ran_on[0] != threading.current_thread().name
+        finally:
+            release.set()
+            qm.shutdown()
+
+    def test_no_analysis_after_shutdown(self, temp_db, user_manager):
+        silence = Mock()
+        qm, captured, _ = self._make_qm(temp_db, None, silence_analyzer=silence)
+        alice = user_manager.get_or_create_user("u1", "Alice")
+        item_id = qm.add_song(alice, "youtube:a", "American Pie")
+        qm._process_pending_content()
+        qm.shutdown()
+
+        captured["youtube:a"]("ready", "/lib/youtube/a/video.mp4", None)
+
+        assert qm.get_item(item_id).content_status == QueueManager.STATUS_READY
+        silence.analyze.assert_not_called()
