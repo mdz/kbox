@@ -253,7 +253,7 @@ class PlaybackController:
     # State snapshot
     # =========================================================================
     #
-    # Guest phones poll /api/queue and /api/playback/status every second, and
+    # Guest phones poll /api/party/status and /api/playback/status every second, and
     # both need (state, current_song_id). If they took self.lock for it, a
     # poll arriving while _play_song() holds the lock across load_file() (up
     # to several seconds) would park a server threadpool thread until the

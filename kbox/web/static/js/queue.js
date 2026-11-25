@@ -526,7 +526,7 @@ async function refreshQueue(signal) {
     try {
         // Get queue and current playback status
         const [queueResponse, statusResponse] = await Promise.all([
-            fetch('/api/queue', { signal }),
+            fetch('/api/party/status', { signal }),
             fetch('/api/playback/status', { signal })
         ]);
 

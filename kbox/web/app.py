@@ -35,6 +35,7 @@ from .routes import config as config_routes
 from .routes import favorites as favorites_routes
 from .routes import history as history_routes
 from .routes import pages as pages_routes
+from .routes import party as party_routes
 from .routes import playback as playback_routes
 from .routes import queue as queue_routes
 from .routes import search as search_routes
@@ -145,6 +146,7 @@ def create_app(
     # Routes, one router per area of the API (kbox/web/routes/). Included in
     # the order the handlers used to be registered in create_app.
     app.include_router(pages_routes.router)
+    app.include_router(party_routes.router)
     app.include_router(queue_routes.router)
     app.include_router(search_routes.router)
     app.include_router(playback_routes.router)
