@@ -82,7 +82,6 @@ directly against the API, the app gates endpoints behind a session cookie set vi
 ```bash
 curl -s -c cookies.txt "http://localhost:8000/api/party/status?key=YOUR_KEY" -o /dev/null
 curl -s -b cookies.txt http://localhost:8000/api/party/status
-curl -s -b cookies.txt http://localhost:8000/api/playback/status
 ```
 Useful for confirming a queue add/remove actually landed, independent of whatever the
 browser DOM currently shows.

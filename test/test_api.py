@@ -189,11 +189,12 @@ class TestQueueEndpoints:
         assert data["queue"] == []
 
     def test_party_status_carries_playback(self, client, alice, app_components):
-        """GET /api/party/status - playback has the /api/playback/status shape.
+        """GET /api/party/status - playback carries state, position and the song.
 
-        Phones draw Now Playing and the play/pause button from this field,
-        so it must match what /api/playback/status serves, from the same
-        snapshot as the queue's is_current flag.
+        Phones draw Now Playing and the play/pause button from this field.
+        The frontend reads title/duration_seconds/pitch_semitones off the top
+        level of current_song rather than out of metadata/settings. That
+        shaping is the web layer's job, so this pins the response body.
         """
         queue_mgr = app_components["queue"]
         item_id = queue_mgr.add_song(
@@ -207,11 +208,24 @@ class TestQueueEndpoints:
 
         data = client.get("/api/party/status").json()
 
-        assert data["playback"] == client.get("/api/playback/status").json()
-        assert data["playback"]["state"] == "playing"
-        assert data["playback"]["position_seconds"] == 60
-        assert data["playback"]["current_song"]["id"] == item_id
+        playback = data["playback"]
+        assert playback["state"] == "playing"
+        assert playback["position_seconds"] == 60
+        current_song = playback["current_song"]
+        assert current_song["id"] == item_id
+        assert current_song["title"] == "Test Song"
+        assert current_song["duration_seconds"] == 180
+        assert current_song["pitch_semitones"] == 0
+        assert current_song["user_name"] == "Alice"
+        # created_at is stringified, not left as a datetime
+        assert isinstance(current_song["created_at"], str)
+        # The same snapshot marks the queue's current item
         assert data["queue"][0]["is_current"] is True
+
+    def test_party_status_when_nothing_plays(self, client):
+        """GET /api/party/status - playback is reported when nothing plays."""
+        playback = client.get("/api/party/status").json()["playback"]
+        assert playback == {"state": "idle", "current_song": None, "position_seconds": 0}
 
     def test_add_song(self, client, alice):
         """POST /api/queue - add song to queue."""
@@ -616,43 +630,6 @@ class TestQueueEndpoints:
 
 class TestPlaybackEndpoints:
     """Tests for playback control endpoints."""
-
-    def test_get_playback_status(self, client):
-        """GET /api/playback/status - get current status."""
-        response = client.get("/api/playback/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert "state" in data
-
-    def test_get_playback_status_flattens_current_song(self, client, alice, app_components):
-        """GET /api/playback/status - current_song carries the flattened fields.
-
-        The frontend reads title/duration_seconds/pitch_semitones off the top
-        level of current_song rather than out of metadata/settings. That
-        shaping is the web layer's job, so this pins the response body.
-        """
-        queue_mgr = app_components["queue"]
-        item_id = queue_mgr.add_song(
-            user=alice, video_id="youtube:s1", title="Test Song", duration_seconds=180
-        )
-        app_components["playback"].get_status.return_value = PlaybackStatus(
-            state=PlaybackState.PLAYING,
-            current_song=queue_mgr.get_item(item_id),
-            position_seconds=60,
-        )
-
-        data = client.get("/api/playback/status").json()
-
-        assert data["state"] == "playing"
-        assert data["position_seconds"] == 60
-        current_song = data["current_song"]
-        assert current_song["id"] == item_id
-        assert current_song["title"] == "Test Song"
-        assert current_song["duration_seconds"] == 180
-        assert current_song["pitch_semitones"] == 0
-        assert current_song["user_name"] == "Alice"
-        # created_at is stringified, not left as a datetime
-        assert isinstance(current_song["created_at"], str)
 
     def test_play_requires_operator(self, client):
         """POST /api/playback/play - requires operator."""

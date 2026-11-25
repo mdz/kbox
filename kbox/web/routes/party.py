@@ -35,8 +35,8 @@ def get_party_status(
     is_operator: bool = Depends(check_operator),
 ):
     """
-    The party as this viewer sees it: what playback is doing (``playback``,
-    the same shape as ``GET /api/playback/status``), the queue with
+    The party as this viewer sees it: what playback is doing (``playback``:
+    state, current song and position), the queue with
     current/played flags, who is up next, how long until this viewer's own
     next turn, how deep the queue is, and the alerts addressed to this
     viewer (see kbox/alerts.py).

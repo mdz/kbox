@@ -14,8 +14,14 @@ import { buzz } from './alerts.js';
 // controls this viewer gets), so polls only patch values in place.
 let currentRenderKey = null;
 
+// The playback state the play/pause button is showing. A tap acts on this
+// rather than on a fresh read: if the state changed since the last poll, a
+// fresh read would do the opposite of what the operator saw and tapped.
+let shownPlaybackState = null;
+
 // Update play/pause toggle button based on state
 export function updatePlayPauseButton(state) {
+    shownPlaybackState = state;
     // Update button in playback controls section
     const button = document.getElementById('play-pause-toggle');
     if (button) {
@@ -47,12 +53,9 @@ export async function togglePlayPause() {
     const { loadQueue } = await import('./queue.js');
 
     try {
-        // Get current state
-        const statusResponse = await fetch('/api/playback/status');
-        const statusData = await statusResponse.json();
-        const currentState = statusData.state;
+        const currentState = shownPlaybackState;
 
-        // Toggle based on current state
+        // Toggle based on the state the button shows
         const action = (currentState === 'playing') ? 'pause' : 'play';
 
         // Only show buffering when starting fresh playback, not resuming from pause
