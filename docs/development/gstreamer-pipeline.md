@@ -332,22 +332,30 @@ both sizes:
 
 | source | decode cost | scale-stage cost (passthrough at 720p) | total |
 |---|---|---|---|
-| 640x360 (current) | ~1.9 ms/frame | ~25 ms/frame (upscale) | ~27 ms/frame |
+| 640x360 (format 18) | ~1.9 ms/frame | ~25 ms/frame (upscale) | ~27 ms/frame |
 | 1280x720 | ~8.1 ms/frame | ~10.9 ms/frame | ~19 ms/frame |
 
 That 10.9 ms at "passthrough" is not zero — `videoconvert` and overlay
 compositing both still cost more on a bigger frame, so this is a real but
 smaller win than "decode is cheaper than upscaling" suggests on its own.
 
-It is also not currently reachable in production: `kbox/ytdlp.py` requests
-`bestvideo[height<={video_max_resolution}]`, but on this deployment's yt-dlp,
-YouTube's DASH formats above 360p require a JS-runtime-based signature/PO
-token solver that isn't installed. Tested across `android`, `web`, `tv`, and
-`web_safari` player clients — all fell back to the legacy progressive 360p
-stream regardless of the configured cap. Raising `video_max_resolution` to
-720 would silently do nothing today; making it work is a yt-dlp/JS-runtime
-dependency question, unrelated to the pipeline itself. Worth revisiting if
-that gets fixed, since it would also raise the picture's actual detail.
+Until yt-dlp 2026.10.26, sources above 360p were not reachable at all.
+kbox pinned the `android,web` player clients, and only android's legacy
+progressive format 18 (640x360) survived, so the `video_max_resolution` cap
+did nothing. kbox now leaves the client choice to yt-dlp. Without a JS
+runtime, yt-dlp's default is `visionos`, which offers DASH up to 720p with no
+PO token. `download_format()` in `kbox/ytdlp.py` asks for H.264 + AAC, so
+songs now arrive as 854x480 H.264 by default. Raising `video_max_resolution`
+to 720 would fetch the 1280x720 row above.
+
+The decode elements are the same as for format 18: `qtdemux`, `h264parse`,
+`openh264dec`, `faad`. Format 18 is labelled `avc1.42001E` (Baseline), but
+its stream is Main profile with B-frames, the same as the 480p and 720p
+H.264 formats. The 480p decode cost on a Pi has not been measured yet. On a
+Mac it was ~1.85× the 360p cost, which would put it near 3.5 ms/frame here.
+yt-dlp's own ranking would pick AV1 when it is offered. The only AV1 decoder
+in the Docker image is libaom's `av1dec`, ~3.3× the 360p H.264 cost in the
+same Mac test, so the selector keeps AV1 out.
 
 **Deferred: V4L2 M2M hardware scaler (`pispbe`).** Mapping the devices into
 the container is trivial (`--device=/dev/video*` in `docker-compose.yml`,

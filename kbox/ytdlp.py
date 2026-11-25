@@ -54,6 +54,23 @@ def _friendly_download_error(message: str) -> str:
     return message
 
 
+def download_format(max_height: int) -> str:
+    """yt-dlp format selector for a song download, capped at ``max_height``.
+
+    Prefers H.264 with AAC in mp4, which the Pi decodes in software with
+    openh264dec and faad. Left to rank formats itself, yt-dlp prefers AV1,
+    and the Docker image's only AV1 decoder (libaom's av1dec) is the slowest
+    one in it, so AV1 is kept out of the fallbacks too.
+    """
+    return (
+        f"bestvideo[height<={max_height}][vcodec^=avc1]+bestaudio[acodec^=mp4a]"
+        f"/bestvideo[height<={max_height}][vcodec^=avc1]+bestaudio"
+        f"/best[height<={max_height}][vcodec^=avc1]"
+        f"/bestvideo[height<={max_height}][vcodec!^=av01]+bestaudio"
+        f"/best"
+    )
+
+
 class _YtdlpLogAdapter:
     """Routes yt-dlp's internal messages through a stdlib logger instead of stdout."""
 
@@ -226,8 +243,12 @@ class YtDlpClient(VideoProvider):
             output_template = str(output_dir / "video.%(ext)s")
             max_res = self.config_manager.get_int("video_max_resolution", 480)
 
+            # No player_client override: yt-dlp's default clients are the ones it
+            # keeps working. The old android,web pin got only progressive 360p, and
+            # failed with "Only images are available" whenever YouTube stripped
+            # android's URLs, because the web client offers nothing playable.
             ydl_opts = {
-                "format": f"bestvideo[height<={max_res}]+bestaudio/best",
+                "format": download_format(max_res),
                 "outtmpl": output_template,
                 # With a logger set, yt-dlp routes all output (including progress)
                 # through it regardless of quiet, so quiet just avoids a raw-print
@@ -235,11 +256,6 @@ class YtDlpClient(VideoProvider):
                 "quiet": True,
                 "no_warnings": False,
                 "logger": self._ydl_logger,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["android", "web"],
-                    }
-                },
                 "retries": 3,
                 "fragment_retries": 3,
                 "cookiefile": None,

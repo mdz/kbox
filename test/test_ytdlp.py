@@ -7,8 +7,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+import yt_dlp
 
-from kbox.ytdlp import YtDlpClient, _friendly_download_error
+from kbox.ytdlp import YtDlpClient, _friendly_download_error, download_format
 
 
 def _make_config():
@@ -206,6 +207,85 @@ def test_provide_success(tmp_path):
 
     assert result == video_file
     mock_ydl.extract_info.assert_called_once()
+
+
+def test_provide_uses_default_clients_and_capped_format(tmp_path):
+    client = YtDlpClient(_make_config())
+    mock_ydl = MagicMock()
+    video_file = tmp_path / "video.mp4"
+    video_file.touch()
+    mock_ydl.extract_info.return_value = {"id": "test_vid"}
+    mock_ydl.prepare_filename.return_value = str(video_file)
+
+    with patch("kbox.ytdlp.yt_dlp.YoutubeDL") as mock_cls:
+        mock_cls.return_value.__enter__.return_value = mock_ydl
+        client.provide("test_vid", tmp_path)
+
+    opts = mock_cls.call_args.args[0]
+    assert "extractor_args" not in opts
+    assert opts["format"] == download_format(480)
+
+
+def _fmt(format_id, height, vcodec, acodec, ext):
+    return {
+        "format_id": format_id,
+        "height": height,
+        "width": height * 16 // 9 if height else None,
+        "vcodec": vcodec,
+        "acodec": acodec,
+        "ext": ext,
+        "url": f"https://example.invalid/{format_id}",
+        "protocol": "https",
+    }
+
+
+# Shaped like what YouTube offers a 480p-capable karaoke video: separate
+# video and audio streams in AV1, VP9 and H.264, plus AAC and Opus audio.
+_ADAPTIVE_FORMATS = [
+    _fmt("397", 480, "av01.0.04M.08", "none", "mp4"),
+    _fmt("136", 720, "avc1.4d401f", "none", "mp4"),
+    _fmt("140", None, "none", "mp4a.40.2", "m4a"),
+    _fmt("244", 480, "vp9", "none", "webm"),
+    _fmt("134", 360, "avc1.4D401E", "none", "mp4"),
+    _fmt("135", 480, "avc1.4D401E", "none", "mp4"),
+    _fmt("251", None, "none", "opus", "webm"),
+]
+
+
+def _select(formats, max_height=480):
+    """Run yt-dlp's real format selection on a fixed list, without network."""
+    with yt_dlp.YoutubeDL({"quiet": True, "format": download_format(max_height)}) as ydl:
+        info = ydl.process_ie_result(
+            {
+                "id": "vid",
+                "title": "Song",
+                "formats": formats,
+                "extractor": "youtube",
+                "extractor_key": "Youtube",
+                "webpage_url": "https://www.youtube.com/watch?v=vid",
+            },
+            download=False,
+        )
+    return info["format_id"], info["ext"]
+
+
+def test_download_format_prefers_h264_and_aac():
+    assert _select(_ADAPTIVE_FORMATS) == ("135+140", "mp4")
+
+
+def test_download_format_respects_max_height():
+    assert _select(_ADAPTIVE_FORMATS, max_height=360) == ("134+140", "mp4")
+    assert _select(_ADAPTIVE_FORMATS, max_height=720) == ("136+140", "mp4")
+
+
+def test_download_format_avoids_av1_without_h264():
+    no_h264 = [f for f in _ADAPTIVE_FORMATS if not f["vcodec"].startswith("avc1")]
+    assert _select(no_h264) == ("244+251", "webm")
+
+
+def test_download_format_takes_progressive_h264():
+    progressive = [_fmt("18", 360, "avc1.42001E", "mp4a.40.2", "mp4")]
+    assert _select(progressive) == ("18", "mp4")
 
 
 def test_provide_raises_on_failure():
