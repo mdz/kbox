@@ -624,6 +624,26 @@
             background: #e74c3c;
         }
 
+        .queue-item.failed {
+            border-left: 3px solid #e74c3c;
+        }
+
+        .problem-box {
+            margin-bottom: 15px;
+            padding: 12px;
+            border: 1px solid #e74c3c;
+            border-radius: 6px;
+            background: rgba(231, 76, 60, 0.12);
+        }
+        .problem-box.hidden { display: none; }
+        .problem-box p { margin: 0 0 10px; }
+        .problem-detail {
+            color: #aaa;
+            font-size: 0.8em;
+            word-break: break-word;
+        }
+        .problem-detail.hidden { display: none; }
+
         .controls {
             display: flex;
             flex-direction: column;
@@ -978,6 +998,7 @@
         .turn-bar.turn-next { background: #c77d00; font-size: 17px; }
         .turn-bar.turn-playing { background: #1f9d4c; font-size: 17px; }
         .turn-bar.turn-idle-first { background: #6b4fa0; }
+        .turn-bar.turn-problem { background: #c0392b; cursor: pointer; }
         body.has-turn-bar { --turn-bar-h: 44px; padding-top: 54px; }
 
         .main-content {
