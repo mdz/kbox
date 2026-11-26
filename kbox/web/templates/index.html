@@ -207,7 +207,42 @@
 
         #search-input {
             padding: 24px;
+            /* Room for the clear button so text never runs under it. */
+            padding-right: 64px;
             font-size: 18px;
+        }
+
+        .search-input-wrap {
+            position: relative;
+        }
+
+        .search-clear {
+            position: absolute;
+            top: 50%;
+            right: 8px;
+            transform: translateY(-50%);
+            width: 48px;
+            height: 48px;
+            padding: 0;
+            margin: 0;
+            border-radius: 50%;
+            background: transparent;
+            color: #999;
+            font-size: 30px;
+            line-height: 1;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .search-clear:hover {
+            color: #e0e0e0;
+            background: #444;
+        }
+
+        /* Nothing to clear. :placeholder-shown also follows values set from
+           script, which an input listener would miss. */
+        #search-input:placeholder-shown + .search-clear {
+            display: none;
         }
 
         /* Autocomplete dropdown.  Positioned rather than placed in flow so it

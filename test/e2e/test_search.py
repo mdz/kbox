@@ -31,6 +31,21 @@ def test_search_result_opens_add_modal(mobile_page, init_user):
     expect(mobile_page.locator("#add-song-modal")).to_be_visible()
 
 
+def test_clear_button_empties_the_box(mobile_page, init_user):
+    """The clear button appears with text, empties the box and keeps focus."""
+    init_user("Alice")
+    clear = mobile_page.locator("#search-clear")
+    expect(clear).to_be_hidden()
+
+    mobile_page.fill("#search-input", "bohemian rhapsody")
+    expect(clear).to_be_visible()
+
+    clear.click()
+    expect(mobile_page.locator("#search-input")).to_have_value("")
+    expect(mobile_page.locator("#search-input")).to_be_focused()
+    expect(clear).to_be_hidden()
+
+
 def _record_performance(db_path, video_id):
     """Insert a history row straight into the live app's DB (same tmp_path)."""
     conn = sqlite3.connect(db_path)
