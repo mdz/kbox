@@ -690,6 +690,16 @@ export function setupSearchHandlers() {
     input.addEventListener('keydown', onSearchKeydown);
     input.addEventListener('blur', closeSuggestions);
 
+    const clear = document.getElementById('search-clear');
+    // Keep focus in the box, so the mobile keyboard stays up to type the
+    // next search instead of closing and reopening.
+    clear.addEventListener('mousedown', (e) => e.preventDefault());
+    clear.addEventListener('click', () => {
+        input.value = '';
+        closeSuggestions();
+        input.focus();
+    });
+
     // iOS Safari fix: add touchend handler for search button
     // This helps when the keyboard is open and click events don't fire properly
     document.getElementById('search-button').addEventListener('touchend', function(e) {

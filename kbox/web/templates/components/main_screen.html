@@ -15,10 +15,16 @@
         {% endif %}
         <div id="replace-target-banner" class="replace-target-banner hidden"></div>
         <form id="search-form" onsubmit="search(); return false;" action="javascript:void(0);">
-            <input type="text" id="search-input" placeholder="Search for a song..."
-                   autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-                   role="combobox" aria-expanded="false" aria-autocomplete="list"
-                   aria-controls="search-suggestions" />
+            <div class="search-input-wrap">
+                <input type="text" id="search-input" placeholder="Search for a song..."
+                       autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+                       role="combobox" aria-expanded="false" aria-autocomplete="list"
+                       aria-controls="search-suggestions" />
+                <!-- Shown by CSS whenever the box has text, so it tracks values
+                     set from script (Fix, add-to-queue) as well as typing. -->
+                <button type="button" id="search-clear" class="search-clear"
+                        aria-label="Clear search">&times;</button>
+            </div>
             <button type="submit" id="search-button">Search</button>
             <!-- Anchored to the form, not the input: hanging it directly under
                  the input would put it on top of the Search button. -->
