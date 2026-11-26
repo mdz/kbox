@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 # Type alias for LLM completion functions (litellm.completion signature)
 CompletionFn = Callable[..., Any]
 
+# Answers "does this model honour a JSON schema in response_format?"
+# (litellm.supports_response_schema signature, reduced to the model name)
+SchemaSupportFn = Callable[[str], bool]
+
+
+def _litellm_supports_response_schema(model: str) -> bool:
+    import litellm
+
+    return bool(litellm.supports_response_schema(model=model))
+
 
 class LLMClient:
     """Client for LLM completions using LiteLLM."""
@@ -24,6 +34,7 @@ class LLMClient:
         self,
         config_manager: "ConfigManager",
         completion_fn: Optional[CompletionFn] = None,
+        schema_support_fn: Optional[SchemaSupportFn] = None,
     ):
         """
         Initialize LLMClient.
@@ -31,10 +42,13 @@ class LLMClient:
         Args:
             config_manager: For accessing LLM configuration (model, api_key, base_url)
             completion_fn: LLM completion function (defaults to litellm.completion)
+            schema_support_fn: Answers whether a model honours a JSON schema in
+                ``response_format`` (defaults to litellm's model capability map)
         """
         self.config = config_manager
         self.logger = logging.getLogger(__name__)
         self._completion_fn = completion_fn
+        self._schema_support_fn = schema_support_fn or _litellm_supports_response_schema
 
     def is_configured(self) -> bool:
         """Check if LLM is properly configured."""
@@ -49,6 +63,25 @@ class LLMClient:
                 return False
 
         return True
+
+    def supports_response_schema(self) -> bool:
+        """
+        Whether the configured model can be held to a JSON schema.
+
+        True means ``response_format={"type": "json_schema", ...}`` is honoured
+        (OpenAI structured outputs, and the providers LiteLLM translates it
+        for). False for anything LiteLLM does not know about -- a local Ollama
+        model, a custom endpoint -- and on any error asking, since the caller
+        then just falls back to asking for JSON in the prompt.
+        """
+        model = self.config.get("llm_model")
+        if not model:
+            return False
+        try:
+            return self._schema_support_fn(model)
+        except Exception as e:
+            self.logger.debug("Could not tell whether %s supports response_schema: %s", model, e)
+            return False
 
     def completion(
         self,
