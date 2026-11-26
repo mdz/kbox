@@ -524,19 +524,17 @@ export async function loadQueue() {
 async function refreshQueue(signal) {
     if (authExpired) return;
     try {
-        // Get queue and current playback status
-        const [queueResponse, statusResponse] = await Promise.all([
-            fetch('/api/queue', { signal }),
-            fetch('/api/playback/status', { signal })
-        ]);
+        // One poll carries the queue and what playback is doing, so both
+        // come from the same moment
+        const response = await fetch('/api/status', { signal });
 
-        if (queueResponse.status === 401 || statusResponse.status === 401) {
+        if (response.status === 401) {
             handleAuthExpired();
             return;
         }
 
-        const queueData = await queueResponse.json();
-        const statusData = await statusResponse.json();
+        const queueData = await response.json();
+        const statusData = queueData.playback;
         setCurrentQueue(queueData.queue);
         setQueueDepthSeconds(queueData.queue_depth_seconds || 0);
         setQueueDepthCount(queueData.queue_depth_count || 0);

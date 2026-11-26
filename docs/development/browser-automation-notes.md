@@ -80,9 +80,8 @@ sit there indefinitely while nothing has actually happened). To check ground tru
 directly against the API, the app gates endpoints behind a session cookie set via the
 `?key=` query param on first request:
 ```bash
-curl -s -c cookies.txt "http://localhost:8000/api/queue?key=YOUR_KEY" -o /dev/null
-curl -s -b cookies.txt http://localhost:8000/api/queue
-curl -s -b cookies.txt http://localhost:8000/api/playback/status
+curl -s -c cookies.txt "http://localhost:8000/api/status?key=YOUR_KEY" -o /dev/null
+curl -s -b cookies.txt http://localhost:8000/api/status
 ```
 Useful for confirming a queue add/remove actually landed, independent of whatever the
 browser DOM currently shows.

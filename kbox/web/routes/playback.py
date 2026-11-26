@@ -1,7 +1,10 @@
 """
-Playback routes: status, transport controls, pitch, restart and seek.
+Playback routes: transport controls, pitch, restart and seek.
 
-Every control except status is operator-only, checked per handler via
+What playback is doing is not served here: phones read it from the
+``playback`` field of ``GET /api/status``.
+
+Every control is operator-only, checked per handler via
 ``check_operator`` -- except pitch and end-turn, which the singer of the
 current song may also use on their own song. Handlers get their collaborators through the providers
 in :mod:`kbox.web.dependencies`, so this router can be imported and
@@ -21,24 +24,8 @@ from ..dependencies import (
     get_queue_manager,
 )
 from ..models import EndTurnRequest, PitchRequest, SeekRequest
-from ..serializers import serialize_queue_item
 
 router = APIRouter()
-
-
-@router.get("/api/playback/status")
-def get_playback_status(
-    playback: PlaybackController = Depends(get_playback_controller),
-):
-    """Get current playback status."""
-    status = playback.get_status()
-    return {
-        "state": status.state.value,
-        "current_song": (
-            serialize_queue_item(status.current_song) if status.current_song else None
-        ),
-        "position_seconds": status.position_seconds,
-    }
 
 
 @router.post("/api/playback/play")

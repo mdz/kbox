@@ -251,7 +251,7 @@ class HttpRequest(BaseModel):
     type: Literal["request"] = "request"
     id: str                          # Request ID for matching response
     method: str                      # GET, POST, etc.
-    path: str                        # /api/queue, etc.
+    path: str                        # /api/status, etc.
     headers: Dict[str, str]
     body: Optional[bytes] = None
 
@@ -307,7 +307,7 @@ Device Connection (WebSocket):
     Server sends: { "type": "connected", "room_url": "https://cloud.kbox.app/r/abc12345" }
 
     # Cloud forwards guest requests to device
-    Server sends: { "type": "request", "id": "...", "method": "GET", "path": "/api/queue", ... }
+    Server sends: { "type": "request", "id": "...", "method": "GET", "path": "/api/status", ... }
     Client sends: { "type": "response", "id": "...", "status": 200, "body": "..." }
 
 Guest Access (proxied to device):

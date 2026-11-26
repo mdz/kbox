@@ -33,7 +33,7 @@ def test_name_persists_on_reload(mobile_page, init_user):
     init_user("Alice")
     mobile_page.reload()
     # Wait for the search form — a concrete signal the page has rendered its
-    # initial state. networkidle is unreliable because the 1s /api/queue poll
+    # initial state. networkidle is unreliable because the 1s /api/status poll
     # prevents the browser from ever reaching truly idle.
     mobile_page.wait_for_selector("#search-form", state="visible")
     expect(mobile_page.locator("#name-modal")).to_be_hidden()

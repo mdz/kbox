@@ -21,7 +21,7 @@ flowchart LR
 
     subgraph web["kbox/web — FastAPI"]
         MW["middleware<br/>access token, session, request log"]
-        ROUTES["routes/<br/>queue, search, playback, users,<br/>history, favorites, config, auth, pages"]
+        ROUTES["routes/<br/>status, queue, search, playback, users,<br/>history, favorites, config, auth, pages"]
     end
 
     subgraph core["Domain layer"]
@@ -61,11 +61,14 @@ way to see what depends on what.
 
 A FastAPI app assembled by `create_app()` in `web/app.py`.
 
-- **Routes** (`web/routes/`): one router per area: `queue`, `search`,
-  `playback`, `users`, `history`, `favorites`, `config`, `auth`, and `pages`
-  (the guest page, `/display`, icons). Handlers are thin. They get their
-  collaborators from `web/dependencies.py`, which reads them off
-  `app.state`, and call into the domain layer.
+- **Routes** (`web/routes/`): one router per area: `status`, `queue`,
+  `search`, `playback`, `users`, `history`, `favorites`, `config`, `auth`,
+  and `pages` (the guest page, `/display`, icons). `status` holds
+  `GET /api/status`, which every open page polls for what playback is
+  doing, the queue, who is up next, the viewer's own next turn and the
+  alerts addressed to them. Handlers are thin. They get their collaborators
+  from `web/dependencies.py`, which reads them off `app.state`, and call
+  into the domain layer.
 - **Middleware** (`web/middleware.py`): `GuestAuthMiddleware` admits a guest
   who presents the access token (the `?key=` in the QR code) and stores the
   fact in a signed session cookie; `/display` and its API are exempt. The
@@ -197,8 +200,8 @@ own threads.
   and the video goes straight to the display (`kmssink` on the Pi) with kbox's
   own overlays, pitch shifting and volume control.
 - **Browser display page (`/display`).** A fullscreen page that polls the
-  queue, plays each song in an embedded YouTube player, and posts to
-  `/api/display/song-ended` when one finishes. When GStreamer isn't available,
+  queue (`/api/status`), plays each song in an embedded YouTube
+  player, and posts to `/api/display/song-ended` when one finishes. When GStreamer isn't available,
   kbox starts without a download provider and uses this path.
 
 Either way the guest and operator experience is the same: they use the phone
