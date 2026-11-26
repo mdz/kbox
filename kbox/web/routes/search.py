@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...database import EventRepository
 from ...history import HistoryManager
 from ...search_suggest import SearchSuggester
+from ...song_width import SongWidthService
 from ...suggestions import SuggestionEngine, SuggestionError
 from ...user_events import SearchPerformed
 from ...video_library import VideoLibrary
@@ -23,6 +24,7 @@ from ..dependencies import (
     get_event_repo,
     get_history_manager,
     get_search_suggester,
+    get_song_width_service,
     get_suggestion_engine,
     get_video_library,
     require_user,
@@ -163,6 +165,32 @@ def get_suggestions(
         raise HTTPException(
             status_code=500, detail="An error occurred while generating suggestions."
         )
+
+
+@router.get("/api/song-width")
+def get_song_width(
+    video_id: str,
+    title: str,
+    channel: Optional[str] = None,
+    user_id: Optional[str] = Depends(get_current_user_id),
+    service: Optional[SongWidthService] = Depends(get_song_width_service),
+):
+    """
+    How wide a song's vocal line is, beside the singer's past songs (#215).
+
+    The add-song dialog asks for this after it opens, so a first lookup
+    (a couple of USDB requests, about a second apart) never delays it. An
+    empty object means "show nothing": USDB not configured, song unknown or
+    not clearly matched, or USDB unreachable. A guest then sees exactly what
+    they saw before this existed, so failures are logged by the service
+    rather than surfaced here.
+
+    title/channel come from the search result the guest tapped, saving a
+    second YouTube lookup; they only feed working out artist and title.
+    """
+    if service is None:
+        return {}
+    return service.meter_for_video(user_id, video_id, title, channel) or {}
 
 
 @router.get("/api/video/{video_id:path}")
