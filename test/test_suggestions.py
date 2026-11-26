@@ -82,9 +82,45 @@ def make_error_completion(error_message: str = "API error"):
     return fake_completion
 
 
-def make_llm_client(config_manager: ConfigManager, completion_fn) -> LLMClient:
+def make_llm_client(
+    config_manager: ConfigManager, completion_fn, supports_schema: bool = False
+) -> LLMClient:
     """Create an LLMClient with a fake completion function for testing."""
-    return LLMClient(config_manager, completion_fn=completion_fn)
+    return LLMClient(
+        config_manager,
+        completion_fn=completion_fn,
+        schema_support_fn=lambda model: supports_schema,
+    )
+
+
+# Two real replies from gpt-4o-mini at a party, each failing json.loads on a
+# single slip in an otherwise good list.
+CURLY_QUOTE_REPLY = """[
+    {"title": "Mr. Brightside", "artist": "The Killers"},
+    {"title": "King”, "artist": "Griffin"},
+    {"title": "Dancing in the Dark", "artist": "Bruce Springsteen"}
+]"""
+
+TRAILING_COMMA_REPLY = """[
+    {"title": "Mr. Brightside", "artist": "The Killers"},
+    {"title": "King", "artist": "Griffin"},
+    {"title": "Dancing in the Dark", "artist": "Bruce Springsteen"},
+]"""
+
+
+def make_scripted_completion(replies: List[str], calls: List[Dict[str, Any]]):
+    """Fake completion returning each reply in turn, recording the kwargs of each call."""
+    remaining = list(replies)
+
+    def fake_completion(**kwargs) -> Any:
+        calls.append(kwargs)
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = remaining.pop(0)
+        response.choices[0].finish_reason = "stop"
+        return response
+
+    return fake_completion
 
 
 @pytest.fixture
@@ -146,7 +182,7 @@ def test_user(user_manager):
 @pytest.fixture
 def llm_client(config_manager):
     """Create an LLMClient for testing (without a completion function)."""
-    return LLMClient(config_manager)
+    return LLMClient(config_manager, schema_support_fn=lambda model: False)
 
 
 @pytest.fixture
@@ -411,6 +447,54 @@ class TestParseLlmResponse:
         result = suggestion_engine._parse_llm_response(content)
 
         assert len(result) == 1
+
+    def test_parse_songs_object(self, suggestion_engine):
+        """Accepts the {"songs": [...]} object the prompt and schema ask for."""
+        content = '{"songs": [{"title": "Song 1", "artist": "Artist 1"}]}'
+
+        result = suggestion_engine._parse_llm_response(content)
+
+        assert result == [{"title": "Song 1", "artist": "Artist 1"}]
+
+    def test_parse_curly_closing_quote(self, suggestion_engine):
+        """A curly quote used as a string delimiter is straightened, keeping every song."""
+        result = suggestion_engine._parse_llm_response(CURLY_QUOTE_REPLY)
+
+        assert result == [
+            {"title": "Mr. Brightside", "artist": "The Killers"},
+            {"title": "King", "artist": "Griffin"},
+            {"title": "Dancing in the Dark", "artist": "Bruce Springsteen"},
+        ]
+
+    def test_parse_trailing_comma(self, suggestion_engine):
+        """A trailing comma before the closing bracket is dropped."""
+        result = suggestion_engine._parse_llm_response(TRAILING_COMMA_REPLY)
+
+        assert len(result) == 3
+        assert result[2] == {"title": "Dancing in the Dark", "artist": "Bruce Springsteen"}
+
+    def test_parse_leaves_curly_quotes_inside_titles(self, suggestion_engine):
+        """Curly quotes inside a title survive the repair."""
+        content = '[{"title": "Say “Hello” Again", "artist": "A"},]'
+
+        result = suggestion_engine._parse_llm_response(content)
+
+        assert result == [{"title": "Say “Hello” Again", "artist": "A"}]
+
+    def test_parse_keeps_entries_that_parse(self, suggestion_engine):
+        """One unrepairable entry does not cost the rest of the list."""
+        content = """[
+            {"title": "Good One", "artist": "A"},
+            {"title": "Broken, "artist": "B"},
+            {"title": "Good Two", "artist": "C"}
+        ]"""
+
+        result = suggestion_engine._parse_llm_response(content)
+
+        assert result == [
+            {"title": "Good One", "artist": "A"},
+            {"title": "Good Two", "artist": "C"},
+        ]
 
 
 class TestSearchSuggestions:
@@ -689,6 +773,106 @@ class TestGenerateSuggestionsIntegration:
             engine._generate_suggestions({}, count=5)
 
         assert "Connection refused" in str(exc_info.value)
+
+
+class TestMalformedReplies:
+    """The model's reply is not always valid JSON; the guest should still get songs."""
+
+    @pytest.fixture
+    def configured(self, config_manager):
+        config_manager.set("llm_model", "gpt-4o-mini")
+        config_manager.set("llm_api_key", "test-key")
+        return config_manager
+
+    def make_engine(self, config_manager, history_manager, queue_manager, video_library, client):
+        return SuggestionEngine(
+            config_manager=config_manager,
+            history_manager=history_manager,
+            queue_manager=queue_manager,
+            video_library=video_library,
+            llm_client=client,
+        )
+
+    @pytest.mark.parametrize("reply", [CURLY_QUOTE_REPLY, TRAILING_COMMA_REPLY])
+    def test_party_replies_produce_suggestions(
+        self, configured, history_manager, queue_manager, mock_video_library, reply
+    ):
+        """Both replies that 503'd at a party now give a full list, first time."""
+        calls: List[Dict[str, Any]] = []
+        client = make_llm_client(configured, make_scripted_completion([reply], calls))
+        engine = self.make_engine(
+            configured, history_manager, queue_manager, mock_video_library, client
+        )
+
+        result = engine._generate_suggestions({}, count=3)
+
+        assert [s["title"] for s in result] == ["Mr. Brightside", "King", "Dancing in the Dark"]
+        assert len(calls) == 1
+
+    def test_unparseable_reply_is_retried_once(
+        self, configured, history_manager, queue_manager, mock_video_library
+    ):
+        calls: List[Dict[str, Any]] = []
+        replies = ["Sorry, I can't help with that.", '[{"title": "T", "artist": "A"}]']
+        client = make_llm_client(configured, make_scripted_completion(replies, calls))
+        engine = self.make_engine(
+            configured, history_manager, queue_manager, mock_video_library, client
+        )
+
+        result = engine._generate_suggestions({}, count=1)
+
+        assert result == [{"title": "T", "artist": "A"}]
+        assert len(calls) == 2
+
+    def test_gives_a_friendly_message_after_retry_fails(
+        self, configured, history_manager, queue_manager, mock_video_library
+    ):
+        calls: List[Dict[str, Any]] = []
+        replies = ["not json", "still not json"]
+        client = make_llm_client(configured, make_scripted_completion(replies, calls))
+        engine = self.make_engine(
+            configured, history_manager, queue_manager, mock_video_library, client
+        )
+
+        with pytest.raises(SuggestionError) as exc_info:
+            engine._generate_suggestions({}, count=1)
+
+        assert len(calls) == 2
+        assert "try again" in str(exc_info.value).lower()
+        assert "temperature" not in str(exc_info.value).lower()
+
+    def test_requests_schema_when_model_supports_it(
+        self, configured, history_manager, queue_manager, mock_video_library
+    ):
+        calls: List[Dict[str, Any]] = []
+        reply = '{"songs": [{"title": "T", "artist": "A"}]}'
+        client = make_llm_client(
+            configured, make_scripted_completion([reply], calls), supports_schema=True
+        )
+        engine = self.make_engine(
+            configured, history_manager, queue_manager, mock_video_library, client
+        )
+
+        result = engine._generate_suggestions({}, count=1)
+
+        assert result == [{"title": "T", "artist": "A"}]
+        response_format = calls[0]["response_format"]
+        assert response_format["type"] == "json_schema"
+        assert response_format["json_schema"]["schema"]["required"] == ["songs"]
+
+    def test_no_response_format_when_model_lacks_schema_support(
+        self, configured, history_manager, queue_manager, mock_video_library
+    ):
+        calls: List[Dict[str, Any]] = []
+        reply = '{"songs": [{"title": "T", "artist": "A"}]}'
+        client = make_llm_client(configured, make_scripted_completion([reply], calls))
+        engine = self.make_engine(
+            configured, history_manager, queue_manager, mock_video_library, client
+        )
+
+        engine._generate_suggestions({}, count=1)
+
+        assert "response_format" not in calls[0]
 
 
 class TestGetSuggestionsIntegration:

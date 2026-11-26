@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
@@ -17,6 +18,71 @@ if TYPE_CHECKING:
     from .llm import LLMClient
     from .queue import QueueManager
     from .video_library import VideoLibrary
+
+
+# How many times to ask the model before telling the guest it didn't work.
+PARSE_ATTEMPTS = 2
+
+# Structured-output schema, for models that support it. OpenAI's strict mode
+# requires an object at the top level, hence the "songs" wrapper.
+SUGGESTIONS_RESPONSE_FORMAT: Dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "song_suggestions",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "songs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "artist": {"type": "string"},
+                        },
+                        "required": ["title", "artist"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["songs"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+# A curly double quote standing where JSON needs a straight one: right after
+# an opening bracket, comma or colon, or right before a closing one, a comma
+# or a colon. Curly quotes inside a title ("Say “Hello”") are left alone.
+_CURLY_QUOTE_OPENING = re.compile(r"([\[{,:]\s*)[\u201c\u201d]")
+_CURLY_QUOTE_CLOSING = re.compile(r"[\u201c\u201d](\s*[,:}\]])")
+_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+# A flat {...} with no nested braces: one song entry.
+_FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
+
+
+def _repair_json(content: str) -> str:
+    """
+    Fix the slips models make in otherwise good JSON.
+
+    Only used once strict parsing has already failed, so the patterns can be
+    loose: at worst they turn one unparseable string into another.
+    """
+    content = _CURLY_QUOTE_OPENING.sub(r'\1"', content)
+    content = _CURLY_QUOTE_CLOSING.sub(r'"\1', content)
+    return _TRAILING_COMMA.sub(r"\1", content)
+
+
+def _salvage_objects(content: str) -> List[Any]:
+    """Parse each flat ``{...}`` in the reply on its own, keeping those that parse."""
+    salvaged = []
+    for match in _FLAT_OBJECT.finditer(content):
+        try:
+            salvaged.append(json.loads(_repair_json(match.group(0))))
+        except json.JSONDecodeError:
+            continue
+    return salvaged
 
 
 class SuggestionError(Exception):
@@ -80,11 +146,8 @@ class SuggestionEngine:
         # Build context for the LLM
         context = self._build_context(user_id)
 
-        # Generate suggestions via LLM
+        # Generate suggestions via LLM (raises rather than returning none)
         suggestions = self._generate_suggestions(context, max_results)
-
-        if not suggestions:
-            raise SuggestionError("AI returned no suggestions. Try adjusting the temperature.")
 
         # Search YouTube for each suggestion
         results = self._search_suggestions(suggestions, max_results)
@@ -187,6 +250,37 @@ class SuggestionEngine:
         # is_configured() ensures _llm_client is set before we get here
         assert self._llm_client is not None
 
+        extra: Dict[str, Any] = {}
+        if self._llm_client.supports_response_schema():
+            # Have the provider hold the reply to the schema, so it cannot come
+            # back with a stray curly quote or trailing comma. Models without
+            # it rely on the prompt and the tolerant parser below.
+            extra["response_format"] = SUGGESTIONS_RESPONSE_FORMAT
+
+        # A reply that cannot be parsed is usually a one-off slip by the
+        # model, so it is worth one more try before giving up on the guest.
+        for attempt in range(1, PARSE_ATTEMPTS + 1):
+            content = self._request_suggestions(messages, temperature, extra)
+            suggestions = self._parse_llm_response(content)
+            if suggestions:
+                return suggestions
+            self.logger.warning(
+                "No usable suggestions in LLM reply (attempt %d of %d)", attempt, PARSE_ATTEMPTS
+            )
+
+        raise SuggestionError(
+            "Couldn't come up with suggestions this time. Try again, or search for a song."
+        )
+
+    def _request_suggestions(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float,
+        extra: Dict[str, Any],
+    ) -> str:
+        """Make one LLM call and return its text, raising SuggestionError on failure."""
+        assert self._llm_client is not None
+
         try:
             response = self._llm_client.completion(
                 messages=messages,
@@ -194,6 +288,7 @@ class SuggestionEngine:
                 max_tokens=16384,
                 # For reasoning models (GPT-5, o1, o3), use low effort - this is a simple task
                 reasoning_effort="low",
+                **extra,
             )
             message = response.choices[0].message
             content = message.content
@@ -212,10 +307,8 @@ class SuggestionEngine:
                     )
                 raise SuggestionError("AI model returned empty response. Try a different model.")
 
-            self.logger.debug("LLM response content: %s", content[:200] if content else None)
-
-            # Parse JSON from response
-            return self._parse_llm_response(content)
+            self.logger.debug("LLM response content: %s", content[:200])
+            return str(content)
 
         except SuggestionError:
             raise
@@ -267,15 +360,23 @@ class SuggestionEngine:
         )
 
         parts.append(
-            f"\n\nReturn ONLY a JSON array of {count} songs in this exact format:"
-            '\n[{"title": "Song Name", "artist": "Artist Name"}, ...]'
-            "\n\nNo explanation, just the JSON array."
+            f"\n\nReturn ONLY a JSON object listing {count} songs in this exact format:"
+            '\n{"songs": [{"title": "Song Name", "artist": "Artist Name"}, ...]}'
+            "\n\nNo explanation, just the JSON."
         )
 
         return "".join(parts)
 
     def _parse_llm_response(self, content: str) -> List[Dict[str, str]]:
-        """Parse the LLM response to extract song suggestions."""
+        """
+        Parse the LLM response to extract song suggestions.
+
+        Accepts the ``{"songs": [...]}`` object the prompt and schema ask for,
+        or a bare array. A reply that is not valid JSON gets the repairs in
+        :func:`_repair_json`; if it still will not parse, whichever song
+        objects in it do parse are kept rather than losing the whole list to
+        one bad entry.
+        """
         if not content:
             return []
 
@@ -290,29 +391,36 @@ class SuggestionEngine:
 
         try:
             data = json.loads(content)
-            if isinstance(data, list):
-                # Validate structure
-                suggestions = []
-                for item in data:
-                    if isinstance(item, dict) and "title" in item and "artist" in item:
-                        suggestions.append(
-                            {"title": str(item["title"]), "artist": str(item["artist"])}
-                        )
-                if suggestions:
-                    return suggestions
-                else:
-                    self.logger.warning(
-                        "LLM response was valid JSON but contained no valid suggestions: %s",
-                        content[:500],
-                    )
-            else:
-                self.logger.warning("LLM response was not a JSON array: %s", content[:500])
         except json.JSONDecodeError as e:
-            self.logger.warning(
-                "Failed to parse LLM response as JSON: %s. Content: %s", e, content[:500]
-            )
+            try:
+                data = json.loads(_repair_json(content))
+                self.logger.info("Repaired malformed JSON in LLM response (%s)", e)
+            except json.JSONDecodeError:
+                data = _salvage_objects(content)
+                self.logger.warning(
+                    "Failed to parse LLM response as JSON: %s. Kept %d entries. Content: %s",
+                    e,
+                    len(data),
+                    content[:500],
+                )
 
-        return []
+        if isinstance(data, dict) and isinstance(data.get("songs"), list):
+            data = data["songs"]
+
+        if not isinstance(data, list):
+            self.logger.warning("LLM response was not a list of songs: %s", content[:500])
+            return []
+
+        suggestions = []
+        for item in data:
+            if isinstance(item, dict) and "title" in item and "artist" in item:
+                suggestions.append({"title": str(item["title"]), "artist": str(item["artist"])})
+        if not suggestions:
+            self.logger.warning(
+                "LLM response contained no valid suggestions: %s",
+                content[:500],
+            )
+        return suggestions
 
     def _search_suggestions(
         self,

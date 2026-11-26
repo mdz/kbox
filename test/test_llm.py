@@ -83,6 +83,30 @@ class TestIsConfigured:
 # ============================================================================
 
 
+class TestSupportsResponseSchema:
+    def test_asks_about_configured_model(self):
+        asked = []
+        config = _config_with(llm_model="gpt-4o-mini", llm_api_key="sk-123")
+        client = LLMClient(config, schema_support_fn=lambda m: asked.append(m) or True)
+
+        assert client.supports_response_schema() is True
+        assert asked == ["gpt-4o-mini"]
+
+    def test_false_without_model(self, mock_config):
+        client = LLMClient(mock_config, schema_support_fn=lambda m: True)
+
+        assert client.supports_response_schema() is False
+
+    def test_false_when_lookup_raises(self):
+        def unknown_model(model):
+            raise Exception("model not mapped")
+
+        config = _config_with(llm_model="ollama/llama3")
+        client = LLMClient(config, schema_support_fn=unknown_model)
+
+        assert client.supports_response_schema() is False
+
+
 class TestCompletionInjected:
     def test_passes_basic_kwargs(self):
         fake_fn = Mock(return_value="response")
