@@ -5,6 +5,7 @@ Handles song queue operations with persistence and content preparation.
 """
 
 import logging
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -80,6 +81,7 @@ class QueueManager:
         before_clear: Optional[Callable[[], None]] = None,
         alerts: Optional[AlertCenter] = None,
         clock: Callable[[], datetime] = datetime.now,
+        analysis_executor: Optional[Executor] = None,
     ):
         """
         Initialize QueueManager.
@@ -101,6 +103,9 @@ class QueueManager:
                 operators, resolved once the song is fixed or gone.
             clock: Returns the current time; tests pass a fake one to step
                 through download retries without waiting.
+            analysis_executor: Where post-download analysis runs. Defaults
+                to a single worker thread of its own; tests pass one that
+                runs the job inline.
         """
         self.database = database
         self.before_clear = before_clear
@@ -114,6 +119,18 @@ class QueueManager:
         self.alerts = alerts
         self._clock = clock
         self.logger = logging.getLogger(__name__)
+
+        # Post-download analysis (the LLM's artist/song name, trailing
+        # silence, loudness) takes 10-50 s on a Pi. It gets a worker of its
+        # own so it never holds up the thread that noticed the download: on
+        # the download worker it delayed the next guest's download, and on
+        # the content monitor it stopped every other download from starting.
+        # One worker, so two analyses never compete for the Pi's CPU while a
+        # song plays, and a second item for the same video finds the first
+        # one's results cached instead of measuring it again in parallel.
+        self._analysis_executor: Executor = analysis_executor or ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="kbox-analysis"
+        )
 
         self._content_timeout = timedelta(minutes=10)
         self._content_monitor = PeriodicThread(
@@ -215,7 +232,7 @@ class QueueManager:
                     item.metadata.title,
                     item.id,
                 )
-                self._run_post_download_analysis(item.id, item.video_id, str(cached_path))
+                self._schedule_post_download_analysis(item.id, item.video_id, str(cached_path))
             self._prep_started_at.pop(item.id, None)
             return
 
@@ -266,7 +283,7 @@ class QueueManager:
                 self.logger.info("Content ready for queue item %s: %s", item_id, path)
                 self._prep_started_at.pop(item_id, None)
                 self._forget_failures(item_id)
-                self._run_post_download_analysis(item_id, video_id, path)
+                self._schedule_post_download_analysis(item_id, video_id, path)
             # Whoever marked it READY, a download just landed: keep the
             # library within its size limit.
             self._cleanup_storage()
@@ -369,10 +386,34 @@ class QueueManager:
         self._forget_failures(item_id)
         return self.update_content_status(item_id, self.STATUS_PENDING, video_id=item.video_id)
 
+    def _schedule_post_download_analysis(self, item_id: int, video_id: str, path: str) -> None:
+        """Queue the post-download analysis for an item on the analysis worker.
+
+        Returns at once: the item is already READY and can play. A song that
+        starts before its analysis finishes plays untrimmed and at its own
+        level, as it would if the analysis had failed.
+        """
+        try:
+            self._analysis_executor.submit(
+                self._run_post_download_analysis_logged, item_id, video_id, path
+            )
+        except RuntimeError:
+            # The executor refuses new work once shut down (server stopping).
+            self.logger.debug("Not analysing item %s: shutting down", item_id)
+
+    def _run_post_download_analysis_logged(self, item_id: int, video_id: str, path: str) -> None:
+        """Run the analysis, logging anything it raises: a Future would hide it."""
+        try:
+            self._run_post_download_analysis(item_id, video_id, path)
+        except Exception as e:
+            self.logger.error(
+                "Post-download analysis failed for item %s: %s", item_id, e, exc_info=True
+            )
+
     def _run_post_download_analysis(self, item_id: int, video_id: str, path: str) -> None:
         """Run per-video analysis steps once a queue item's content is ready.
 
-        Runs synchronously on the caller's thread. Each step is independent
+        Runs synchronously, on the analysis worker. Each step is independent
         and failures are logged, never allowed to break queue operations.
 
         Every result is keyed by video_id, the video that `path` holds, never
@@ -420,6 +461,15 @@ class QueueManager:
     def stop_content_monitor(self):
         """Stop the content monitor thread and wait for it to exit."""
         self._content_monitor.stop()
+
+    def shutdown(self) -> None:
+        """Stop the content monitor and drop analyses that haven't started.
+
+        An analysis already running finishes; they are cached per video, so
+        a dropped one runs the next time that video is downloaded or found.
+        """
+        self.stop_content_monitor()
+        self._analysis_executor.shutdown(wait=False, cancel_futures=True)
 
     def _cleanup_storage(self) -> None:
         """Trigger storage cleanup with all queue items protected from eviction."""
