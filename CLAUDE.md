@@ -52,6 +52,12 @@ These show up periodically and are not indicative of a kbox bug — don't chase 
   another client automatically; only worth investigating if extraction actually fails
   outright (no playable format found), not just this warning appearing.
 
+- **yt-dlp: "No supported JavaScript runtime could be found… extraction without a JS
+  runtime has been deprecated"** — printed on every download. kbox uses yt-dlp's default
+  client, which without a JS runtime (none is in the Docker image) is `visionos`, and it
+  serves the formats kbox asks for. Only act on it if a yt-dlp bump stops downloads
+  working; the fix then is adding deno and `yt-dlp-ejs` to the image.
+
 - **GStreamer-Audio-CRITICAL: "gst_audio_ring_buffer_set_channel_positions: should not
   be reached"** — fires on essentially every song load. Upstream GStreamer quirk in
   gstaudioringbuffer.c, not an app-level bug — full root-cause analysis is in the
