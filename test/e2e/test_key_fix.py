@@ -2,7 +2,7 @@
 The singer's "Too high? / Too low?" key fix on the Now Playing card.
 
 The e2e app mocks the playback controller, so nothing is ever playing. The
-browser is the seam: the playback field of /api/party/status is stubbed to
+browser is the seam: the playback field of /api/status is stubbed to
 report a song, and /api/playback/pitch is stubbed to record what the page
 sends. Whether the server lets a singer change their own song is covered in
 test_api.py.
@@ -45,7 +45,7 @@ def _stub_status(page, user_id, position, pitch=0):
         data["playback"] = playback
         route.fulfill(response=response, json=data)
 
-    page.route("**/api/party/status", handle)
+    page.route("**/api/status", handle)
 
 
 def _record_pitch_posts(page):

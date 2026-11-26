@@ -1,9 +1,9 @@
 """
-Party status: what each open page polls to stay current.
+Status: what each open page polls to stay current.
 
-``GET /api/party/status`` returns what playback is doing, the queue, who is
-up next, this viewer's own next turn and the alerts addressed to them, all
-in one response so that a phone draws everything from one moment.
+``GET /api/status`` returns what playback is doing, the queue, who is up
+next, this viewer's own next turn and the alerts addressed to them, all in
+one response so that a phone draws everything from one moment.
 
 Handlers get their collaborators through the providers in
 :mod:`kbox.web.dependencies`, which read ``request.app.state`` at request
@@ -27,16 +27,16 @@ from ..serializers import serialize_playback_status, serialize_queue_item
 router = APIRouter()
 
 
-@router.get("/api/party/status")
-def get_party_status(
+@router.get("/api/status")
+def get_status(
     queue_mgr: QueueManager = Depends(get_queue_manager),
     playback: PlaybackController = Depends(get_playback_controller),
     current_user_id: Optional[str] = Depends(get_current_user_id),
     is_operator: bool = Depends(check_operator),
 ):
     """
-    The party as this viewer sees it: what playback is doing (``playback``:
-    state, current song and position), the queue with
+    Everything this viewer needs to stay current: what playback is doing
+    (``playback``: state, current song and position), the queue with
     current/played flags, who is up next, how long until this viewer's own
     next turn, how deep the queue is, and the alerts addressed to this
     viewer (see kbox/alerts.py).

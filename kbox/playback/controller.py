@@ -50,7 +50,7 @@ class PlaybackStatus:
 
     Domain objects, not a response body: current_song is the QueueItem
     itself, so a caller that only wants one field off it (the web layer's
-    party status endpoint wants the id) reads it directly instead of through
+    status endpoint wants the id) reads it directly instead of through
     a flattened dict. kbox/web/serializers.py turns it into JSON.
     """
 
@@ -253,7 +253,7 @@ class PlaybackController:
     # State snapshot
     # =========================================================================
     #
-    # Guest phones poll /api/party/status every second, and it needs
+    # Guest phones poll /api/status every second, and it needs
     # (state, current_song_id). If it took self.lock for that, a poll
     # arriving while _play_song() holds the lock across load_file() (up
     # to several seconds) would park a server threadpool thread until the

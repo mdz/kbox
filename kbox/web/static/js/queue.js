@@ -526,7 +526,7 @@ async function refreshQueue(signal) {
     try {
         // One poll carries the queue and what playback is doing, so both
         // come from the same moment
-        const response = await fetch('/api/party/status', { signal });
+        const response = await fetch('/api/status', { signal });
 
         if (response.status === 401) {
             handleAuthExpired();

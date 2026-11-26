@@ -243,7 +243,7 @@
 
     async function pollQueue() {
         try {
-            const response = await fetch('/api/party/status');
+            const response = await fetch('/api/status');
             if (!response.ok) return;
             const data = await response.json();
             queue = data.queue || [];

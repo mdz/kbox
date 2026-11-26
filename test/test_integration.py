@@ -1019,7 +1019,7 @@ def test_failed_download_alerts_singer_and_operator_via_queue_api(full_system, m
             if operator:
                 system["config"].set("operator_pin", "1234")
                 client.post("/api/auth/operator", json={"pin": "1234"})
-            return client.get("/api/party/status").json()["alerts"]
+            return client.get("/api/status").json()["alerts"]
 
     [bob_alert] = alerts_for(BOB_ID)
     assert bob_alert["queue_item_id"] == item_id

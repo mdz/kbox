@@ -2,7 +2,7 @@
 Playback routes: transport controls, pitch, restart and seek.
 
 What playback is doing is not served here: phones read it from the
-``playback`` field of ``GET /api/party/status``.
+``playback`` field of ``GET /api/status``.
 
 Every control is operator-only, checked per handler via
 ``check_operator`` -- except pitch and end-turn, which the singer of the

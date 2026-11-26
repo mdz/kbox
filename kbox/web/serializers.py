@@ -46,7 +46,7 @@ def serialize_playback_status(status: PlaybackStatus) -> Dict[str, Any]:
     """
     Convert a PlaybackStatus to the dict the frontend reads.
 
-    Served as the ``playback`` field of ``GET /api/party/status``.
+    Served as the ``playback`` field of ``GET /api/status``.
     """
     return {
         "state": status.state.value,

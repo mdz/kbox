@@ -181,15 +181,15 @@ class TestQueueEndpoints:
     """Tests for queue management endpoints."""
 
     def test_get_queue_empty(self, client):
-        """GET /api/party/status - empty queue."""
-        response = client.get("/api/party/status")
+        """GET /api/status - empty queue."""
+        response = client.get("/api/status")
         assert response.status_code == 200
         data = response.json()
         assert "queue" in data
         assert data["queue"] == []
 
-    def test_party_status_carries_playback(self, client, alice, app_components):
-        """GET /api/party/status - playback carries state, position and the song.
+    def test_status_carries_playback(self, client, alice, app_components):
+        """GET /api/status - playback carries state, position and the song.
 
         Phones draw Now Playing and the play/pause button from this field.
         The frontend reads title/duration_seconds/pitch_semitones off the top
@@ -206,7 +206,7 @@ class TestQueueEndpoints:
             position_seconds=60,
         )
 
-        data = client.get("/api/party/status").json()
+        data = client.get("/api/status").json()
 
         playback = data["playback"]
         assert playback["state"] == "playing"
@@ -222,9 +222,9 @@ class TestQueueEndpoints:
         # The same snapshot marks the queue's current item
         assert data["queue"][0]["is_current"] is True
 
-    def test_party_status_when_nothing_plays(self, client):
-        """GET /api/party/status - playback is reported when nothing plays."""
-        playback = client.get("/api/party/status").json()["playback"]
+    def test_status_when_nothing_plays(self, client):
+        """GET /api/status - playback is reported when nothing plays."""
+        playback = client.get("/api/status").json()["playback"]
         assert playback == {"state": "idle", "current_song": None, "position_seconds": 0}
 
     def test_add_song(self, client, alice):
@@ -295,7 +295,7 @@ class TestQueueEndpoints:
         assert "Not authenticated" in response.json()["detail"]
 
     def test_get_queue_with_songs(self, client, alice, bob, app_components):
-        """GET /api/party/status - queue with songs."""
+        """GET /api/status - queue with songs."""
         # Add songs directly via queue manager (bypasses session auth for test setup)
         queue_mgr = app_components["queue"]
         queue_mgr.add_song(
@@ -309,13 +309,13 @@ class TestQueueEndpoints:
             title="Bob's Song",
         )
 
-        response = client.get("/api/party/status")
+        response = client.get("/api/status")
         assert response.status_code == 200
         data = response.json()
         assert len(data["queue"]) == 2
 
     def test_get_queue_no_cursor(self, client, alice, bob, app_components):
-        """GET /api/party/status - without cursor, nothing is played, all are upcoming."""
+        """GET /api/status - without cursor, nothing is played, all are upcoming."""
         queue_mgr = app_components["queue"]
         id1 = queue_mgr.add_song(
             user=alice, video_id="youtube:s1", title="Song 1", duration_seconds=120
@@ -329,7 +329,7 @@ class TestQueueEndpoints:
             UpcomingItem(queue_mgr.get_item(id2), 2, 120),
         ]
 
-        response = client.get("/api/party/status")
+        response = client.get("/api/status")
         data = response.json()
 
         assert not data["queue"][0]["is_played"]
@@ -340,7 +340,7 @@ class TestQueueEndpoints:
         assert data["queue_depth_seconds"] == 300
 
     def test_get_queue_cursor_splits_played_and_upcoming(self, client, alice, bob, app_components):
-        """GET /api/party/status - cursor divides queue into played and upcoming."""
+        """GET /api/status - cursor divides queue into played and upcoming."""
         queue_mgr = app_components["queue"]
         playback = app_components["playback"]
 
@@ -358,7 +358,7 @@ class TestQueueEndpoints:
         playback.get_cursor.return_value = id2
         playback.get_upcoming.return_value = [UpcomingItem(queue_mgr.get_item(id3), 1, 0)]
 
-        response = client.get("/api/party/status")
+        response = client.get("/api/status")
         data = response.json()
 
         assert data["queue"][0]["is_played"] is True
@@ -370,7 +370,7 @@ class TestQueueEndpoints:
         assert data["queue_depth_seconds"] == 200
 
     def test_get_queue_cursor_on_last_song(self, client, alice, bob, app_components):
-        """GET /api/party/status - cursor on last song means no next song."""
+        """GET /api/status - cursor on last song means no next song."""
         queue_mgr = app_components["queue"]
         playback = app_components["playback"]
 
@@ -383,7 +383,7 @@ class TestQueueEndpoints:
 
         playback.get_cursor.return_value = id2
 
-        response = client.get("/api/party/status")
+        response = client.get("/api/status")
         data = response.json()
 
         assert data["queue"][0]["is_played"] is True
@@ -392,7 +392,7 @@ class TestQueueEndpoints:
         assert data["queue_depth_count"] == 0
 
     def test_get_queue_is_current_flag(self, client, alice, bob, app_components):
-        """GET /api/party/status - is_current marks the currently playing song."""
+        """GET /api/status - is_current marks the currently playing song."""
         queue_mgr = app_components["queue"]
         playback = app_components["playback"]
 
@@ -406,14 +406,14 @@ class TestQueueEndpoints:
             position_seconds=30,
         )
 
-        response = client.get("/api/party/status")
+        response = client.get("/api/status")
         data = response.json()
 
         assert data["queue"][0]["is_current"] is True
         assert data["queue"][1]["is_current"] is False
 
     def test_get_queue_my_next_turn(self, client, alice, bob, app_components):
-        """GET /api/party/status - estimates when a user's next turn is."""
+        """GET /api/status - estimates when a user's next turn is."""
         queue_mgr = app_components["queue"]
         playback = app_components["playback"]
         charlie = app_components["user"].get_or_create_user("charlie-uuid", "Charlie")
@@ -436,12 +436,12 @@ class TestQueueEndpoints:
 
         # Bob asks: his song is after Charlie's, so 1 song away
         set_user(client, BOB_ID, "Bob")
-        data = client.get("/api/party/status").json()
+        data = client.get("/api/status").json()
         assert data["my_next_turn"] == {"songs_away": 1, "estimated_seconds": 270}
 
         # Once Bob is up next, the Up Next banner already says so
         playback.get_upcoming.return_value = [UpcomingItem(queue_mgr.get_item(id3), 1, 30)]
-        assert client.get("/api/party/status").json()["my_next_turn"] is None
+        assert client.get("/api/status").json()["my_next_turn"] is None
 
     def test_remove_song_as_owner(self, client, alice, app_components):
         """DELETE /api/queue/{id} - owner can remove their song."""
@@ -1438,7 +1438,7 @@ class TestGuestAuthentication:
 
     def test_unauthenticated_api_request_returns_401(self, auth_client):
         """API request without token returns 401."""
-        response = auth_client.get("/api/party/status", follow_redirects=False)
+        response = auth_client.get("/api/status", follow_redirects=False)
         assert response.status_code == 401
 
     def test_valid_token_redirects_and_sets_session(self, auth_client):
@@ -1470,7 +1470,7 @@ class TestGuestAuthentication:
         auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
 
         # API call should work
-        response = auth_client.get("/api/party/status")
+        response = auth_client.get("/api/status")
         assert response.status_code == 200
 
     def test_no_token_configured_allows_all_requests(self, client):
@@ -1479,7 +1479,7 @@ class TestGuestAuthentication:
         response = client.get("/")
         assert response.status_code == 200
 
-        response = client.get("/api/party/status")
+        response = client.get("/api/status")
         assert response.status_code == 200
 
     def test_rotated_token_is_read_live_from_config(self, auth_client, app_components):
@@ -1528,7 +1528,7 @@ class TestGuestAuthentication:
         """
         # Authenticate normally - cookie is signed at the current (real) time.
         auth_client.get("/?key=test-secret-token-123", follow_redirects=False)
-        response = auth_client.get("/api/party/status")
+        response = auth_client.get("/api/status")
         assert response.status_code == 200
 
         # Simulate the server clock jumping backwards (e.g. a reboot without
@@ -1537,12 +1537,12 @@ class TestGuestAuthentication:
 
         real_time = time_module.time()
         with unittest.mock.patch("time.time", return_value=real_time - 3600):
-            response = auth_client.get("/api/party/status")
+            response = auth_client.get("/api/status")
             assert response.status_code == 200
 
         # The session must still be usable once the clock is correct again -
         # i.e. the cookie was not deleted from the client during the skew.
-        response = auth_client.get("/api/party/status")
+        response = auth_client.get("/api/status")
         assert response.status_code == 200
 
 

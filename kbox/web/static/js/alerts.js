@@ -2,7 +2,7 @@
  * Delivering alerts to this phone.
  *
  * The server addresses alerts to people -- a guest, or whoever is operating
- * (see kbox/alerts.py) -- and hands each viewer theirs in the /api/party/status
+ * (see kbox/alerts.py) -- and hands each viewer theirs in the /api/status
  * poll. This module is the phone end of that: the first time it sees an
  * alert id it buzzes and shows the message.
  *

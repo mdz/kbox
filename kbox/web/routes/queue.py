@@ -1,7 +1,7 @@
 """
 Queue routes: adding, removing, editing and reordering songs.
 
-The queue listing that phones poll lives in :mod:`kbox.web.routes.party`,
+The queue listing that phones poll lives in :mod:`kbox.web.routes.status`,
 with the rest of what each viewer sees.
 
 Handlers get their collaborators through the providers in
