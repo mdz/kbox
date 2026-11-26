@@ -92,8 +92,12 @@ def temp_db():
 
 @pytest.fixture
 def temp_storage_dir():
-    """Create a temporary storage directory."""
-    temp_dir = tempfile.mkdtemp()
+    """Create a temporary storage directory.
+
+    Resolved, because VideoLibrary resolves its storage path and on macOS the
+    temp dir sits under /var, a symlink to /private/var.
+    """
+    temp_dir = str(Path(tempfile.mkdtemp()).resolve())
     yield temp_dir
     shutil.rmtree(temp_dir, ignore_errors=True)
 
